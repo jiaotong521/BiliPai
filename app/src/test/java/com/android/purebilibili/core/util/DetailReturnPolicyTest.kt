@@ -52,6 +52,9 @@ class DetailReturnPolicyTest {
 
         assertNull(CardPositionManager.lastClickedCardBounds)
         assertNull(CardPositionManager.lastClickedCardCenter)
+        assertNull(CardPositionManager.lastClickedNativeCardLayer)
+        assertNull(CardPositionManager.lastClickedNativeCardBitmap)
+        assertNull(CardPositionManager.lastClickedNativeCoverOverlayLayer)
     }
 
     @Test

@@ -1,212 +1,156 @@
 package com.android.purebilibili.navigation3
 
-import com.android.purebilibili.navigation3.predictiveback.BiliPaiDefaultPredictiveBackAnimation
-import com.android.purebilibili.navigation3.predictiveback.BiliPaiDisabledPredictiveBackAnimation
 import com.android.purebilibili.navigation3.predictiveback.BiliPaiPredictiveBackAnimationStyle
-import com.android.purebilibili.navigation3.predictiveback.BiliPaiSharedElementPredictiveBackAnimation
-import com.android.purebilibili.navigation3.predictiveback.resolveBiliPaiPredictiveBackAnimationHandler
-import java.io.File
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertTrue
+import com.android.purebilibili.navigation3.predictiveback.BiliPaiPredictiveBackExitDirection
+import com.android.purebilibili.navigation3.predictiveback.AOSP_PREDICTIVE_COMMIT_DURATION_MILLIS
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
 
 class BiliPaiPredictiveBackAnimationPolicyTest {
+    @Test
+    fun `aosp predictive release settles without a long post-gesture tail`() {
+        assertTrue(AOSP_PREDICTIVE_COMMIT_DURATION_MILLIS <= 250)
+    }
 
     @Test
-    fun sharedElementRoute_usesSharedElementHandler() {
-        val handler = resolveBiliPaiPredictiveBackAnimationHandler(
-            routeTransition = BiliPaiNavRouteTransition.NO_OP_SHARED_ELEMENT,
-            style = BiliPaiPredictiveBackAnimationStyle.AOSP,
+    fun `all transition storage values are stable`() {
+        assertEquals(
+            listOf(
+                "none", "aosp", "miuix", "scale", "bilipai_classic",
+                "fade", "right_to_left", "left_to_right", "up_to_down", "down_to_up",
+                "right_to_left_fade", "left_to_right_fade", "zoom", "circular_reveal", "ios",
+                "fade_in", "size", "shared_axis", "no_transition",
+            ),
+            BiliPaiPredictiveBackAnimationStyle.entries.map { it.storageValue },
         )
-        assertTrue(handler is BiliPaiSharedElementPredictiveBackAnimation)
     }
 
     @Test
-    fun relatedDetailRoute_usesNavigationDefaultHandler() {
-        val handler = resolveBiliPaiPredictiveBackAnimationHandler(
-            routeTransition = BiliPaiNavRouteTransition.FALLBACK,
+    fun `saved transition styles round trip without changing existing choices`() {
+        BiliPaiPredictiveBackAnimationStyle.entries.forEach { style ->
+            assertEquals(style, BiliPaiPredictiveBackAnimationStyle.fromStorageValue(style.storageValue))
+        }
+    }
+
+    @Test
+    fun `legacy and unknown transition values migrate to miuix`() {
+        assertEquals(
+            BiliPaiPredictiveBackAnimationStyle.MIUIX,
+            BiliPaiPredictiveBackAnimationStyle.fromStorageValue("default"),
         )
-
-        assertTrue(handler is BiliPaiDefaultPredictiveBackAnimation)
-    }
-
-    @Test
-    fun classicCardRoute_doesNotInstallTargetSpecificPredictiveHandler() {
-        val handler = resolveBiliPaiPredictiveBackAnimationHandler(
-            routeTransition = BiliPaiNavRouteTransition.CLASSIC_CARD,
+        assertEquals(
+            BiliPaiPredictiveBackAnimationStyle.CLASSIC,
+            BiliPaiPredictiveBackAnimationStyle.fromStorageValue("classic"),
         )
-
-        assertTrue(handler is BiliPaiDefaultPredictiveBackAnimation)
-    }
-
-    @Test
-    fun targetSpecificPredictiveHandler_isNotPresent() {
-        val sourceRoot = listOf(File("app/src/main"), File("src/main")).first { it.exists() }
-        assertFalse(sourceRoot.walkTopDown().any { it.name == "BiliPaiVideoDetailTargetPredictiveBackAnimation.kt" })
-    }
-
-    @Test
-    fun sharedElementPredictivePop_keepsRouteLayerStillForCardReturn() {
-        val function = sharedElementPredictivePopFunction()
-
-        assertFalse(function.contains("slideOutHorizontally"))
-        assertFalse(function.contains("slideInHorizontally"))
-        assertTrue(function.contains("noOpSharedElementContentTransform()"))
-        assertFalse(function.contains("initialContentExit = fadeOut("))
-    }
-
-    @Test
-    fun sharedElementPredictivePop_pinsUnderlyingSourcePageAgainstHorizontalDrift() {
-        val source = sharedElementPredictiveBackSource()
-        assertTrue(source.contains("skipToLookaheadPosition()"))
-        assertTrue(source.contains("isUnderlyingSourcePage"))
-        assertTrue(source.contains("translationX = 0f"))
-    }
-
-    @Test
-    fun classicCardRoute_usesNavigationDefaults() {
-        val handler = resolveBiliPaiPredictiveBackAnimationHandler(
-            routeTransition = BiliPaiNavRouteTransition.CLASSIC_CARD,
+        assertEquals(
+            BiliPaiPredictiveBackAnimationStyle.MIUIX,
+            BiliPaiPredictiveBackAnimationStyle.fromStorageValue("unknown"),
         )
-        assertTrue(handler is BiliPaiDefaultPredictiveBackAnimation)
     }
 
     @Test
-    fun defaultPredictivePop_keepsTargetPageFullScreen() {
-        val source = defaultPredictiveBackSource()
-        val function = source.substringAfter(
-            "override fun AnimatedContentTransitionScope<Scene<BiliPaiNavKey>>.onPredictivePopTransitionSpec"
-        ).substringBefore(
-            "override fun AnimatedContentTransitionScope<Scene<BiliPaiNavKey>>.onPopTransitionSpec"
+    fun `scale exit direction defaults to always right`() {
+        assertEquals(
+            BiliPaiPredictiveBackExitDirection.ALWAYS_RIGHT,
+            BiliPaiPredictiveBackExitDirection.fromStorageValue(null),
         )
-
-        assertTrue(function.contains("targetContentEnter = EnterTransition.None"))
-        assertTrue(function.contains("initialContentExit = slideOutHorizontally"))
-        assertFalse(function.contains("defaultPredictivePopTransitionSpec"))
     }
 
     @Test
-    fun legacyScaleStyle_doesNotOverrideNavigationDefaults() {
-        val handler = resolveBiliPaiPredictiveBackAnimationHandler(
-            routeTransition = BiliPaiNavRouteTransition.CLASSIC_CARD,
-            style = BiliPaiPredictiveBackAnimationStyle.SCALE,
+    fun `related parent keeps its live surface bound while child playback stays separate`() {
+        val parent = BiliPaiNavKey.VideoDetail(
+            bvid = "BV_PARENT",
+            sourceRoute = "home",
         )
-        assertTrue(handler is BiliPaiDefaultPredictiveBackAnimation)
-    }
-
-    @Test
-    fun legacyAospStyle_doesNotOverrideNavigationDefaults() {
-        val handler = resolveBiliPaiPredictiveBackAnimationHandler(
-            routeTransition = BiliPaiNavRouteTransition.CLASSIC_CARD,
-            style = BiliPaiPredictiveBackAnimationStyle.AOSP,
+        val child = BiliPaiNavKey.VideoDetail(
+            bvid = "BV_CHILD",
+            sourceRoute = "video/BV_PARENT",
         )
-        assertTrue(handler is BiliPaiDefaultPredictiveBackAnimation)
-    }
-
-    @Test
-    fun legacyClassicStyle_doesNotOverrideNavigationDefaults() {
-        val handler = resolveBiliPaiPredictiveBackAnimationHandler(
-            routeTransition = BiliPaiNavRouteTransition.CLASSIC_CARD,
-            style = BiliPaiPredictiveBackAnimationStyle.CLASSIC,
-        )
-        assertTrue(handler is BiliPaiDefaultPredictiveBackAnimation)
-    }
-
-    @Test
-    fun disabledPreference_suppressesGlobalPredictivePreview() {
-        val handler = resolveBiliPaiPredictiveBackAnimationHandler(
-            routeTransition = BiliPaiNavRouteTransition.CLASSIC_CARD,
-            predictiveBackEnabled = false,
-        )
-        assertTrue(handler is BiliPaiDisabledPredictiveBackAnimation)
-    }
-
-    @Test
-    fun disabledSharedElementRoute_suppressesPredictivePreviewBeforeRoutePolicy() {
-        val handler = resolveBiliPaiPredictiveBackAnimationHandler(
-            routeTransition = BiliPaiNavRouteTransition.NO_OP_SHARED_ELEMENT,
-            predictiveBackEnabled = false,
-        )
-        assertTrue(handler is BiliPaiDisabledPredictiveBackAnimation)
-    }
-
-    @Test
-    fun disabledPredictivePreview_keepsRelatedDetailSharedElementPop() {
-        val from = BiliPaiNavKey.VideoDetail("BV_B", sourceRoute = "video/BV_A")
-        val to = BiliPaiNavKey.VideoDetail("BV_A")
 
         assertTrue(
-            resolveBiliPaiPredictiveBackAnimationHandler(
-                routeTransition = BiliPaiNavRouteTransition.NO_OP_SHARED_ELEMENT,
-                predictiveBackEnabled = false,
-            ) is BiliPaiDisabledPredictiveBackAnimation
-        )
-        assertEquals(
-            BiliPaiNavRouteTransition.NO_OP_SHARED_ELEMENT,
-            resolveBiliPaiNavDisplayPopRouteTransition(
-                cardTransitionEnabled = true,
-                sourceMetadata = BiliPaiNavSourceMetadata(),
-                fromKey = from,
-                toKey = to,
+            shouldBindVideoDetailBackPreviewPlayer(
+                currentKey = child,
+                previewKey = parent,
             )
         )
-        assertEquals(
-            BiliPaiNavRouteTransition.NO_OP_SHARED_ELEMENT,
-            resolveBiliPaiNavEntryPopRouteTransition(
-                defaultTransition = BiliPaiNavRouteTransition.NO_OP_SHARED_ELEMENT,
-                fromRoute = from.routeBase,
-                toRoute = to.routeBase,
-                cardTransitionEnabled = true,
-                sharedElementPopReady = true,
-                sourceMetadata = BiliPaiNavSourceMetadata(),
+        assertFalse(
+            shouldBindVideoDetailBackPreviewPlayer(
+                currentKey = BiliPaiNavKey.VideoDetail(
+                    bvid = "BV_OTHER",
+                    sourceRoute = "home",
+                ),
+                previewKey = parent,
             )
         )
     }
 
     @Test
-    fun cardWithoutSharedSource_usesNavigationDefaultFallback() {
-        val handler = resolveBiliPaiPredictiveBackAnimationHandler(
-            routeTransition = BiliPaiNavRouteTransition.CARD_DISABLED_VIDEO_RETURN_TO_LEFT,
+    fun `committed related return activates retained parent playback before pop`() {
+        val parent = BiliPaiNavKey.VideoDetail(bvid = "BV_PARENT")
+        val child = BiliPaiNavKey.VideoDetail(
+            bvid = "BV_CHILD",
+            sourceRoute = "video/BV_PARENT",
         )
-        assertTrue(handler is BiliPaiDefaultPredictiveBackAnimation)
+
+        assertFalse(
+            shouldActivateVideoDetailPlaybackSession(
+                currentKey = child,
+                detailKey = parent,
+                isImmediateBackPreview = true,
+                activateBackPreviewPlayback = false,
+            )
+        )
+        assertTrue(
+            shouldActivateVideoDetailPlaybackSession(
+                currentKey = child,
+                detailKey = parent,
+                isImmediateBackPreview = true,
+                activateBackPreviewPlayback = true,
+            )
+        )
     }
 
     @Test
-    fun cardWithoutSharedSourceIgnoresLegacyDirection() {
-        val handler = resolveBiliPaiPredictiveBackAnimationHandler(
-            routeTransition = BiliPaiNavRouteTransition.CARD_DISABLED_VIDEO_RETURN_TO_RIGHT,
+    fun `non-video child keeps covered video preview silent`() {
+        val coveredVideo = BiliPaiNavKey.VideoDetail(bvid = "BV_COVERED")
+
+        assertFalse(
+            shouldActivateVideoDetailPlaybackSession(
+                currentKey = BiliPaiNavKey.Search,
+                detailKey = coveredVideo,
+                isImmediateBackPreview = true,
+                activateBackPreviewPlayback = false,
+            )
         )
-        assertTrue(handler is BiliPaiDefaultPredictiveBackAnimation)
+        assertFalse(
+            shouldActivateVideoDetailPlaybackSession(
+                currentKey = BiliPaiNavKey.Search,
+                detailKey = coveredVideo,
+                isImmediateBackPreview = true,
+                activateBackPreviewPlayback = true,
+            )
+        )
     }
 
     @Test
-    fun fallbackRoute_usesDefaultHandler() {
-        val handler = resolveBiliPaiPredictiveBackAnimationHandler(
-            routeTransition = BiliPaiNavRouteTransition.FALLBACK,
+    fun `audio mode keeps its source video playback session warm behind the cover`() {
+        val coveredVideo = BiliPaiNavKey.VideoDetail(bvid = "BV_AUDIO_SOURCE")
+
+        assertTrue(
+            shouldActivateVideoDetailPlaybackSession(
+                currentKey = BiliPaiNavKey.AudioMode(sourceBvid = "BV_AUDIO_SOURCE"),
+                detailKey = coveredVideo,
+                isImmediateBackPreview = true,
+            )
         )
-        assertTrue(handler is BiliPaiDefaultPredictiveBackAnimation)
+        assertFalse(
+            shouldActivateVideoDetailPlaybackSession(
+                currentKey = BiliPaiNavKey.AudioMode(sourceBvid = "BV_OTHER"),
+                detailKey = coveredVideo,
+                isImmediateBackPreview = true,
+            )
+        )
     }
-
-    private fun sharedElementPredictivePopFunction(): String {
-        val source = sharedElementPredictiveBackSource()
-        val functionStart = source.indexOf("override fun AnimatedContentTransitionScope<Scene<BiliPaiNavKey>>.onPredictivePopTransitionSpec")
-        val functionEnd = source.indexOf("override fun AnimatedContentTransitionScope<Scene<BiliPaiNavKey>>.onPopTransitionSpec")
-        return source.substring(functionStart, functionEnd)
-    }
-
-    private fun sharedElementPredictiveBackSource(): String {
-        return listOf(
-            File("app/src/main/java/com/android/purebilibili/navigation3/predictiveback/BiliPaiSharedElementPredictiveBackAnimation.kt"),
-            File("src/main/java/com/android/purebilibili/navigation3/predictiveback/BiliPaiSharedElementPredictiveBackAnimation.kt")
-        ).first { it.exists() }.readText()
-    }
-
-    private fun defaultPredictiveBackSource(): String {
-        return listOf(
-            File("app/src/main/java/com/android/purebilibili/navigation3/predictiveback/BiliPaiDefaultPredictiveBackAnimation.kt"),
-            File("src/main/java/com/android/purebilibili/navigation3/predictiveback/BiliPaiDefaultPredictiveBackAnimation.kt")
-        ).first { it.exists() }.readText()
-    }
-
 }

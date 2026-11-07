@@ -1,6 +1,8 @@
 package com.android.purebilibili.data.repository
 
 import com.android.purebilibili.data.model.response.DanmakuThumbupStatsItem
+import com.android.purebilibili.data.model.response.GradeDanmakuSummary
+import com.android.purebilibili.danmaku.parser.DanmakuProto
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -46,9 +48,14 @@ class DanmakuRepositoryPolicyTest {
     }
 
     @Test
-    fun resolveDanmakuSegmentCount_prefersDurationWhenAvailable() {
+    fun resolveDanmakuSegmentCount_usesDurationWhenMetadataIsUnavailable() {
         assertEquals(1, resolveDanmakuSegmentCount(durationMs = 1000L, metadataSegmentCount = null))
-        assertEquals(3, resolveDanmakuSegmentCount(durationMs = 720_001L, metadataSegmentCount = 1))
+    }
+
+    @Test
+    fun resolveDanmakuSegmentCount_prefersCidMetadataOverPossiblyStalePlayerDuration() {
+        assertEquals(1, resolveDanmakuSegmentCount(durationMs = 720_001L, metadataSegmentCount = 1))
+        assertEquals(5, resolveDanmakuSegmentCount(durationMs = 1_000L, metadataSegmentCount = 5))
     }
 
     @Test
@@ -56,24 +63,6 @@ class DanmakuRepositoryPolicyTest {
         assertEquals(5, resolveDanmakuSegmentCount(durationMs = 0L, metadataSegmentCount = 5))
         assertEquals(3, resolveDanmakuSegmentCount(durationMs = 0L, metadataSegmentCount = null))
         assertEquals(3, resolveDanmakuSegmentCount(durationMs = -1L, metadataSegmentCount = 0))
-    }
-
-    @Test
-    fun estimateDanmakuCacheBytes_sumsRawAndSegmentBytes() {
-        assertEquals(
-            6144L,
-            estimateDanmakuCacheBytes(
-                rawCacheBytes = 2048L,
-                segmentCacheBytes = 4096L
-            )
-        )
-        assertEquals(
-            0L,
-            estimateDanmakuCacheBytes(
-                rawCacheBytes = -1L,
-                segmentCacheBytes = -1L
-            )
-        )
     }
 
     @Test
@@ -107,5 +96,48 @@ class DanmakuRepositoryPolicyTest {
         assertEquals(5, payload.type)
         assertEquals(1, payload.plat)
         assertEquals("""{"duration":6000,"posX":240,"posY":160}""", payload.data)
+    }
+
+    @Test
+    fun resolveGradeDanmakuSummary_matchesActualGradeIdAndIgnoresUnrelatedCommands() {
+        val commands = listOf(
+            DanmakuProto.CommandDm(
+                command = "#VOTE#",
+                extra = """{"grade_id":3651137,"count":999,"avg_score":1}"""
+            ),
+            DanmakuProto.CommandDm(command = "#GRADE#", extra = "{invalid"),
+            DanmakuProto.CommandDm(
+                command = "#GRADE#",
+                extra = """{"grade_id":3651138,"count":999,"avg_score":1}"""
+            ),
+            DanmakuProto.CommandDm(
+                command = "#GRADE#",
+                extra = """{"msg":"熟练程度如何","grade_id":3651137,"mid_score":0,"count":2,"avg_score":10,"duration":5000,"summary_duration":6000,"posX":333.5,"posY":243.75,"posX_2":50,"posY_2":65}"""
+            )
+        )
+
+        assertEquals(GradeDanmakuSummary(2L, 10.0), resolveGradeDanmakuSummary(commands, "3651137"))
+        assertNull(resolveGradeDanmakuSummary(commands, "missing"))
+    }
+
+    @Test
+    fun resolveGradeDanmakuSummary_preservesAuthenticatedPersonalScoreAndRealZeroCount() {
+        val commands = listOf(DanmakuProto.CommandDm(
+            command = "#GRADE#",
+            extra = """{"grade_id":"3651137","count":0,"avg_score":0,"mid_score":8}"""
+        ))
+
+        assertEquals(GradeDanmakuSummary(0L, 0.0, 8), resolveGradeDanmakuSummary(commands, "3651137"))
+    }
+
+    @Test
+    fun resolveGradeDanmakuSummary_doesNotInventMissingOrInvalidAggregates() {
+        for (extra in listOf(
+            """{"grade_id":3651137,"mid_score":10}""",
+            """{"grade_id":3651137,"count":-1,"avg_score":"Infinity","mid_score":10}"""
+        )) {
+            val commands = listOf(DanmakuProto.CommandDm(command = "#GRADE#", extra = extra))
+            assertEquals(GradeDanmakuSummary(userScore = 10), resolveGradeDanmakuSummary(commands, "3651137"))
+        }
     }
 }

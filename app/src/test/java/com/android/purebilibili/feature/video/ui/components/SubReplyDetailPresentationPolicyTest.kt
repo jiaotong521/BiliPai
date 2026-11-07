@@ -1,18 +1,13 @@
 package com.android.purebilibili.feature.video.ui.components
 
-import androidx.compose.ui.graphics.Color
 import com.android.purebilibili.data.model.response.ReplyContent
 import com.android.purebilibili.data.model.response.ReplyCursor
 import com.android.purebilibili.data.model.response.ReplyData
 import com.android.purebilibili.data.model.response.ReplyItem
 import com.android.purebilibili.data.model.response.ReplyMember
 import com.android.purebilibili.data.model.response.ReplyPage
-import com.android.purebilibili.data.model.response.ReplySailingCardBg
-import com.android.purebilibili.data.model.response.ReplySailingFan
-import com.android.purebilibili.data.model.response.ReplyUserSailing
 import com.android.purebilibili.feature.video.viewmodel.resolveSubReplyLoadedTotalCount
 import com.android.purebilibili.feature.video.viewmodel.resolveSubReplyRemoteTotalCount
-import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -20,12 +15,24 @@ import kotlin.test.assertTrue
 
 class SubReplyDetailPresentationPolicyTest {
 
+
     @Test
-    fun `section title should include current reply count`() {
-        assertEquals("相关回复共14条", resolveSubReplyDetailSectionTitle(replyCount = 14))
+    fun `recreated thread keeps its restored position while sort changes reset it`() {
         assertEquals(
-            "相关回复共200条（已加载40条）",
-            resolveSubReplyDetailSectionTitle(replyCount = 200, loadedReplyCount = 40)
+            SubReplyDetailScrollRestoreAction.KEEP_POSITION,
+            resolveSubReplyDetailScrollRestoreAction(null, false, false),
+        )
+        assertEquals(
+            SubReplyDetailScrollRestoreAction.KEEP_POSITION,
+            resolveSubReplyDetailScrollRestoreAction(true, true, true),
+        )
+        assertEquals(
+            SubReplyDetailScrollRestoreAction.SCROLL_TO_TOP,
+            resolveSubReplyDetailScrollRestoreAction(false, false, true, sortChanged = true),
+        )
+        assertEquals(
+            SubReplyDetailScrollRestoreAction.SCROLL_TO_TOP,
+            resolveSubReplyDetailScrollRestoreAction(true, false, true, sortChanged = true),
         )
     }
 
@@ -33,8 +40,6 @@ class SubReplyDetailPresentationPolicyTest {
     fun `sub reply prefetch continues when list cannot scroll but more replies remain`() {
         assertTrue(
             shouldPrefetchSubRepliesWhenListNotScrollable(
-                loadedReplyCount = 20,
-                totalReplyCount = 157,
                 isLoading = false,
                 isEnd = false,
                 canScrollForward = false
@@ -42,8 +47,6 @@ class SubReplyDetailPresentationPolicyTest {
         )
         assertFalse(
             shouldPrefetchSubRepliesWhenListNotScrollable(
-                loadedReplyCount = 20,
-                totalReplyCount = 157,
                 isLoading = false,
                 isEnd = false,
                 canScrollForward = true
@@ -52,32 +55,21 @@ class SubReplyDetailPresentationPolicyTest {
     }
 
     @Test
-    fun `sub reply manual load more appears while declared total exceeds loaded count`() {
+    fun `sub reply manual load more follows server end independently of display totals`() {
         assertTrue(
             shouldShowSubReplyManualLoadMore(
-                loadedReplyCount = 20,
-                totalReplyCount = 157,
                 isLoading = false,
                 isEnd = false
             )
         )
         assertFalse(
             shouldShowSubReplyManualLoadMore(
-                loadedReplyCount = 157,
-                totalReplyCount = 157,
                 isLoading = false,
-                isEnd = false
+                isEnd = true
             )
         )
     }
 
-    @Test
-    fun `sub reply detail reveal motion staggers by hierarchy`() {
-        assertEquals(40, resolveSubReplyDetailRevealDelayMillis(levelIndex = 0))
-        assertEquals(95, resolveSubReplyDetailRevealDelayMillis(levelIndex = 1))
-        assertEquals(150, resolveSubReplyDetailRevealDelayMillis(levelIndex = 2))
-        assertEquals(360, resolveSubReplyDetailRevealDelayMillis(levelIndex = 20))
-    }
 
     @Test
     fun `sub reply target list index resolves root and child positions`() {
@@ -112,41 +104,6 @@ class SubReplyDetailPresentationPolicyTest {
         )
     }
 
-    @Test
-    fun `sub reply detail reveal motion stays blur free`() {
-        val spec = resolveSubReplyDetailRevealSpec(levelIndex = 2)
-
-        assertEquals(150, spec.delayMillis)
-        assertEquals(300, spec.durationMillis)
-        assertEquals(0f, spec.initialBlurRadiusDp)
-        assertEquals(14, spec.initialOffsetDp)
-    }
-
-    @Test
-    fun `sub reply detail component does not apply compose blur`() {
-        val source = File("src/main/java/com/android/purebilibili/feature/video/ui/components/SubReplyDetailComponents.kt").readText()
-
-        assertFalse(source.contains(".blur("))
-        assertFalse(source.contains("getCommentSubReplyRevealBlurEnabled"))
-        assertFalse(source.contains("animateBounds"))
-    }
-
-    @Test
-    fun `sub reply detail list avoids per reply reveal wrappers and eager footer loading`() {
-        val source = File("src/main/java/com/android/purebilibili/feature/video/ui/components/SubReplyDetailComponents.kt").readText()
-
-        assertFalse(source.contains("revealKey = \"reply_"))
-        assertFalse(source.contains("LaunchedEffect(isLoading, isEnd)"))
-    }
-
-    @Test
-    fun `sub reply detail removes centered down arrow drag handle`() {
-        val source = File("src/main/java/com/android/purebilibili/feature/video/ui/components/SubReplyDetailComponents.kt").readText()
-
-        assertFalse(source.contains("SubReplyDismissDragHandle("))
-        assertFalse(source.contains("rememberAppChevronDownIcon"))
-        assertFalse(source.contains("contentDescription = \"下拉关闭楼中楼\""))
-    }
 
     @Test
     fun `sub reply detail display count keeps root declared total when page only loaded partially`() {
@@ -215,14 +172,16 @@ class SubReplyDetailPresentationPolicyTest {
     }
 
     @Test
-    fun `sub reply remote total count follows reply detail page count before root count`() {
+    fun `sub reply remote total count uses max of declared counts to avoid window-size undercount`() {
         val data = ReplyData(
             cursor = ReplyCursor(allCount = 2),
             page = ReplyPage(count = 1),
             root = ReplyItem(count = 2, rcount = 1)
         )
 
-        assertEquals(1, resolveSubReplyRemoteTotalCount(data))
+        // 修复二级评论数量口径后：page.count 可能是分页窗口大小而非总数，
+        // 取所有可用声明的最大值，避免“显示还有 N 条，详情却在首屏结束”。
+        assertEquals(2, resolveSubReplyRemoteTotalCount(data))
     }
 
     @Test
@@ -238,28 +197,21 @@ class SubReplyDetailPresentationPolicyTest {
         )
     }
 
-    @Test
-    fun `conversation section title should include filtered reply count`() {
-        assertEquals("对话共2条", resolveSubReplyConversationSectionTitle(replyCount = 2))
-    }
 
     @Test
-    fun `conversation action should only show for directed reply text`() {
-        assertTrue(
-            shouldShowSubReplyConversationAction(
-                buildReply(message = "回复 @前进四放映室：没错")
-            )
-        )
-        assertFalse(
-            shouldShowSubReplyConversationAction(
-                buildReply(message = "又又又又更新？？？？")
-            )
-        )
+    fun `conversation action uses structured thread fields rather than message prefixes`() {
+        val anchor = buildReply(message = "plain message", parent = 19L, dialog = 18L)
+            .copy(root = 10L)
+        assertTrue(shouldShowSubReplyConversationAction(anchor))
+        assertFalse(shouldShowSubReplyConversationAction(anchor.copy(dialog = 0L,
+            content = ReplyContent(message = "回复 @某人：有前缀也没有对话"))))
+        assertFalse(shouldShowSubReplyConversationAction(anchor.copy(root = 0L)))
+        assertFalse(shouldShowSubReplyConversationAction(anchor.copy(parent = 10L)))
     }
 
     @Test
     fun `conversation action should not reuse reply composer when handler is missing`() {
-        val directedReply = buildReply(message = "回复 @前进四放映室：没错")
+        val directedReply = buildReply(message = "plain message", parent = 19L, dialog = 18L).copy(root = 10L)
 
         assertFalse(
             shouldRenderSubReplyConversationAction(
@@ -347,109 +299,49 @@ class SubReplyDetailPresentationPolicyTest {
     }
 
     @Test
-    fun `auxiliary label should prefer garb card number when available`() {
+    fun `leaving conversation restores saved scroll instead of jumping to top`() {
         assertEquals(
-            "CO.013992",
-            resolveSubReplyAuxiliaryLabel(
-                item = buildReply(
-                    message = "test",
-                    garbCardNumber = "13992"
-                )
+            SubReplyDetailScrollRestoreAction.RESTORE_SAVED,
+            resolveSubReplyDetailScrollRestoreAction(
+                previousConversationMode = true,
+                currentConversationMode = false,
+                hasSavedPosition = true,
+            )
+        )
+        assertEquals(
+            SubReplyDetailScrollRestoreAction.SCROLL_TO_TOP,
+            resolveSubReplyDetailScrollRestoreAction(
+                previousConversationMode = true,
+                currentConversationMode = false,
+                hasSavedPosition = false,
+            )
+        )
+        assertEquals(
+            SubReplyDetailScrollRestoreAction.SCROLL_TO_TOP,
+            resolveSubReplyDetailScrollRestoreAction(
+                previousConversationMode = false,
+                currentConversationMode = true,
+                hasSavedPosition = true,
+            )
+        )
+        assertTrue(
+            shouldSaveSubReplyDetailScrollBeforeConversationEnter(
+                previousConversationMode = false,
+                currentConversationMode = true,
+            )
+        )
+        assertFalse(
+            shouldSaveSubReplyDetailScrollBeforeConversationEnter(
+                previousConversationMode = true,
+                currentConversationMode = false,
             )
         )
     }
 
-    @Test
-    fun `auxiliary label should stay hidden when no garb card number exists`() {
-        assertEquals(
-            null,
-            resolveSubReplyAuxiliaryLabel(
-                item = buildReply(message = "test")
-            )
-        )
-    }
-
-    @Test
-    fun `auxiliary label should read user sailing fan number when legacy garb field is missing`() {
-        assertEquals(
-            "CO.008502",
-            resolveSubReplyAuxiliaryLabel(
-                item = buildReply(
-                    message = "test",
-                    userSailingV2 = ReplyUserSailing(
-                        cardBg = ReplySailingCardBg(
-                            image = "https://example.com/fan.png",
-                            fan = ReplySailingFan(
-                                isFan = 1,
-                                number = 8502,
-                                color = "#7B7F88",
-                                name = "测试装扮",
-                                numDesc = "008502"
-                            )
-                        )
-                    )
-                )
-            )
-        )
-    }
-
-    @Test
-    fun `auxiliary badge visual spec keeps decoration legible`() {
-        val spec = resolveSubReplyAuxiliaryBadgeVisualSpec()
-
-        assertEquals(46, spec.imageSizeDp)
-        assertEquals(12, spec.imageCornerRadiusDp)
-        assertEquals(8, spec.imageLabelSpacingDp)
-        assertEquals(12, spec.labelFontSizeSp)
-        assertEquals(12, spec.labelLineHeightSp)
-    }
-
-    @Test
-    fun `light theme detail appearance should follow theme surface instead of dark palette`() {
-        val appearance = resolveSubReplyDetailAppearance(
-            surfaceColor = Color(0xFFFFFFFF),
-            surfaceVariantColor = Color(0xFFF1F2F4),
-            surfaceContainerHighColor = Color(0xFFE8EAF0),
-            outlineVariantColor = Color(0xFFD9DCE3),
-            onSurfaceColor = Color(0xFF1B1C1F),
-            onSurfaceVariantColor = Color(0xFF6A6F76),
-            primaryColor = Color(0xFFFB7299),
-            onPrimaryColor = Color(0xFFFFFFFF)
-        )
-
-        assertEquals(Color(0xFFFFFFFF), appearance.panelColor)
-        assertEquals(Color(0xFF1B1C1F), appearance.primaryTextColor)
-        assertEquals(Color(0xFF6A6F76), appearance.secondaryTextColor)
-        assertEquals(Color(0xFFD9DCE3), appearance.dividerColor)
-        assertEquals(Color(0xFFE8EAF0), appearance.sectionDividerColor)
-        assertEquals(Color(0xFFFB7299), appearance.accentColor)
-    }
-
-    @Test
-    fun `dark theme detail appearance should follow active theme colors`() {
-        val appearance = resolveSubReplyDetailAppearance(
-            surfaceColor = Color(0xFF141414),
-            surfaceVariantColor = Color(0xFF242424),
-            surfaceContainerHighColor = Color(0xFF1E1E1E),
-            outlineVariantColor = Color(0xFF333333),
-            onSurfaceColor = Color(0xFFF5F5F5),
-            onSurfaceVariantColor = Color(0xFFD0D0D0),
-            primaryColor = Color(0xFFFB7299),
-            onPrimaryColor = Color(0xFF101010)
-        )
-
-        assertEquals(Color(0xFF141414), appearance.panelColor)
-        assertEquals(Color(0xFFF5F5F5), appearance.primaryTextColor)
-        assertEquals(Color(0xFFD0D0D0), appearance.secondaryTextColor)
-        assertEquals(Color(0xFF333333), appearance.dividerColor)
-        assertEquals(Color(0xFF242424), appearance.placeholderColor)
-    }
 
     private fun buildReply(
         rpid: Long = 200L,
         message: String,
-        garbCardNumber: String = "",
-        userSailingV2: ReplyUserSailing? = null,
         parent: Long = 0L,
         dialog: Long = 0L
     ): ReplyItem {
@@ -460,8 +352,6 @@ class SubReplyDetailPresentationPolicyTest {
             member = ReplyMember(
                 mid = "12",
                 uname = "ReplyUser",
-                garbCardNumber = garbCardNumber,
-                userSailingV2 = userSailingV2
             ),
             content = ReplyContent(message = message)
         )

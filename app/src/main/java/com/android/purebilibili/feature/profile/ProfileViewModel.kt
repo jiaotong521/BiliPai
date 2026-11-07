@@ -1,15 +1,24 @@
 package com.android.purebilibili.feature.profile
 
+import com.android.purebilibili.core.store.home.HomeWallpaperSelection
+import com.android.purebilibili.core.ui.wallpaper.WallpaperTransform
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.android.purebilibili.core.network.NetworkModule
 import com.android.purebilibili.core.network.WbiUtils
+import com.android.purebilibili.core.network.getSpaceAggregate
 import com.android.purebilibili.core.network.DynamicDeleteRequest
 import com.android.purebilibili.core.store.AccountSessionStore
 import com.android.purebilibili.core.store.StoredAccountSession
 import com.android.purebilibili.core.store.TokenManager
+import com.android.purebilibili.core.coroutines.AccountScopedRequests
+import com.android.purebilibili.core.refresh.FavoriteFolderUpdateBus
+import com.android.purebilibili.core.store.AccountSessionIdentity
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import com.android.purebilibili.data.model.response.FavFolder
+import com.android.purebilibili.data.model.response.FavFolderSource
 import com.android.purebilibili.data.model.response.NavData
 import com.android.purebilibili.data.model.response.SpaceUserInfo
 import com.android.purebilibili.data.model.response.SpaceVideoItem
@@ -18,7 +27,9 @@ import com.android.purebilibili.data.repository.FavoriteRepository
 import com.android.purebilibili.data.repository.BangumiRepository
 import com.android.purebilibili.feature.dynamic.DynamicDeleteAction
 import com.android.purebilibili.feature.bangumi.MY_FOLLOW_TYPE_BANGUMI
+import com.android.purebilibili.feature.list.resolveFavoriteFolderMediaId
 import com.android.purebilibili.feature.home.UserState
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -38,6 +49,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
@@ -56,6 +69,7 @@ sealed class ProfileUiState {
     // 🔧 [新增] 网络错误状态 — 保持登录但显示离线提示
     data class Error(val message: String) : ProfileUiState()
 }
+
 
 internal fun shouldStartProfileLoad(
     hasLoadedOnce: Boolean,
@@ -82,21 +96,120 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     val accounts = _accounts.asStateFlow()
     private val _activeAccountMid = MutableStateFlow<Long?>(null)
     val activeAccountMid = _activeAccountMid.asStateFlow()
+    private val _playbackAccountMid = MutableStateFlow<Long?>(null)
+    val playbackAccountMid = _playbackAccountMid.asStateFlow()
+    private val _purposeAccountMids = MutableStateFlow<Map<com.android.purebilibili.core.store.AccountPurpose, Long?>?>(null)
+    val purposeAccountMids = _purposeAccountMids.asStateFlow()
+    private val accountSnapshotGeneration = java.util.concurrent.atomic.AtomicLong()
     private var hasLoadedProfileOnce = false
     private var isProfileLoadInFlight = false
     private var profileLoadGeneration = 0L
+    private var currentProfileWbiImg: WbiImg? = null
+    private val accountRequests = AccountScopedRequests(viewModelScope)
+    private var profileLoadJob: Job? = null
+    private var isProfilePageActive = false
+
+    fun setProfilePageActive(active: Boolean) {
+        isProfilePageActive = active
+    }
+
+    private fun isCurrentProfileLoad(generation: Long): Boolean =
+        generation == profileLoadGeneration && accountRequests.isCurrent()
 
     init {
         refreshSavedAccounts()
+        accountRequests.observe {
+            profileLoadGeneration += 1L
+            hasLoadedProfileOnce = false
+            isProfileLoadInFlight = false
+            currentProfileWbiImg = null
+            _uiState.value = if (TokenManager.sessDataCache.isNullOrEmpty()) {
+                ProfileUiState.LoggedOut()
+            } else {
+                ProfileUiState.Loading
+            }
+            refreshSavedAccounts()
+            if (isProfilePageActive) loadProfile()
+        }
+        viewModelScope.launch {
+            FavoriteFolderUpdateBus.changes.collect { update ->
+                val current = _uiState.value as? ProfileUiState.Success ?: return@collect
+                if (!accountRequests.isCurrent() || update.ownerMid <= 0L ||
+                    TokenManager.midCache != update.ownerMid || current.user.mid != update.ownerMid
+                ) return@collect
+                val folderIndex = current.space.favoriteFolders.indexOfFirst { folder ->
+                    folder.source == FavFolderSource.OWNED &&
+                        resolveFavoriteFolderMediaId(folder) == update.mediaId
+                }
+                if (folderIndex < 0) return@collect
+                val updatedFolders = current.space.favoriteFolders.toMutableList()
+                updatedFolders[folderIndex] = updatedFolders[folderIndex].copy(
+                    title = update.info.title,
+                    intro = update.info.intro,
+                    cover = update.info.cover,
+                    attr = update.info.attr,
+                )
+                _uiState.value = current.copy(
+                    favoriteFolders = updatedFolders,
+                    space = current.space.copy(favoriteFolders = updatedFolders),
+                )
+            }
+        }
     }
 
     fun refreshSavedAccounts() {
+        val generation = accountSnapshotGeneration.incrementAndGet()
         val context = getApplication<Application>()
-        _accounts.value = AccountSessionStore.getAccounts(context)
-        _activeAccountMid.value = AccountSessionStore.getActiveAccountMid(context)
+        viewModelScope.launch(Dispatchers.IO) {
+            val accounts = AccountSessionStore.getAccounts(context)
+            val activeAccountMid = AccountSessionStore.getActiveAccountMid(context)
+            val playbackAccountMid = AccountSessionStore.getPlaybackAccountMid(context)
+            val purposes = com.android.purebilibili.core.store.AccountPurpose.entries.associateWith {
+                AccountSessionStore.getPurposeAccountMid(context, it)
+            }
+            withContext(Dispatchers.Main.immediate) {
+                if (generation != accountSnapshotGeneration.get()) return@withContext
+                _accounts.value = accounts
+                _activeAccountMid.value = activeAccountMid
+                _playbackAccountMid.value = playbackAccountMid
+                _purposeAccountMids.value = purposes
+            }
+        }
+    }
+
+    fun setPlaybackAccount(mid: Long?, onSuccess: () -> Unit, onFailure: (String) -> Unit) {
+        val context = getApplication<Application>()
+        viewModelScope.launch(Dispatchers.IO) {
+            val updated = AccountSessionStore.setPlaybackAccountMid(context, mid)
+            withContext(Dispatchers.Main.immediate) {
+                if (updated) {
+                    refreshSavedAccounts()
+                    onSuccess()
+                } else {
+                    onFailure("播放账号不可用，请重新登录后再试")
+                }
+            }
+        }
+    }
+
+    fun setPurposeAccount(
+        purpose: com.android.purebilibili.core.store.AccountPurpose,
+        mid: Long?, onSuccess: () -> Unit, onFailure: (String) -> Unit,
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val updated = AccountSessionStore.setPurposeAccountMid(getApplication(), purpose, mid)
+            withContext(Dispatchers.Main.immediate) {
+                if (updated) {
+                    refreshSavedAccounts()
+                    com.android.purebilibili.data.repository.VideoRepository.clearVideoDetailCaches()
+                    onSuccess()
+                } else onFailure("账号不可用，请重新登录后再试")
+            }
+        }
     }
 
     fun loadProfile(force: Boolean = false) {
+        if (!accountRequests.isCurrent()) return
         if (!shouldStartProfileLoad(
                 hasLoadedOnce = hasLoadedProfileOnce,
                 isLoadInFlight = isProfileLoadInFlight,
@@ -106,6 +219,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
             return
         }
         hasLoadedProfileOnce = true
+        profileLoadJob?.cancel()
         isProfileLoadInFlight = true
         val generation = ++profileLoadGeneration
         val requestedMid = TokenManager.midCache
@@ -115,38 +229,48 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         } else {
             ProfileUiState.Loading
         }
-        viewModelScope.launch {
-            performProfileLoad(generation = generation, requestedMid = requestedMid)
+        val requestedIdentity = accountRequests.identity
+        profileLoadJob = accountRequests.launch {
+            performProfileLoad(generation, requestedMid, requestedIdentity)
         }
     }
 
-    private suspend fun performProfileLoad(generation: Long, requestedMid: Long?) {
+    private suspend fun performProfileLoad(
+        generation: Long,
+        requestedMid: Long?,
+        requestedIdentity: AccountSessionIdentity
+    ) {
         var customBgUri = ""
         try {
             customBgUri = readProfileBackgroundUri()
             if (TokenManager.sessDataCache.isNullOrEmpty()) {
-                if (generation == profileLoadGeneration) {
+                if (isCurrentProfileLoad(generation)) {
                     _uiState.value = ProfileUiState.LoggedOut(
-                        topPhoto = resolveProfileTopPhoto(customBgUri, "")
+                        topPhoto = resolveProfileTopPhoto(customBgUri)
                     )
                 }
                 return
             }
             val data = NetworkModule.api.getNavInfo().data
-            if (generation != profileLoadGeneration) return
+            currentCoroutineContext().ensureActive()
+            if (!isCurrentProfileLoad(generation)) return
+            if (requestedMid != null && data?.isLogin == true && data.mid != requestedMid) return
             if (data == null || !data.isLogin) {
-                clearInvalidProfileSession(generation, customBgUri)
+                clearInvalidProfileSession(generation, requestedIdentity, customBgUri)
                 return
             }
             showProfileIdentity(generation, data, customBgUri)
-            profileRequestOrNull { persistProfileSession(data) }
+            currentProfileWbiImg = data.wbi_img
+            profileRequestOrNull { persistProfileSession(generation, data) }
+            currentCoroutineContext().ensureActive()
+            if (!isCurrentProfileLoad(generation)) return
             loadProfileEnrichment(generation, data.mid, data.wbi_img)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             handleProfileLoadFailure(generation, requestedMid, customBgUri, e)
         } finally {
-            if (generation == profileLoadGeneration) {
+            if (isCurrentProfileLoad(generation)) {
                 isProfileLoadInFlight = false
             }
         }
@@ -157,7 +281,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         data: NavData,
         customBgUri: String
     ) {
-        if (generation != profileLoadGeneration) return
+        if (!isCurrentProfileLoad(generation)) return
         val cached = (_uiState.value as? ProfileUiState.Success)
             ?.takeIf { it.user.mid == data.mid }
         val user = UserState(
@@ -166,6 +290,9 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
             name = data.uname,
             mid = data.mid,
             level = data.level_info.current_level,
+            currentLevelMinExp = data.level_info.current_min ?: 0,
+            currentLevelExp = data.level_info.current_exp ?: 0,
+            nextLevelExp = data.level_info.next_exp ?: 0,
             coin = data.money,
             bcoin = data.wallet.bcoin_balance,
             following = cached?.user?.following ?: 0,
@@ -173,20 +300,32 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
             dynamic = cached?.user?.dynamic ?: 0,
             isVip = data.vip.status == 1,
             vipLabel = data.vip.label.text,
-            topPhoto = resolveProfileTopPhoto(customBgUri, data.top_photo)
+            // The theme gradient is the default header. Only an explicitly chosen
+            // wallpaper replaces it; the account's remote banner must not mask it.
+            topPhoto = resolveProfileTopPhoto(customBgUri)
         )
         _uiState.value = ProfileUiState.Success(
             user = user,
             favoriteFolders = cached?.favoriteFolders.orEmpty(),
-            space = cached?.space?.copy(isLoading = true, message = null)
-                ?: ProfileSpaceUiState(isLoading = true),
+            space = cached?.space?.copy(
+                isLoading = true,
+                message = null,
+                contributionLoadState = ProfileContributionLoadState.LOADING
+            ) ?: ProfileSpaceUiState(
+                isLoading = true,
+                contributionLoadState = ProfileContributionLoadState.LOADING
+            ),
             editableAccount = cached?.editableAccount
                 ?: resolveProfileEditableAccountState(account = null, user = user)
         )
     }
 
-    private suspend fun persistProfileSession(data: NavData) {
-        TokenManager.saveMid(getApplication(), data.mid)
+    private suspend fun persistProfileSession(generation: Long, data: NavData) {
+        if (!isCurrentProfileLoad(generation)) return
+        if (TokenManager.midCache != data.mid) {
+            TokenManager.saveMid(getApplication(), data.mid)
+            return
+        }
         TokenManager.saveVipStatus(data.vip.status == 1)
         AccountSessionStore.upsertCurrentAccount(getApplication(), data)
         refreshSavedAccounts()
@@ -203,7 +342,8 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                     launch { loadProfileStats(generation, mid) },
                     launch { loadProfileAccount(generation, mid) },
                     launch { loadProfileSpaceInfo(generation, mid, wbiImg) },
-                    launch { loadProfileAggregate(generation, mid, wbiImg) },
+                    launch { loadProfileAggregate(generation, mid) },
+                    launch { loadProfileContributions(generation, mid, wbiImg) },
                     launch { loadProfileFavoriteFolders(generation, mid) },
                     launch { loadProfileBangumi(generation, mid) },
                     launch { loadProfileDynamics(generation, mid) }
@@ -259,7 +399,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private suspend fun loadProfileAggregate(generation: Long, mid: Long, wbiImg: WbiImg?) {
+    private suspend fun loadProfileAggregate(generation: Long, mid: Long) {
         val aggregate = profileRequestOrNull {
             NetworkModule.spaceApi.getSpaceAggregate(mid).data
         } ?: return
@@ -275,29 +415,33 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                 )
             )
         }
-        hydrateProfileContributionVideos(generation, mid, wbiImg)
     }
 
-    private suspend fun hydrateProfileContributionVideos(
+    private suspend fun loadProfileContributions(
         generation: Long,
         mid: Long,
         wbiImg: WbiImg?
     ) {
-        val current = _uiState.value as? ProfileUiState.Success ?: return
-        if (!shouldApplyProfileLoadResult(generation, profileLoadGeneration, mid, current.user.mid)) {
-            return
-        }
-        if (
-            !shouldHydrateProfileContributionVideos(
-                contributionVideoCount = current.space.contributionVideoCount,
-                seededVideoCount = current.space.contributionVideos.size
+        updateProfileSuccess(generation, mid) { current ->
+            current.copy(
+                space = current.space.copy(
+                    contributionLoadState = ProfileContributionLoadState.LOADING
+                )
             )
-        ) {
-            return
         }
         val videos = profileRequestOrNull {
             fetchProfileContributionVideos(mid, wbiImg)
-        } ?: return
+        }
+        if (videos == null) {
+            updateProfileSuccess(generation, mid) { current ->
+                current.copy(
+                    space = current.space.copy(
+                        contributionLoadState = ProfileContributionLoadState.ERROR
+                    )
+                )
+            }
+            return
+        }
         updateProfileSuccess(generation, mid) { latest ->
             latest.copy(
                 space = mergeProfileContributionVideoState(
@@ -305,6 +449,18 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                     videos = videos.first,
                     totalCount = videos.second
                 )
+            )
+        }
+    }
+
+    fun retryProfileContributions() {
+        val current = _uiState.value as? ProfileUiState.Success ?: return
+        val generation = profileLoadGeneration
+        accountRequests.launch {
+            loadProfileContributions(
+                generation = generation,
+                mid = current.user.mid,
+                wbiImg = currentProfileWbiImg
             )
         }
     }
@@ -336,6 +492,8 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
 
     private suspend fun loadProfileFavoriteFolders(generation: Long, mid: Long) {
         val folders = FavoriteRepository.getFavFolders(mid).getOrNull() ?: return
+        currentCoroutineContext().ensureActive()
+        if (!isCurrentProfileLoad(generation)) return
         var mergedFolders = emptyList<FavFolder>()
         updateProfileSuccess(generation, mid) { current ->
             val nextSpace = mergeProfileFavoriteFolderState(current.space, folders)
@@ -356,18 +514,23 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         val targets = resolveProfileFavoritePreviewCoverTargets(folders)
         if (targets.isEmpty()) return
 
+        // 限制并发：收藏夹 resource/list 对突发并发较敏感，易触发 412/429
+        val coverFetchSemaphore = Semaphore(2)
         val coversByMediaId = supervisorScope {
             targets.map { target ->
                 async {
-                    val cover = FavoriteRepository.getFavoriteList(
-                        mediaId = target.mediaId,
-                        pn = 1
-                    ).getOrNull()
-                        ?.medias
-                        ?.firstOrNull { it.cover.isNotBlank() }
-                        ?.cover
-                        .orEmpty()
-                    target.mediaId to cover
+                    coverFetchSemaphore.withPermit {
+                        val cover = FavoriteRepository.getFavoriteList(
+                            mediaId = target.mediaId,
+                            pn = 1,
+                            ps = 1
+                        ).getOrNull()
+                            ?.medias
+                            ?.firstOrNull { it.cover.isNotBlank() }
+                            ?.cover
+                            .orEmpty()
+                        target.mediaId to cover
+                    }
                 }
             }.awaitAll()
         }.filter { (_, cover) -> cover.isNotBlank() }
@@ -400,7 +563,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
 
     private suspend fun loadProfileDynamics(generation: Long, mid: Long) {
         val items = profileRequestOrNull {
-            NetworkModule.spaceApi.getSpaceDynamic(mid).data?.items
+            NetworkModule.spaceApi.getSpaceDynamic(mid).data?.items?.let { com.android.purebilibili.data.repository.filterGoodsSpaceDynamics(it) }
         } ?: return
         updateProfileSuccess(generation, mid) { current ->
             current.copy(space = mergeProfileDynamicState(current.space, items))
@@ -413,18 +576,37 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         transform: (ProfileUiState.Success) -> ProfileUiState.Success
     ) {
         val current = _uiState.value as? ProfileUiState.Success ?: return
-        if (!shouldApplyProfileLoadResult(generation, profileLoadGeneration, mid, current.user.mid)) {
+        if (!isCurrentProfileLoad(generation) ||
+            !shouldApplyProfileLoadResult(generation, profileLoadGeneration, mid, current.user.mid)
+        ) {
             return
         }
         _uiState.value = transform(current)
     }
 
-    private suspend fun clearInvalidProfileSession(generation: Long, customBgUri: String) {
-        if (generation != profileLoadGeneration) return
-        TokenManager.clear(getApplication())
-        AccountSessionStore.clearActiveAccount(getApplication())
-        refreshSavedAccounts()
-        _uiState.value = ProfileUiState.LoggedOut(topPhoto = resolveProfileTopPhoto(customBgUri, ""))
+    private suspend fun clearInvalidProfileSession(
+        generation: Long,
+        requestedIdentity: AccountSessionIdentity,
+        customBgUri: String
+    ) {
+        if (!isCurrentProfileLoad(generation)) return
+        // Session mutation must outlive the account event it publishes.
+        viewModelScope.launch {
+            if (!isCurrentProfileLoad(generation) ||
+                !accountRequests.isCurrent(requestedIdentity)
+            ) return@launch
+            TokenManager.clear(getApplication())
+            val clearedIdentity = AccountSessionIdentity(
+                mid = null,
+                generation = requestedIdentity.generation + if (requestedIdentity.mid != null) 1L else 0L
+            )
+            if (TokenManager.accountIdentity.value != clearedIdentity) return@launch
+            AccountSessionStore.clearActiveAccount(getApplication())
+            refreshSavedAccounts()
+            _uiState.value = ProfileUiState.LoggedOut(
+                topPhoto = resolveProfileTopPhoto(customBgUri)
+            )
+        }
     }
 
     private fun handleProfileLoadFailure(
@@ -433,7 +615,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         customBgUri: String,
         error: Exception
     ) {
-        if (generation != profileLoadGeneration) return
+        if (!isCurrentProfileLoad(generation)) return
         val cached = (_uiState.value as? ProfileUiState.Success)
             ?.takeIf { it.user.mid == requestedMid }
         if (cached != null) {
@@ -450,7 +632,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
             return
         }
         _uiState.value = if (TokenManager.sessDataCache.isNullOrEmpty()) {
-            ProfileUiState.LoggedOut(topPhoto = resolveProfileTopPhoto(customBgUri, ""))
+            ProfileUiState.LoggedOut(topPhoto = resolveProfileTopPhoto(customBgUri))
         } else {
             ProfileUiState.Error(
                 if (isNetworkError(error)) "网络不可用，请检查网络连接" else "加载失败，点击重试"
@@ -470,7 +652,10 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
 
     private suspend fun <T> profileRequestOrNull(request: suspend () -> T): T? {
         return try {
-            request()
+            currentCoroutineContext().ensureActive()
+            val result = request()
+            currentCoroutineContext().ensureActive()
+            result
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -478,8 +663,8 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private fun resolveProfileTopPhoto(customBgUri: String, fallback: String): String {
-        if (customBgUri.isBlank()) return fallback
+    private fun resolveProfileTopPhoto(customBgUri: String): String {
+        if (customBgUri.isBlank()) return ""
         if (!customBgUri.startsWith("file://")) return customBgUri
         return runCatching {
             val file = File(Uri.parse(customBgUri).path.orEmpty())
@@ -510,7 +695,8 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun deleteProfileDynamic(action: DynamicDeleteAction, onResult: (Boolean, String) -> Unit) {
-        viewModelScope.launch {
+        val identity = accountRequests.identity
+        accountRequests.launch {
             try {
                 if (action.dynamicId.isBlank()) {
                     onResult(false, "无法删除该动态")
@@ -530,13 +716,18 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                         rid_str = action.rid
                     )
                 )
+                currentCoroutineContext().ensureActive()
+                if (!accountRequests.isCurrent(identity)) return@launch
                 if (response.code == 0) {
                     removeProfileDynamic(action.dynamicId)
                     onResult(true, "已删除动态")
                 } else {
                     onResult(false, response.message.ifBlank { "删除失败" })
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
+                if (!accountRequests.isCurrent(identity)) return@launch
                 onResult(false, e.message ?: "网络错误")
             }
         }
@@ -565,39 +756,48 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
             return
         }
 
-        val csrf = TokenManager.csrfCache.orEmpty()
-        if (csrf.isBlank()) {
-            _uiState.value = current.copy(
-                space = current.space.copy(signSaveMessage = "请先登录后再修改签名")
-            )
+        performAccountEdit("签名已提交，等待审核后生效") { identity ->
+            ProfileAccountRepository.updateSign(identity, sign.trim())
+        }
+    }
+
+    internal fun updateAccountField(field: ProfileAccountField, value: String) {
+        val normalized = value.trim()
+        if (field == ProfileAccountField.NAME && (normalized.isEmpty() || normalized.length > 16)) {
+            val current = _uiState.value as? ProfileUiState.Success ?: return
+            _uiState.value = current.copy(space = current.space.copy(signSaveMessage = "昵称须为 1 至 16 个字符"))
             return
         }
+        performAccountEdit("资料修改成功") { identity ->
+            ProfileAccountRepository.update(identity, field, normalized)
+        }
+    }
 
-        viewModelScope.launch {
-            val beforeSave = _uiState.value as? ProfileUiState.Success ?: return@launch
-            _uiState.value = beforeSave.copy(
-                space = beforeSave.space.copy(isSavingSign = true, signSaveMessage = null)
-            )
-            val result = runCatching {
-                NetworkModule.api.updateMemberSign(userSign = sign.trim(), csrf = csrf)
-            }
-            val latest = _uiState.value as? ProfileUiState.Success ?: return@launch
-            val response = result.getOrNull()
-            if (response?.code == 0) {
-                _uiState.value = latest.copy(
-                    editableAccount = latest.editableAccount.copy(sign = sign.trim()),
-                    space = latest.space.copy(
-                        isSavingSign = false,
-                        signSaveMessage = "签名已提交，等待审核后生效"
-                    )
-                )
-            } else {
-                _uiState.value = latest.copy(
-                    space = latest.space.copy(
-                        isSavingSign = false,
-                        signSaveMessage = response?.message?.ifBlank { null } ?: "签名保存失败"
-                    )
-                )
+    fun updateAccountAvatar(uri: Uri) {
+        performAccountEdit("头像已提交，资料刷新可能需要一些时间") { identity ->
+            ProfileAccountRepository.uploadAvatar(getApplication(), identity, uri)
+        }
+    }
+
+    private fun performAccountEdit(message: String, action: suspend (AccountSessionIdentity) -> Unit) {
+        val identity = accountRequests.identity
+        val current = _uiState.value as? ProfileUiState.Success ?: return
+        if (current.space.isSavingSign) return
+        _uiState.value = current.copy(space = current.space.copy(isSavingSign = true, signSaveMessage = null))
+        accountRequests.launch {
+            try {
+                action(identity)
+                currentCoroutineContext().ensureActive()
+                if (!accountRequests.isCurrent(identity)) return@launch
+                val latest = _uiState.value as? ProfileUiState.Success ?: return@launch
+                _uiState.value = latest.copy(space = latest.space.copy(isSavingSign = false, signSaveMessage = message))
+                loadProfile(force = true)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (!accountRequests.isCurrent(identity)) return@launch
+                val latest = _uiState.value as? ProfileUiState.Success ?: return@launch
+                _uiState.value = latest.copy(space = latest.space.copy(isSavingSign = false, signSaveMessage = error.message ?: "资料修改失败"))
             }
         }
     }
@@ -611,38 +811,20 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         mobileTransform: ProfileWallpaperTransform = ProfileWallpaperTransform(),
         tabletTransform: ProfileWallpaperTransform = ProfileWallpaperTransform()
     ) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
                 val context = getApplication<Application>()
-                
+                val wallpaper = importWallpaperMedia(context, uri, File(context.filesDir, "profile_wallpaper"))
                 SettingsManager.setProfileBgTransform(context, false, mobileTransform)
                 SettingsManager.setProfileBgTransform(context, true, tabletTransform)
-                
-                // 1. 创建图片保存目录
-                val imagesDir = File(context.filesDir, "images")
-                if (!imagesDir.exists()) imagesDir.mkdirs()
-                
-                // 2. 创建目标文件 (profile_bg.jpg)
-                // 使用固定文件名，每次覆盖，节省空间
-                val destFile = File(imagesDir, "profile_bg.jpg")
-                
-                // 3. 复制文件
-                context.contentResolver.openInputStream(uri)?.use { input ->
-                    FileOutputStream(destFile).use { output ->
-                        input.copyTo(output)
-                    }
-                }
-                
-                // 4. 保存文件路径到设置 (使用 file:// URI)
-                val savedUri = Uri.fromFile(destFile).toString()
-                SettingsManager.setProfileBgUri(context, savedUri)
-                
-                // 5. 刷新界面 (重新加载)
+                SettingsManager.setProfileBgUri(context, Uri.fromFile(wallpaper).toString())
                 loadProfile(force = true)
-                
-            } catch (e: Exception) {
-                e.printStackTrace()
-                // 可以增加一个 Toast 或 Error State 通知用户失败
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                withContext(Dispatchers.Main.immediate) {
+                    android.widget.Toast.makeText(getApplication(), error.message ?: "壁纸导入失败", android.widget.Toast.LENGTH_LONG).show()
+                }
             }
         }
     }
@@ -660,12 +842,20 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
 
     fun logout() {
         viewModelScope.launch {
+            val identity = TokenManager.accountIdentity.value
             profileLoadGeneration += 1L
             isProfileLoadInFlight = false
             // retain background
             val customBgUri = SettingsManager.getProfileBgUri(getApplication()).first() ?: ""
+            if (TokenManager.accountIdentity.value != identity) return@launch
             AccountSessionStore.upsertCurrentAccount(getApplication())
+            if (TokenManager.accountIdentity.value != identity) return@launch
             TokenManager.clear(getApplication())
+            val clearedIdentity = AccountSessionIdentity(
+                mid = null,
+                generation = identity.generation + if (identity.mid != null) 1L else 0L
+            )
+            if (TokenManager.accountIdentity.value != clearedIdentity) return@launch
             AccountSessionStore.clearActiveAccount(getApplication())
             refreshSavedAccounts()
             _uiState.value = ProfileUiState.LoggedOut(topPhoto = customBgUri)
@@ -697,7 +887,6 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
             }
 
             refreshSavedAccounts()
-            loadProfile(force = true)
             onSuccess()
         }
     }
@@ -730,16 +919,25 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     val officialWallpapersError = _officialWallpapersError.asStateFlow()
 
     fun loadOfficialWallpapers() {
+        if (_officialWallpapersLoading.value) return
         viewModelScope.launch {
             _officialWallpapersLoading.value = true
             _officialWallpapersError.value = null
-            val result = com.android.purebilibili.data.repository.SplashRepository.getOfficialWallpapers()
-            if (result.isSuccess) {
-                _officialWallpapers.value = result.getOrNull() ?: emptyList()
-            } else {
-                _officialWallpapersError.value = result.exceptionOrNull()?.message ?: "加载失败，点击重试"
+            try {
+                val result = com.android.purebilibili.data.repository.SplashRepository.getOfficialWallpapers()
+                if (result.isSuccess) {
+                    val catalog = result.getOrThrow()
+                    if (catalog.items.isNotEmpty() || catalog.failedSources.isEmpty()) {
+                        _officialWallpapers.value = catalog.items
+                    }
+                    _officialWallpapersError.value = catalog.failedSources.takeIf { it.isNotEmpty() }
+                        ?.joinToString("、")?.let { "${it}未加载成功，当前列表不完整，请刷新重试" }
+                } else {
+                    _officialWallpapersError.value = result.exceptionOrNull()?.message ?: "加载失败，点击重试"
+                }
+            } finally {
+                _officialWallpapersLoading.value = false
             }
-            _officialWallpapersLoading.value = false
         }
     }
 
@@ -859,7 +1057,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                     
                     loadProfile(force = true) // 刷新
                     
-                    withContext(Dispatchers.Main) {
+                    withContext(Dispatchers.Main.immediate) {
                         _wallpaperSaveState.value = WallpaperSaveState.Success
                         onComplete()
                     }
@@ -934,7 +1132,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                          saveImageToGallery(context, bytes, "bili_splash_${System.currentTimeMillis()}.jpg")
                     }
 
-                    withContext(Dispatchers.Main) {
+                    withContext(Dispatchers.Main.immediate) {
                         _splashSaveState.value = WallpaperSaveState.Success
                         onComplete()
                     }
@@ -963,16 +1161,19 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
             _splashSaveState.value = WallpaperSaveState.Loading
             try {
                 val context = getApplication<Application>()
-                SettingsManager.setSplashWallpaperUri(context, uri)
+                val wallpaper = importWallpaperImage(context, Uri.parse(uri), File(context.filesDir, "splash"))
+                SettingsManager.setSplashWallpaperUri(context, Uri.fromFile(wallpaper).toString())
                 SettingsManager.setSplashEnabled(context, true)
                 SettingsManager.setSplashRandomEnabled(context, false)
                 mobileBias?.let { SettingsManager.setSplashAlignment(context, isTablet = false, bias = it) }
                 tabletBias?.let { SettingsManager.setSplashAlignment(context, isTablet = true, bias = it) }
 
-                withContext(Dispatchers.Main) {
+                withContext(Dispatchers.Main.immediate) {
                     _splashSaveState.value = WallpaperSaveState.Success
                     onComplete()
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 e.printStackTrace()
                 _splashSaveState.value = WallpaperSaveState.Error(e.message ?: "保存出错")
@@ -987,75 +1188,145 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     fun setAsHomeWallpaper(
         url: String,
         saveToGallery: Boolean = false,
+        mobileTransform: WallpaperTransform = WallpaperTransform(),
+        tabletTransform: WallpaperTransform = WallpaperTransform(),
         onComplete: () -> Unit = {}
     ) {
+        if (_splashSaveState.value is WallpaperSaveState.Loading) return
+        _splashSaveState.value = WallpaperSaveState.Loading
         viewModelScope.launch(Dispatchers.IO) {
-            _splashSaveState.value = WallpaperSaveState.Loading
+            var pendingFile: File? = null
+            var committed = false
             try {
                 val context = getApplication<Application>()
-                var finalUrl = url
-                if (finalUrl.startsWith("//")) {
-                    finalUrl = "https:$finalUrl"
-                } else if (finalUrl.startsWith("http://")) {
-                    finalUrl = finalUrl.replace("http://", "https://")
-                }
-
+                val finalUrl = normalizeSplashWallpaperUrl(url)
                 val request = okhttp3.Request.Builder().url(finalUrl).build()
-                val response = NetworkModule.okHttpClient.newCall(request).execute()
-
-                if (response.isSuccessful) {
-                    val bytes = response.body.bytes()
-                    val homeWallpaperDir = File(context.filesDir, "home_wallpaper")
-                    if (!homeWallpaperDir.exists()) homeWallpaperDir.mkdirs()
-                    val destFile = File(homeWallpaperDir, "home_bg_${System.currentTimeMillis()}.jpg")
-
-                    FileOutputStream(destFile).use { output ->
-                        output.write(bytes)
-                    }
-
-                    SettingsManager.setHomeWallpaperUri(context, Uri.fromFile(destFile).toString())
-
-                    if (saveToGallery) {
-                        saveImageToGallery(context, bytes, "bili_home_${System.currentTimeMillis()}.jpg")
-                    }
-
-                    withContext(Dispatchers.Main) {
-                        _splashSaveState.value = WallpaperSaveState.Success
-                        onComplete()
-                    }
-                } else {
-                    _splashSaveState.value = WallpaperSaveState.Error("下载失败: ${response.code}")
+                val bytes = NetworkModule.okHttpClient.newCall(request).execute().use { response ->
+                    check(response.isSuccessful) { "下载失败: ${response.code}" }
+                    response.body.bytes()
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-                _splashSaveState.value = WallpaperSaveState.Error(e.message ?: "保存出错")
+                val directory = File(context.filesDir, "home_wallpaper")
+                check(directory.isDirectory || directory.mkdirs()) { "无法创建壁纸目录" }
+                val file = File.createTempFile("home_bg_", ".jpg", directory)
+                pendingFile = file
+                file.outputStream().use { it.write(bytes) }
+                val options = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                android.graphics.BitmapFactory.decodeFile(file.absolutePath, options)
+                check(options.outWidth > 0 && options.outHeight > 0) { "壁纸图片无效" }
+                if (saveToGallery) saveImageToGallery(context, bytes, "bili_home_${System.currentTimeMillis()}.jpg")
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                withContext(kotlinx.coroutines.NonCancellable) {
+                    SettingsManager.setHomeWallpaperSelection(context, HomeWallpaperSelection(
+                        uri = Uri.fromFile(file).toString(),
+                        mobileTransform = mobileTransform,
+                        tabletTransform = tabletTransform,
+                    ))
+                    committed = true
+                }
+                withContext(Dispatchers.Main.immediate) {
+                    _splashSaveState.value = WallpaperSaveState.Success
+                    onComplete()
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _splashSaveState.value = WallpaperSaveState.Error(error.message ?: "保存出错")
             } finally {
-                if (_splashSaveState.value is WallpaperSaveState.Success) {
-                    _splashSaveState.value = WallpaperSaveState.Idle
-                }
+                if (!committed) pendingFile?.delete()
+                if (_splashSaveState.value is WallpaperSaveState.Success) _splashSaveState.value = WallpaperSaveState.Idle
             }
         }
     }
 
     fun setCustomHomeWallpaper(
         uri: String,
+        mobileTransform: WallpaperTransform = WallpaperTransform(),
+        tabletTransform: WallpaperTransform = WallpaperTransform(),
         onComplete: () -> Unit = {}
     ) {
+        if (_splashSaveState.value is WallpaperSaveState.Loading) return
+        _splashSaveState.value = WallpaperSaveState.Loading
         viewModelScope.launch(Dispatchers.IO) {
-            _splashSaveState.value = WallpaperSaveState.Loading
+            var pendingFile: File? = null
+            var committed = false
             try {
                 val context = getApplication<Application>()
-                SettingsManager.setHomeWallpaperUri(context, uri)
-
-                withContext(Dispatchers.Main) {
+                val file = importWallpaperMedia(context, Uri.parse(uri), File(context.filesDir, "home_wallpaper"))
+                pendingFile = file
+                withContext(kotlinx.coroutines.NonCancellable) {
+                    SettingsManager.setHomeWallpaperSelection(context, HomeWallpaperSelection(
+                        uri = Uri.fromFile(file).toString(),
+                        mobileTransform = mobileTransform,
+                        tabletTransform = tabletTransform,
+                    ))
+                    committed = true
+                }
+                withContext(Dispatchers.Main.immediate) {
                     _splashSaveState.value = WallpaperSaveState.Success
                     onComplete()
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-                _splashSaveState.value = WallpaperSaveState.Error(e.message ?: "保存出错")
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _splashSaveState.value = WallpaperSaveState.Error(error.message ?: "保存出错")
             } finally {
-                if (_splashSaveState.value is WallpaperSaveState.Success) {
+                if (!committed) pendingFile?.delete()
+                if (_splashSaveState.value is WallpaperSaveState.Success) _splashSaveState.value = WallpaperSaveState.Idle
+            }
+        }
+    }
+
+    fun setAsSubscriptionArticleWallpaper(
+        url: String,
+        saveToGallery: Boolean = false,
+        onComplete: () -> Unit = {},
+    ) {
+        if (_splashSaveState.value is WallpaperSaveState.Loading) return
+        _splashSaveState.value = WallpaperSaveState.Loading
+        viewModelScope.launch(Dispatchers.IO) {
+            var downloadedFile: File? = null
+            var wallpaper: File? = null
+            var saved = false
+            try {
+                val context = getApplication<Application>()
+                val source = if (isUserSelectedSplashWallpaperUri(url)) {
+                    Uri.parse(url)
+                } else {
+                    val request = okhttp3.Request.Builder()
+                        .url(normalizeSplashWallpaperUrl(url))
+                        .build()
+                    val temporaryFile = File.createTempFile("article_wallpaper_", ".img", context.cacheDir)
+                    downloadedFile = temporaryFile
+                    NetworkModule.okHttpClient.newCall(request).execute().use { response ->
+                        check(response.isSuccessful) { "下载失败: ${response.code}" }
+                        response.body.byteStream().use { input ->
+                            temporaryFile.outputStream().use { output -> input.copyTo(output) }
+                        }
+                    }
+                    Uri.fromFile(temporaryFile)
+                }
+                val imported = importWallpaperImage(context, source, File(context.filesDir, "subscription_article_wallpaper"))
+                wallpaper = imported
+                SettingsManager.setSubscriptionArticleWallpaperUri(context, Uri.fromFile(imported).toString())
+                saved = true
+                SettingsManager.setSubscriptionArticleWallpaperEnabled(context, true)
+                if (saveToGallery && !isUserSelectedSplashWallpaperUri(url)) {
+                    saveImageToGallery(context, imported.readBytes(), "bili_article_${System.currentTimeMillis()}.jpg")
+                }
+                withContext(Dispatchers.Main.immediate) {
+                    _splashSaveState.value = WallpaperSaveState.Success
+                    onComplete()
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _splashSaveState.value = WallpaperSaveState.Error(error.message ?: "正文壁纸保存失败")
+            } finally {
+                downloadedFile?.delete()
+                if (!saved) wallpaper?.delete()
+                if (_splashSaveState.value is WallpaperSaveState.Success ||
+                    _splashSaveState.value is WallpaperSaveState.Loading
+                ) {
                     _splashSaveState.value = WallpaperSaveState.Idle
                 }
             }

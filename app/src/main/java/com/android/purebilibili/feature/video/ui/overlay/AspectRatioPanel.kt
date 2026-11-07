@@ -1,6 +1,8 @@
 // 文件路径: feature/video/ui/overlay/AspectRatioPanel.kt
 package com.android.purebilibili.feature.video.ui.overlay
 
+import com.android.purebilibili.core.ui.AppContentColors
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -10,8 +12,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import com.android.purebilibili.core.ui.components.AppText
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -21,15 +22,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material3.MaterialTheme
+import com.android.purebilibili.core.ui.components.AppSurface
 import com.android.purebilibili.feature.video.ui.components.VideoAspectRatio
+import com.android.purebilibili.core.ui.AppShapes
+import com.android.purebilibili.core.ui.ContainerLevel
 
 /**
  *  画面比例选择面板（官方 B 站样式）
- * 
+ *
  * 从左侧滑入的面板，支持：
  * - 点击选择比例
  * - 上下滑动快速切换
- * 
+ *
  * 选项：适应 | 填充 | 16:9 | 4:3
  */
 @Composable
@@ -41,17 +45,17 @@ fun AspectRatioPanel(
     modifier: Modifier = Modifier
 ) {
     data class RatioOption(val ratio: VideoAspectRatio, val label: String)
-    
+
     val ratioOptions = listOf(
         RatioOption(VideoAspectRatio.FIT, "适应"),
         RatioOption(VideoAspectRatio.FILL, "填充"),
         RatioOption(VideoAspectRatio.RATIO_16_9, "16:9"),
         RatioOption(VideoAspectRatio.RATIO_4_3, "4:3")
     )
-    
+
     // 滑动检测状态
     var accumulatedDrag by remember { mutableFloatStateOf(0f) }
-    
+
     AnimatedVisibility(
         visible = visible,
         enter = fadeIn() + slideInHorizontally { -it },
@@ -64,7 +68,7 @@ fun AspectRatioPanel(
                 .clickable(indication = null, interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }) { onDismiss() }
         ) {
             // 左侧面板
-            Surface(
+            AppSurface(
                 modifier = Modifier
                     .align(Alignment.CenterStart)
                     .padding(start = 16.dp)
@@ -77,7 +81,7 @@ fun AspectRatioPanel(
                             onVerticalDrag = { _, dragAmount ->
                                 accumulatedDrag += dragAmount
                                 val threshold = 50f
-                                
+
                                 if (accumulatedDrag > threshold) {
                                     // 向下滑动 -> 下一个选项
                                     val currentIndex = ratioOptions.indexOfFirst { it.ratio == currentRatio }
@@ -97,7 +101,7 @@ fun AspectRatioPanel(
                         )
                     }
                     .clickable(indication = null, interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }) { /* 阻止点击穿透 */ },
-                shape = RoundedCornerShape(12.dp),
+                shape = AppShapes.container(ContainerLevel.Card),
                 color = Color.Black.copy(alpha = 0.85f)
             ) {
                 Column(
@@ -105,33 +109,34 @@ fun AspectRatioPanel(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     // 标题
-                    Text(
+                    AppText(
                         text = "画面比例",
                         color = Color.White.copy(alpha = 0.6f),
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.padding(bottom = 8.dp)
                     )
-                    
+
                     // 选项列表
                     ratioOptions.forEach { option ->
                         val isSelected = currentRatio == option.ratio
-                        
-                        Surface(
-                            onClick = { 
+
+                        AppSurface(
+                            onClick = {
                                 onRatioChange(option.ratio)
                                 onDismiss()
                             },
-                            color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else Color.Transparent,
-                            shape = RoundedCornerShape(6.dp),
+                            color = if (isSelected) AppContentColors.accent().copy(alpha = 0.2f) else Color.Transparent,
+                            shape = AppShapes.container(ContainerLevel.Chip),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 8.dp, vertical = 2.dp)
                         ) {
-                            Text(
+                            AppText(
                                 text = option.label,
-                                color = if (isSelected) MaterialTheme.colorScheme.primary else Color.White,
-                                fontSize = 14.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isSelected) AppContentColors.accent() else Color.White,
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                ),
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
                             )
                         }

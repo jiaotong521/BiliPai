@@ -9,6 +9,37 @@ import kotlin.test.assertEquals
 class SeekPreviewBubblePolicyTest {
 
     @Test
+    fun anchoredPreview_followsProgressAndClampsAtTrackEdges() {
+        assertEquals(
+            0,
+            resolveSeekPreviewBubbleOffsetPx(
+                placement = SeekPreviewBubblePlacement.Anchored,
+                offsetX = 0f,
+                containerWidth = 400f,
+                bubbleWidthPx = 120f
+            )
+        )
+        assertEquals(
+            140,
+            resolveSeekPreviewBubbleOffsetPx(
+                placement = SeekPreviewBubblePlacement.Anchored,
+                offsetX = 200f,
+                containerWidth = 400f,
+                bubbleWidthPx = 120f
+            )
+        )
+        assertEquals(
+            280,
+            resolveSeekPreviewBubbleOffsetPx(
+                placement = SeekPreviewBubblePlacement.Anchored,
+                offsetX = 400f,
+                containerWidth = 400f,
+                bubbleWidthPx = 120f
+            )
+        )
+    }
+
+    @Test
     fun seekPreviewAnchor_quantizesToCurrentVideoshotFrameBoundary() {
         val videoshotData = VideoshotData(
             img_x_len = 2,
@@ -86,6 +117,138 @@ class SeekPreviewBubblePolicyTest {
                 sourceHeightPx = 160,
                 containerWidthPx = 188,
                 containerHeightPx = 106
+            )
+        )
+    }
+
+    @Test
+    fun compactPortraitPreview_usesReadablePortraitFrame() {
+        assertEquals(
+            CompactSeekPreviewSize(widthDp = 120, heightDp = 213),
+            resolveCompactSeekPreviewSize(
+                sourceWidthPx = 160,
+                sourceHeightPx = 90,
+                screenWidthDp = 393,
+                videoAspectRatio = 9f / 16f
+            )
+        )
+    }
+
+    @Test
+    fun compactPreview_clampsHeightToContainerMinusSafetyMargin() {
+        // 播放区 300dp − 140dp 安全边距 = 160dp 上限，压掉 213dp 的竖版预览。
+        assertEquals(
+            CompactSeekPreviewSize(widthDp = 120, heightDp = 160),
+            resolveCompactSeekPreviewSize(
+                sourceWidthPx = 160,
+                sourceHeightPx = 90,
+                screenWidthDp = 393,
+                videoAspectRatio = 9f / 16f,
+                containerHeightDp = 300
+            )
+        )
+    }
+
+    @Test
+    fun compactPreview_keepsOnlyTimestampWhenContainerCapBelowReadableMinimum() {
+        // 高度不足时让组件只渲染时间，不能恢复到更大的缩略图。
+        assertEquals(
+            CompactSeekPreviewSize(widthDp = 120, heightDp = 0),
+            resolveCompactSeekPreviewSize(
+                sourceWidthPx = 160,
+                sourceHeightPx = 90,
+                screenWidthDp = 393,
+                videoAspectRatio = 9f / 16f,
+                containerHeightDp = 200
+            )
+        )
+    }
+
+    @Test
+    fun previewShrinkAndRestoreUpdatesImageHeightAndKeepsNarrowWidthInsideWindow() {
+        val sizes = listOf(800, 300, 200, 800).map { height ->
+            resolveCompactSeekPreviewSize(160, 90, 393, 9f / 16f, height)
+        }
+        assertEquals(listOf(213, 160, 0, 213), sizes.map { it.heightDp })
+        assertEquals(68, resolveCompactSeekPreviewSize(160, 90, 100).widthDp)
+    }
+
+    @Test
+    fun landscapePreviewAndReservedAreaUseSameHeightDecisionOnResize() {
+        assertEquals(listOf(120, 100, 0, 120), listOf(800, 240, 200, 800).map {
+            resolveSeekPreviewBubbleHeightDp(900, it)
+        })
+        assertEquals(106, resolveSeekPreviewBubbleHeightDp(393, 0))
+    }
+
+    @Test
+    fun compactPreview_ignoresInvalidContainerHeight() {
+        assertEquals(
+            CompactSeekPreviewSize(widthDp = 144, heightDp = 81),
+            resolveCompactSeekPreviewSize(
+                sourceWidthPx = 160,
+                sourceHeightPx = 90,
+                screenWidthDp = 393,
+                containerHeightDp = 0
+            )
+        )
+    }
+
+    @Test
+    fun portraitVideoPreview_cropsLetterboxedSpriteCellToVideoRatio() {
+        assertEquals(
+            SeekPreviewSourceCrop(
+                offsetX = 55,
+                offsetY = 0,
+                width = 51,
+                height = 90
+            ),
+            resolveSeekPreviewSourceCrop(
+                sourceWidthPx = 160,
+                sourceHeightPx = 90,
+                videoAspectRatio = 9f / 16f
+            )
+        )
+    }
+
+    @Test
+    fun landscapeVideoPreview_keepsWholeSpriteCell() {
+        assertEquals(
+            SeekPreviewSourceCrop(
+                offsetX = 0,
+                offsetY = 0,
+                width = 160,
+                height = 90
+            ),
+            resolveSeekPreviewSourceCrop(
+                sourceWidthPx = 160,
+                sourceHeightPx = 90,
+                videoAspectRatio = 16f / 9f
+            )
+        )
+    }
+
+    @Test
+    fun compactLandscapePreview_keepsLandscapeRatio() {
+        assertEquals(
+            CompactSeekPreviewSize(widthDp = 144, heightDp = 81),
+            resolveCompactSeekPreviewSize(
+                sourceWidthPx = 160,
+                sourceHeightPx = 90,
+                screenWidthDp = 393
+            )
+        )
+    }
+
+    @Test
+    fun portraitPlayerLandscapeContent_usesDetectedVideoAspectRatio() {
+        assertEquals(
+            CompactSeekPreviewSize(widthDp = 144, heightDp = 81),
+            resolveCompactSeekPreviewSize(
+                sourceWidthPx = 160,
+                sourceHeightPx = 90,
+                screenWidthDp = 393,
+                videoAspectRatio = 16f / 9f
             )
         )
     }

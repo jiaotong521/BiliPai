@@ -34,6 +34,22 @@ class BackgroundPlaybackPolicyTest {
     }
 
     @Test
+    fun explicitMiniPlayerEntryOverridesDisabledModeOnlyForAnActiveSession() {
+        fun visible(forced: Boolean, active: Boolean = true, navigating: Boolean = false) =
+            shouldShowInAppMiniPlayerByPolicy(
+                mode = SettingsManager.MiniPlayerMode.OFF,
+                isActive = active,
+                isNavigatingToVideo = navigating,
+                stopPlaybackOnExit = false,
+                forcedByUser = forced,
+            )
+        assertTrue(visible(forced = true))
+        assertFalse(visible(forced = false))
+        assertFalse(visible(forced = true, active = false))
+        assertFalse(visible(forced = true, navigating = true))
+    }
+
+    @Test
     fun combinedMiniPlayerModeShowsInAppMiniPlayerAndCanEnterSystemPip() {
         assertTrue(
             shouldShowInAppMiniPlayerByPolicy(
@@ -128,6 +144,20 @@ class BackgroundPlaybackPolicyTest {
                 isActive = true,
                 isLeavingByNavigation = true,
                 stopPlaybackOnExit = false
+            )
+        )
+    }
+
+    @Test
+    fun audioBarKeepsDetailPlaybackAcrossNavigationExit() {
+        assertTrue(
+            shouldContinueBackgroundAudioByPolicy(
+                backgroundPlaybackEnabled = false,
+                mode = SettingsManager.MiniPlayerMode.OFF,
+                isActive = true,
+                isLeavingByNavigation = true,
+                stopPlaybackOnExit = false,
+                keepForAudioNowPlaying = true,
             )
         )
     }
@@ -675,6 +705,18 @@ class BackgroundPlaybackPolicyTest {
     }
 
     @Test
+    fun foregroundEntryDoesNotSeek_whenBackgroundAudioTimelineStayedActive() {
+        assertFalse(
+            shouldRefreshVideoFrameOnEnterForeground(
+                hadSavedTrackParams = true,
+                hasMediaItems = true,
+                playbackState = Player.STATE_READY,
+                retainedBackgroundAudio = true,
+            )
+        )
+    }
+
+    @Test
     fun foregroundEntryResumesPlaybackOnlyWhenPlaybackIntentWasStillActive() {
         assertTrue(
             shouldResumePlaybackOnEnterForeground(
@@ -826,6 +868,36 @@ class BackgroundPlaybackPolicyTest {
     }
 
     @Test
+    fun audioNowPlayingRetentionDoesNotOverrideExplicitStop() {
+        assertTrue(
+            shouldKeepPlaybackForAudioNowPlayingBar(
+                sessionActive = true,
+                barEnabled = true,
+            )
+        )
+        assertFalse(
+            shouldKeepPlaybackForAudioNowPlayingBar(
+                sessionActive = false,
+                barEnabled = true,
+            )
+        )
+        assertTrue(
+            shouldClearPlaybackNotificationOnNavigationExit(
+                mode = SettingsManager.MiniPlayerMode.OFF,
+                stopPlaybackOnExit = true,
+                keepForAudioNowPlaying = true,
+            )
+        )
+        assertTrue(
+            shouldClearPlaybackNotificationOnNavigationExit(
+                mode = SettingsManager.MiniPlayerMode.OFF,
+                stopPlaybackOnExit = true,
+                keepForAudioNowPlaying = false,
+            )
+        )
+    }
+
+    @Test
     fun navigationExitShouldClearPlaybackNotificationForOffAndPipButNotInAppModes() {
         assertTrue(
             shouldClearPlaybackNotificationOnNavigationExit(
@@ -887,37 +959,31 @@ class BackgroundPlaybackPolicyTest {
 
     @Test
     fun notificationIconShouldFollowSelectedAppIconKey() {
-        assertEquals(R.mipmap.ic_launcher_3d, resolveNotificationSmallIconRes("icon_telegram_blue"))
-        assertEquals(R.mipmap.ic_launcher_3d, resolveNotificationSmallIconRes("Dark"))
-        assertEquals(R.mipmap.ic_launcher_bilipai, resolveNotificationSmallIconRes("icon_bilipai"))
-        assertEquals(R.mipmap.ic_launcher_bilipai_pink, resolveNotificationSmallIconRes("icon_bilipai_pink"))
-        assertEquals(R.mipmap.ic_launcher_bilipai_white, resolveNotificationSmallIconRes("BiliPai White"))
-        assertEquals(R.mipmap.ic_launcher_bilipai_monet, resolveNotificationSmallIconRes("BiliPai Monet"))
-        assertEquals(R.mipmap.ic_launcher_3d, resolveNotificationSmallIconRes("Flat Material"))
-        assertEquals(R.mipmap.ic_launcher_3d, resolveNotificationSmallIconRes("Neon"))
-        assertEquals(R.mipmap.ic_launcher_3d, resolveNotificationSmallIconRes("Pink"))
-        assertEquals(R.mipmap.ic_launcher_3d, resolveNotificationSmallIconRes("unknown_key"))
+        assertEquals(R.mipmap.ic_launcher_blue_snow_maid_monochrome, resolveNotificationSmallIconRes("icon_blue_snow_maid"))
+        assertEquals(R.mipmap.ic_launcher_blue_snow_maid_front_monochrome, resolveNotificationSmallIconRes("icon_blue_snow_maid_front"))
+        assertEquals(R.mipmap.ic_launcher_blue_snow_maid_monochrome, resolveNotificationSmallIconRes("icon_telegram_blue"))
+        assertEquals(R.mipmap.ic_launcher_blue_snow_maid_monochrome, resolveNotificationSmallIconRes("Dark"))
+        assertEquals(R.mipmap.ic_launcher_bilipai_monet_foreground, resolveNotificationSmallIconRes("icon_bilipai"))
+        assertEquals(R.mipmap.ic_launcher_bilipai_monet_foreground, resolveNotificationSmallIconRes("icon_bilipai_pink"))
+        assertEquals(R.mipmap.ic_launcher_bilipai_monet_foreground, resolveNotificationSmallIconRes("BiliPai White"))
+        assertEquals(R.mipmap.ic_launcher_bilipai_monet_foreground, resolveNotificationSmallIconRes("BiliPai Monet"))
+        assertEquals(R.drawable.ic_launcher_play_window_monochrome, resolveNotificationSmallIconRes("icon_3d"))
+        assertEquals(R.mipmap.ic_launcher_blue_snow_maid_monochrome, resolveNotificationSmallIconRes("Flat Material"))
+        assertEquals(R.mipmap.ic_launcher_blue_snow_maid_monochrome, resolveNotificationSmallIconRes("Neon"))
+        assertEquals(R.mipmap.ic_launcher_blue_snow_maid_monochrome, resolveNotificationSmallIconRes("Pink"))
+        assertEquals(R.mipmap.ic_launcher_blue_snow_maid_monochrome, resolveNotificationSmallIconRes("unknown_key"))
     }
 
     @Test
-    fun notificationIconShouldPreferLauncherIconResourceWhenAvailable() {
+    fun notificationIconShouldAlwaysUseFlatMonochromeResource() {
+        // 自适应启动图标在部分系统上会被渲染成纯色圆形，small icon 必须始终走单色资源。
         assertEquals(
-            12345,
-            resolveNotificationIconResByPriority(
-                launcherIconRes = 12345,
-                fallbackIconKey = "Yuki"
-            )
+            R.mipmap.ic_launcher_bilipai_monet_foreground,
+            resolveNotificationIconRes("icon_bilipai")
         )
-    }
-
-    @Test
-    fun notificationIconShouldFallbackToIconKeyWhenLauncherIconMissing() {
         assertEquals(
-            R.mipmap.ic_launcher_3d,
-            resolveNotificationIconResByPriority(
-                launcherIconRes = 0,
-                fallbackIconKey = "Neon"
-            )
+            R.drawable.ic_launcher_foreground_flat,
+            resolveNotificationIconRes("icon_3d")
         )
     }
 
@@ -1004,6 +1070,20 @@ class BackgroundPlaybackPolicyTest {
             MediaControlType.PLAY_PAUSE,
             resolveMediaButtonControlType(
                 keyCode = android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                action = android.view.KeyEvent.ACTION_DOWN
+            )
+        )
+        assertEquals(
+            MediaControlType.PLAY_PAUSE,
+            resolveMediaButtonControlType(
+                keyCode = android.view.KeyEvent.KEYCODE_HEADSETHOOK,
+                action = android.view.KeyEvent.ACTION_DOWN
+            )
+        )
+        assertEquals(
+            MediaControlType.PAUSE,
+            resolveMediaButtonControlType(
+                keyCode = android.view.KeyEvent.KEYCODE_MEDIA_STOP,
                 action = android.view.KeyEvent.ACTION_DOWN
             )
         )
@@ -1188,6 +1268,36 @@ class BackgroundPlaybackPolicyTest {
                 appInBackground = true
             )
         )
+    }
+
+    @Test
+    fun bufferingStartupShouldKeepPlaybackNotificationVisible() {
+        assertTrue(
+            shouldKeepPlaybackNotificationVisible(
+                isActive = true,
+                title = "Cold start",
+                isPlaying = false,
+                appInBackground = false,
+                isStartingPlayback = true
+            )
+        )
+        assertFalse(
+            shouldKeepPlaybackNotificationVisible(
+                isActive = false,
+                title = "Cold start",
+                isPlaying = false,
+                appInBackground = false,
+                isStartingPlayback = true
+            )
+        )
+    }
+
+    @Test
+    fun onlyBufferingWithPlayWhenReadyCountsAsStartingPlayback() {
+        assertTrue(isPlayerStartingPlayback(playWhenReady = true, playbackState = Player.STATE_BUFFERING))
+        assertFalse(isPlayerStartingPlayback(playWhenReady = false, playbackState = Player.STATE_BUFFERING))
+        assertFalse(isPlayerStartingPlayback(playWhenReady = true, playbackState = Player.STATE_IDLE))
+        assertFalse(isPlayerStartingPlayback(playWhenReady = true, playbackState = Player.STATE_ENDED))
     }
 
     @Test

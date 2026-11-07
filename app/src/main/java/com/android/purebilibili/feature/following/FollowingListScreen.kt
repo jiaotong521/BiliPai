@@ -1,5 +1,13 @@
 package com.android.purebilibili.feature.following
 
+import com.android.purebilibili.core.ui.AppContentColors
+
+import coil3.request.crossfade
+import com.android.purebilibili.core.ui.components.AppIcon
+import com.android.purebilibili.core.ui.components.AppText
+
+import com.android.purebilibili.core.ui.AppSpacingTokens
+
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.Animatable
@@ -12,15 +20,20 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.lazy.LazyColumn
+import com.android.purebilibili.core.ui.components.AppLazyColumn as LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 //  Cupertino Icons - iOS SF Symbols 风格图标
-import io.github.alexzhirkevich.cupertino.icons.CupertinoIcons
-import io.github.alexzhirkevich.cupertino.icons.outlined.*
-import io.github.alexzhirkevich.cupertino.icons.filled.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.People
+import androidx.compose.material.icons.outlined.Sort
+import com.android.purebilibili.core.ui.components.AppWindowAction
+import com.android.purebilibili.core.ui.components.AppWindowActionMenu
+import com.android.purebilibili.core.store.AccountSessionIdentity
+import com.android.purebilibili.core.store.TokenManager
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
@@ -39,21 +52,38 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
+import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
 import com.android.purebilibili.core.network.NetworkModule
 import com.android.purebilibili.core.store.FollowingCacheStore
-import com.android.purebilibili.core.ui.AdaptiveScaffold
-import com.android.purebilibili.core.ui.AdaptiveTopAppBar
+import com.android.purebilibili.core.ui.ImmersiveAppScaffold as AppScaffold
+import com.android.purebilibili.core.ui.AppTopBar
+import com.android.purebilibili.core.ui.AppAlertDialog
 import com.android.purebilibili.core.ui.AdaptivePullToRefreshBox
-import com.android.purebilibili.core.ui.OfficialVerifyBadge
+import com.android.purebilibili.core.ui.OfficialVerifyAvatarBadge
+import com.android.purebilibili.core.ui.UserAvatarCornerMarkBadge
+import com.android.purebilibili.core.ui.resolveUserAvatarCornerMark
 import com.android.purebilibili.core.ui.globalWallpaperAwareBackground
 import com.android.purebilibili.core.ui.rememberAppBackIcon
+import com.android.purebilibili.core.ui.AdaptiveLoadingIndicator
+import com.android.purebilibili.core.ui.AppSurfaceTokens
+import com.android.purebilibili.core.ui.components.AppButton
+import com.android.purebilibili.core.ui.components.AppCheckbox
+import com.android.purebilibili.core.ui.components.AppCircularProgressIndicator
+import com.android.purebilibili.core.ui.components.AppFilterChip
+import com.android.purebilibili.core.ui.components.AppIconButton
+import com.android.purebilibili.core.ui.components.AppOutlinedButton
+import com.android.purebilibili.core.ui.components.AppSurface
+import com.android.purebilibili.core.ui.components.AppSnackbarHost
+import com.android.purebilibili.core.ui.components.AppTextButton
+import com.android.purebilibili.core.ui.skeleton.ContentSkeletonBlock
+import com.android.purebilibili.core.ui.skeleton.rememberStaticSkeletonBlockColor
+import com.android.purebilibili.core.ui.motion.AppMotionTokens
 import com.android.purebilibili.core.util.FormatUtils
+import com.android.purebilibili.core.util.responsiveContentWidth
 import com.android.purebilibili.data.model.response.FollowingUser
 import com.android.purebilibili.data.model.response.RelationTagItem
 import com.android.purebilibili.data.repository.ActionRepository
-import io.github.alexzhirkevich.cupertino.CupertinoActivityIndicator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -190,6 +220,31 @@ class FollowingListViewModel : ViewModel() {
 
     private val _followGroupTags = MutableStateFlow<List<RelationTagItem>>(emptyList())
     val followGroupTags = _followGroupTags.asStateFlow()
+    private var preferredGroupOrder: Pair<AccountSessionIdentity, List<Long>>? = null
+    private var groupOrderRevision = 0L
+
+    private fun orderForCurrentAccount(tags: List<RelationTagItem>): List<RelationTagItem> {
+        val preferred = preferredGroupOrder
+        return if (preferred != null && preferred.first == TokenManager.accountIdentity.value && currentMid == preferred.first.mid) {
+            applyFollowGroupOrder(tags, preferred.second)
+        } else tags
+    }
+
+    internal fun acceptSavedGroupOrder(identity: AccountSessionIdentity, ordered: List<RelationTagItem>) {
+        if (identity != TokenManager.accountIdentity.value || currentMid != identity.mid) return
+        val validIds = ordered.map { it.tagid }.toSet()
+        val deletedIds = _followGroupTags.value.filter { isSortableFollowGroup(it.tagid) && it.tagid !in validIds }.map { it.tagid }.toSet()
+        groupOrderRevision++
+        preferredGroupOrder = identity to ordered.map { it.tagid }
+        _followGroupTags.update { current -> orderForCurrentAccount(replaceSavedFollowGroups(current, ordered)) }
+        if (deletedIds.isNotEmpty()) {
+            // 旧成员查询可能仍携带已删除分组，先停止回填，再清理现有映射。
+            followGroupRefreshJob?.cancel()
+            followGroupRefreshJob = null
+            _isFollowGroupMetaLoading.value = false
+            _userFollowGroupIds.update { mappings -> mappings.mapValues { (_, ids) -> ids - deletedIds } }
+        }
+    }
 
     private val _userFollowGroupIds = MutableStateFlow<Map<Long, Set<Long>>>(emptyMap())
     val userFollowGroupIds = _userFollowGroupIds.asStateFlow()
@@ -200,13 +255,19 @@ class FollowingListViewModel : ViewModel() {
     private var currentMid: Long = 0
     private val removedUserMids = mutableSetOf<Long>()
     private var followGroupRefreshJob: Job? = null
+    private var followingGeneration = 0L
+    private var followingRequestActive = false
+    private var nextFollowingPage = 1
     private var loadRemainingPagesJob: Job? = null
     private var followingCacheSaveJob: Job? = null
-    
+
     fun loadFollowingList(mid: Long, forceRefresh: Boolean = false) {
         if (mid <= 0) return
         if (shouldSkipFollowingReload(currentMid, mid, _uiState.value, forceRefresh)) return
 
+        val generation = ++followingGeneration
+        followingRequestActive = true
+        nextFollowingPage = 1
         currentMid = mid
         removedUserMids.clear()
         followGroupRefreshJob?.cancel()
@@ -219,20 +280,22 @@ class FollowingListViewModel : ViewModel() {
         _isFollowGroupMetaLoading.value = false
 
         val restoredFromCache = restoreFollowingListFromPersistentCache(mid, forceRefresh)
-        
+
         viewModelScope.launch {
             if (!restoredFromCache) {
                 _uiState.value = FollowingListUiState.Loading
             }
-            
+
             try {
                 // 缓存只负责首屏快速展示，服务器第一页始终作为最新关注关系的真源。
                 val response = NetworkModule.api.getFollowings(mid, pn = 1, ps = 50)
+                if (generation != followingGeneration) return@launch
                 if (response.code == 0 && response.data != null) {
-                    val initialUsers = response.data.list.orEmpty()
+                    nextFollowingPage = 2
+                    val checkedResponseData = requireNotNull(response.data)
+                    val initialUsers = checkedResponseData.list.orEmpty()
                         .filterNot { removedUserMids.contains(it.mid) }
-                    val total = response.data.total
-                    
+                    val total = checkedResponseData.total
                     _uiState.value = FollowingListUiState.Success(
                         users = initialUsers,
                         total = total,
@@ -240,11 +303,7 @@ class FollowingListViewModel : ViewModel() {
                     )
                     persistFollowingCache(mid = mid, total = total, users = initialUsers)
                     refreshFollowGroupMetadata(initialUsers)
-                    
-                    // 2. 如果还有更多数据，自动在后台加载剩余所有页面 (为了支持全量搜索)
-                    if (initialUsers.size < total) {
-                        loadAllRemainingPages(mid, total, initialUsers)
-                    }
+                    // 后续页仅由滚动或显式全量操作触发。
                 } else {
                     _uiState.update { current ->
                         resolveFollowingRefreshFailureState(
@@ -256,12 +315,15 @@ class FollowingListViewModel : ViewModel() {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                if (generation != followingGeneration) return@launch
                 _uiState.update { current ->
                     resolveFollowingRefreshFailureState(
                         currentState = current,
                         message = e.message ?: "网络错误"
                     )
                 }
+            } finally {
+                if (generation == followingGeneration) followingRequestActive = false
             }
         }
     }
@@ -293,97 +355,77 @@ class FollowingListViewModel : ViewModel() {
         refreshFollowGroupMetadata(users)
         return true
     }
-    
-    // 自动加载剩余所有页面
-    private fun loadAllRemainingPages(mid: Long, total: Int, initialUsers: List<FollowingUser>) {
-        loadRemainingPagesJob?.cancel()
+
+    // 全量加载只允许由用户显式触发；普通滚动每次仅请求一页。
+    fun loadAllForSearch() {
+        if (followingRequestActive || loadRemainingPagesJob?.isActive == true) return
+        val generation = followingGeneration
         loadRemainingPagesJob = viewModelScope.launch {
             try {
-                var currentUsers = initialUsers.toMutableList()
-                val pageSize = 50
-                // 计算需要加载的总页数
-                val totalPages = (total + pageSize - 1) / pageSize
-                val startPage = (currentUsers.size / pageSize + 1).coerceAtLeast(2)
-                var pagesSinceLastPublish = 0
-
-                (_uiState.value as? FollowingListUiState.Success)?.let { current ->
-                    if (current.users.size < total) {
-                        _uiState.value = current.copy(isLoadingMore = true)
-                    }
-                }
-                
-                for (page in startPage..totalPages) {
-                    if (mid != currentMid) break // 如果用户切换了查看的 UP 主，停止加载
-                    
-                    // 延迟一点时间，避免请求过于频繁触发风控
-                    delay(300)
-                    
-                    val response = NetworkModule.api.getFollowings(mid, pn = page, ps = pageSize)
-                    if (response.code == 0 && response.data != null) {
-                        val newUsers = response.data.list.orEmpty()
-                            .filterNot { removedUserMids.contains(it.mid) }
-                        if (newUsers.isNotEmpty()) {
-                            currentUsers = mergeFollowingUsersOffMain(currentUsers, newUsers)
-                            pagesSinceLastPublish += 1
-
-                            if (shouldPublishFollowingLoadBatch(
-                                    loadedCount = currentUsers.size,
-                                    total = total,
-                                    pagesSinceLastPublish = pagesSinceLastPublish,
-                                    publishIntervalPages = FOLLOWING_PAGE_PUBLISH_INTERVAL_PAGES
-                                )
-                            ) {
-                                publishFollowingUsers(mid, total, currentUsers, isLoadingMore = true)
-                                pagesSinceLastPublish = 0
-                            }
-                        } else {
-                            break
-                        }
-                    } else {
-                        break // 出错停止加载
-                    }
-                }
-
-                if (mid == currentMid && isFollowingListIncomplete(currentUsers.size, total)) {
-                    ActionRepository.getAllFollowGroupUsers().onSuccess { allUsers ->
-                        val mergedUsers = mergeFollowingUsersOffMain(currentUsers, allUsers)
-                        if (mergedUsers.size > currentUsers.size) {
-                            currentUsers = mergedUsers
-                            publishFollowingUsers(mid, total, currentUsers, isLoadingMore = true)
-                        }
-                    }.onFailure { error ->
-                        com.android.purebilibili.core.util.Logger.w(
-                            "FollowingListVM",
-                            "fallback all follow group failed: ${error.message}"
-                        )
-                    }
-                }
-                
-                // 加载完成
-                val current = _uiState.value
-                if (current is FollowingListUiState.Success) {
-                    _uiState.value = current.copy(
-                        isLoadingMore = false,
-                        hasMore = isFollowingListIncomplete(current.users.size, current.total)
-                    )
-                    refreshFollowGroupMetadata(current.users)
-                }
-            } catch (e: Exception) {
-                // 后台加载失败暂不干扰主流程
-                val current = _uiState.value
-                if (current is FollowingListUiState.Success) {
-                    _uiState.value = current.copy(isLoadingMore = false)
+                while (generation == followingGeneration) {
+                    val current = _uiState.value as? FollowingListUiState.Success ?: break
+                    if (!current.hasMore || !loadNextFollowingPage(generation)) break
                 }
             } finally {
-                loadRemainingPagesJob = null
+                if (generation == followingGeneration) loadRemainingPagesJob = null
             }
         }
     }
-    
+
+    private suspend fun loadNextFollowingPage(generation: Long): Boolean {
+        val current = _uiState.value as? FollowingListUiState.Success ?: return false
+        if (generation != followingGeneration || followingRequestActive || !current.hasMore) return false
+        followingRequestActive = true
+        _uiState.value = current.copy(isLoadingMore = true)
+        val mid = currentMid
+        val page = nextFollowingPage
+        try {
+            val response = NetworkModule.api.getFollowings(mid, pn = page, ps = 50)
+            if (generation != followingGeneration) return false
+            val data = response.data
+            if (response.code != 0 || data == null) return false
+            val incoming = data.list.orEmpty()
+            val latest = _uiState.value as? FollowingListUiState.Success ?: return false
+            val previousCount = latest.users.size
+            val merged = mergeFollowingUsersOffMain(latest.users, incoming)
+            if (generation != followingGeneration) return false
+            nextFollowingPage = page + 1
+            publishFollowingUsers(mid, data.total, merged, isLoadingMore = false)
+            val published = _uiState.value as? FollowingListUiState.Success ?: return false
+            // 只有「本页有内容」且「合并后确有新增」才继续，避免服务器重复返回同一页时无限翻页。
+            val hasProgress = shouldContinueFollowingPagination(
+                previousCount = previousCount,
+                mergedCount = merged.size,
+                incomingCount = incoming.size,
+                total = data.total
+            )
+            _uiState.value = published.copy(hasMore = hasProgress)
+            refreshFollowGroupMetadata(merged)
+            return true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return false
+        } finally {
+            if (generation == followingGeneration) {
+                followingRequestActive = false
+                (_uiState.value as? FollowingListUiState.Success)?.let {
+                    _uiState.value = it.copy(isLoadingMore = false)
+                }
+            }
+        }
+    }
+
     fun loadMore() {
-        val current = _uiState.value as? FollowingListUiState.Success ?: return
-        if (current.isLoadingMore || !current.hasMore || currentMid <= 0L) return
-        loadAllRemainingPages(currentMid, current.total, current.users)
+        if (followingRequestActive || loadRemainingPagesJob?.isActive == true || currentMid <= 0L) return
+        val generation = followingGeneration
+        loadRemainingPagesJob = viewModelScope.launch {
+            try {
+                loadNextFollowingPage(generation)
+            } finally {
+                if (generation == followingGeneration) loadRemainingPagesJob = null
+            }
+        }
     }
 
     private suspend fun mergeFollowingUsersOffMain(
@@ -442,6 +484,11 @@ class FollowingListViewModel : ViewModel() {
             if (successMids.isNotEmpty()) {
                 removedUserMids.addAll(successMids)
                 applyRemovedUsers(successMids)
+                com.android.purebilibili.core.events.BrandSuccessEvents.followChanged(
+                    following = false,
+                    detail = if (failedCount == 0) "已取关 ${successMids.size} 位 UP 主"
+                        else "已取关 ${successMids.size} 位，${failedCount} 位失败"
+                )
             }
             return BatchUnfollowResult(
                 successCount = successMids.size,
@@ -455,7 +502,7 @@ class FollowingListViewModel : ViewModel() {
 
     private suspend fun unfollowWithRetry(mid: Long): Boolean {
         repeat(BATCH_UNFOLLOW_MAX_ATTEMPTS) { attempt ->
-            val result = ActionRepository.followUser(mid, follow = false)
+            val result = ActionRepository.followUser(mid, follow = false, emitBrandFeedback = false)
             if (result.isSuccess) return true
 
             val message = result.exceptionOrNull()?.message
@@ -508,12 +555,16 @@ class FollowingListViewModel : ViewModel() {
         if (users.isEmpty()) return
 
         followGroupRefreshJob?.cancel()
+        val requestIdentity = TokenManager.accountIdentity.value
+        val requestMid = currentMid
+        val requestOrderRevision = groupOrderRevision
         followGroupRefreshJob = viewModelScope.launch {
             if (_followGroupTags.value.isEmpty()) {
                 ActionRepository.getFollowGroupTags().onSuccess { tags ->
-                    _followGroupTags.value = tags
+                    if (requestIdentity != TokenManager.accountIdentity.value || requestMid != currentMid || requestOrderRevision != groupOrderRevision) return@onSuccess
+                    _followGroupTags.value = orderForCurrentAccount(tags
                         .filter { it.tagid != DEFAULT_FOLLOW_TAG_ID }
-                        .sortedBy { it.tagid != SPECIAL_FOLLOW_TAG_ID }
+                        .sortedBy { it.tagid != SPECIAL_FOLLOW_TAG_ID })
                 }
             }
 
@@ -634,15 +685,19 @@ class FollowingListViewModel : ViewModel() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun FollowingListScreen(
     mid: Long,
     onBack: () -> Unit,
     onUserClick: (Long) -> Unit,  // 点击跳转到 UP 主空间
+    onFansClick: (Long) -> Unit,
     viewModel: FollowingListViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val accountIdentity by TokenManager.accountIdentity.collectAsStateWithLifecycle()
+    var showGroupOrder by remember(mid, accountIdentity) { mutableStateOf(false) }
+
     val isBatchUnfollowing by viewModel.isBatchUnfollowing.collectAsStateWithLifecycle()
     val followGroupTags by viewModel.followGroupTags.collectAsStateWithLifecycle()
     val userFollowGroupIds by viewModel.userFollowGroupIds.collectAsStateWithLifecycle()
@@ -673,19 +728,62 @@ fun FollowingListScreen(
     var groupDialogSelection by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var groupDialogMixed by remember { mutableStateOf(false) }
 
-    AdaptiveScaffold(
-        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
+    val successState = uiState as? FollowingListUiState.Success
+    val followedUsers = successState?.users.orEmpty()
+    val usersByGroup = remember(followedUsers, selectedGroupFilter, userFollowGroupIds) {
+        filterUsersBySelectedFollowGroup(
+            users = followedUsers,
+            selectedGroupFilter = selectedGroupFilter,
+            userFollowGroupIds = userFollowGroupIds,
+            defaultGroupTagId = DEFAULT_FOLLOW_TAG_ID,
+            allGroupTagId = Long.MIN_VALUE
+        )
+    }
+    val filteredUsers = remember(usersByGroup, searchQuery) {
+        if (searchQuery.isBlank()) usersByGroup
+        else usersByGroup.filter {
+            PinyinUtils.matches(it.uname, searchQuery) ||
+                PinyinUtils.matches(it.sign, searchQuery)
+        }
+    }
+    val visibleMids = remember(filteredUsers) { filteredUsers.map { it.mid } }
+    val selectedCount = selectedMids.size
+    val hasSelection = selectedCount > 0
+
+    AppScaffold(
+        blurContentReady = uiState !is FollowingListUiState.Loading,
+        snackbarHost = { AppSnackbarHost(hostState = snackbarHostState) },
         topBar = {
-            AdaptiveTopAppBar(
+            Column {
+            AppTopBar(
                 title = "我的关注",
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(rememberAppBackIcon(), contentDescription = "返回")
+                    AppIconButton(onClick = onBack) {
+                        AppIcon(rememberAppBackIcon(), contentDescription = "返回")
                     }
                 },
                 actions = {
+                    if (!isEditMode) {
+                        if (mid > 0L && mid == accountIdentity.mid) {
+                            AppWindowActionMenu(groups = listOf(listOf(
+                                AppWindowAction(label = "粉丝列表", icon = Icons.Outlined.People, onClick = { onFansClick(mid) }),
+                                AppWindowAction(
+                                    label = "关注分组排序", icon = Icons.Outlined.Sort,
+                                    enabled = !isBatchUnfollowing,
+                                    onClick = { showGroupOrder = true },
+                                ),
+                            ))) { AppIcon(Icons.Outlined.MoreVert, "关注管理") }
+                        } else {
+                            AppTextButton(onClick = { onFansClick(mid) }) { AppText("粉丝") }
+                        }
+                    }
                     if (uiState is FollowingListUiState.Success) {
-                        TextButton(
+                        if ((uiState as? FollowingListUiState.Success)?.hasMore == true) {
+                            AppTextButton(onClick = { viewModel.loadAllForSearch() }) {
+                                AppText("加载全部")
+                            }
+                        }
+                        AppTextButton(
                             onClick = {
                                 isEditMode = !isEditMode
                                 if (!isEditMode) {
@@ -694,67 +792,123 @@ fun FollowingListScreen(
                             },
                             enabled = !isBatchUnfollowing
                         ) {
-                            Text(if (isEditMode) "完成" else "管理")
+                            AppText(if (isEditMode) "完成" else "管理")
                         }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
+                    containerColor = AppSurfaceTokens.chromeBackground()
                 )
             )
+            // 🔍 搜索栏
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = AppSpacingTokens.Large, vertical = AppSpacingTokens.Small)
+            ) {
+                com.android.purebilibili.core.ui.components.AppLiquidAwareSearchField(
+                    query = searchQuery,
+                    onQueryChange = { searchQuery = it },
+                    placeholder = "搜索已加载 UP 主",
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+
+            }
+        },
+        bottomBar = {
+            if (isEditMode && successState != null) {
+                // Page placement is shared by native and glass UI; keep component geometry
+                // at its own defaults and let Scaffold reserve the measured bottom-bar height.
+                AppSurface(
+                    tonalElevation = AppSpacingTokens.ExtraSmall - AppSpacingTokens.Micro / 2,
+                    shadowElevation = AppSpacingTokens.ExtraSmall - AppSpacingTokens.Micro / 2
+                ) {
+                    FlowRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .navigationBarsPadding()
+                            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+                            .padding(horizontal = AppSpacingTokens.Large, vertical = AppSpacingTokens.Small + AppSpacingTokens.Micro),
+                        horizontalArrangement = Arrangement.spacedBy(AppSpacingTokens.Medium),
+                        verticalArrangement = Arrangement.spacedBy(AppSpacingTokens.Small),
+                        itemVerticalAlignment = Alignment.CenterVertically
+                    ) {
+                        AppOutlinedButton(
+                            onClick = {
+                                selectedMids = resolveFollowingSelectAll(
+                                    visibleMids = visibleMids,
+                                    currentSelected = selectedMids
+                                )
+                            },
+                            enabled = !isBatchUnfollowing
+                        ) {
+                            val allVisibleSelected = visibleMids.isNotEmpty() &&
+                                visibleMids.all { selectedMids.contains(it) }
+                            AppText(if (allVisibleSelected) "取消全选" else "全选当前")
+                        }
+
+                        AppOutlinedButton(
+                            onClick = {
+                                showBatchGroupDialog = true
+                                groupDialogLoading = true
+                                scope.launch {
+                                    val result = viewModel.prepareBatchGroupDialogData(selectedMids.toList())
+                                    result.onSuccess { dialogData ->
+                                        groupDialogTags = dialogData.tags
+                                        groupDialogSelection = dialogData.initialSelection
+                                        groupDialogMixed = dialogData.hasMixedSelection
+                                    }.onFailure {
+                                        showBatchGroupDialog = false
+                                        snackbarHostState.showSnackbar("加载分组失败: ${it.message}")
+                                    }
+                                    groupDialogLoading = false
+                                }
+                            },
+                            enabled = hasSelection && !isBatchUnfollowing
+                        ) {
+                            AppText("设置分组")
+                        }
+
+                        AppButton(
+                            onClick = { showBatchUnfollowConfirm = true },
+                            enabled = hasSelection && !isBatchUnfollowing
+                        ) {
+                            if (isBatchUnfollowing) {
+                                AppCircularProgressIndicator(
+                                    modifier = Modifier.size(AppSpacingTokens.Large),
+                                    strokeWidth = AppSpacingTokens.Micro,
+                                    color = AppContentColors.onAccent()
+                                )
+                            } else {
+                                AppText("取消关注 ($selectedCount)")
+                            }
+                        }
+                    }
+                }
+            }
         }
     ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
                 .globalWallpaperAwareBackground()
         ) {
-            // 🔍 搜索栏
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-            ) {
-                com.android.purebilibili.core.ui.components.IOSSearchBar(
-                    query = searchQuery,
-                    onQueryChange = { searchQuery = it },
-                    placeholder = "搜索 UP 主"
-                )
-            }
-
             Box(
                 modifier = Modifier.weight(1f)
             ) {
-                when (val state = uiState) {
-                    is FollowingListUiState.Loading -> {
-                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            CupertinoActivityIndicator()
-                        }
-                    }
-                    
-                    is FollowingListUiState.Error -> {
-                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("😢", fontSize = 48.sp)
-                                Spacer(Modifier.height(16.dp))
-                                Text(state.message, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Spacer(Modifier.height(16.dp))
-                                Button(onClick = { viewModel.loadFollowingList(mid, forceRefresh = true) }) {
-                                    Text("重试")
-                                }
-                            }
-                        }
-                    }
-                    
-                    is FollowingListUiState.Success -> {
-                        LaunchedEffect(state.users) {
-                            val available = state.users.asSequence().map { it.mid }.toSet()
+                // 加载中 / 出错 / 成功共用同一个 LazyColumn：骨架行与真实用户行使用同一种
+                // contentType，数据到达时是 item 原地替换，列表不会被整棵重建，首屏不跳。
+                val errorState = uiState as? FollowingListUiState.Error
+                val showInitialSkeleton = uiState is FollowingListUiState.Loading
+
+                        LaunchedEffect(followedUsers) {
+                            val available = followedUsers.asSequence().map { it.mid }.toSet()
                             selectedMids = selectedMids.intersect(available)
                         }
 
-                        val groupFilterChips = remember(state.users, followGroupTags, userFollowGroupIds) {
-                            val users = state.users
+                        val groupFilterChips = remember(followedUsers, followGroupTags, userFollowGroupIds) {
+                            val users = followedUsers
                             val defaultCount = countUsersInDefaultFollowGroup(users, userFollowGroupIds)
                             val dynamicTags = followGroupTags.ifEmpty {
                                 listOf(
@@ -773,33 +927,12 @@ fun FollowingListScreen(
                             }
                         }
 
-                        val usersByGroup = remember(state.users, selectedGroupFilter, userFollowGroupIds) {
-                            filterUsersBySelectedFollowGroup(
-                                users = state.users,
-                                selectedGroupFilter = selectedGroupFilter,
-                                userFollowGroupIds = userFollowGroupIds,
-                                defaultGroupTagId = DEFAULT_FOLLOW_TAG_ID,
-                                allGroupTagId = Long.MIN_VALUE
-                            )
-                        }
-                        val followGroupMetaLoadedCount = remember(state.users, userFollowGroupIds) {
-                            state.users.count { user -> userFollowGroupIds.containsKey(user.mid) }
+                        val followGroupMetaLoadedCount = remember(followedUsers, userFollowGroupIds) {
+                            followedUsers.count { user -> userFollowGroupIds.containsKey(user.mid) }
                         }
 
-                        // 🔍 过滤列表
-                        val filteredUsers = remember(usersByGroup, searchQuery) {
-                            if (searchQuery.isBlank()) usersByGroup
-                            else {
-                                usersByGroup.filter {
-                                    PinyinUtils.matches(it.uname, searchQuery) ||
-                                    PinyinUtils.matches(it.sign, searchQuery)
-                                }
-                            }
-                        }
-                        val visibleMids = remember(filteredUsers) { filteredUsers.map { it.mid } }
-                        val selectedCount = selectedMids.size
-                        val hasSelection = selectedCount > 0
 
+                        // Scaffold + search sit above this box; indicator at list region top.
                         AdaptivePullToRefreshBox(
                             isRefreshing = isPullRefreshing,
                             onRefresh = {
@@ -809,30 +942,82 @@ fun FollowingListScreen(
                                 }
                             },
                             state = pullRefreshState,
+                            indicatorTopInset = padding.calculateTopPadding(),
                             modifier = Modifier.fillMaxSize()
                         ) {
-                            if (filteredUsers.isEmpty() && searchQuery.isNotEmpty()) {
-                                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                    Text("没有找到相关 UP 主", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                 }
-                            } else {
-                                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                            LazyColumn(
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                    top = padding.calculateTopPadding(),
+                                    bottom = padding.calculateBottomPadding(),
+                                ),
+                                modifier = Modifier
+                                    .responsiveContentWidth(resolveFollowingListMaxWidth())
+                                    .fillMaxSize(),
+                            ) {
+                                when {
+                                    showInitialSkeleton -> {
+                                        items(
+                                            count = FOLLOWING_LIST_SKELETON_ROW_COUNT,
+                                            key = { index -> "following_skeleton_$index" },
+                                            contentType = { FOLLOWING_USER_ROW_CONTENT_TYPE }
+                                        ) { index ->
+                                            FollowingUserRowSkeleton(
+                                                modifier = Modifier.animateItem(),
+                                                slotIndex = index,
+                                            )
+                                        }
+                                    }
+
+                                    errorState != null -> {
+                                        item(key = "following_error") {
+                                            Box(
+                                                Modifier
+                                                    .fillMaxWidth()
+                                                    .fillParentMaxHeight(0.6f),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                    AppText("😢", fontSize = MaterialTheme.typography.displaySmall.fontSize)
+                                                    Spacer(Modifier.height(AppSpacingTokens.Large))
+                                                    AppText(errorState.message, color = AppContentColors.secondaryText())
+                                                    Spacer(Modifier.height(AppSpacingTokens.Large))
+                                                    AppButton(onClick = { viewModel.loadFollowingList(mid, forceRefresh = true) }) {
+                                                        AppText("重试")
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    successState != null -> {
+                                        if (filteredUsers.isEmpty() && searchQuery.isNotEmpty()) {
+                                            item(key = "following_no_result") {
+                                                Box(
+                                                    Modifier
+                                                        .fillMaxWidth()
+                                                        .fillParentMaxHeight(0.6f),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    AppText("没有找到相关 UP 主", color = AppContentColors.secondaryText())
+                                                }
+                                            }
+                                        } else {
                                     // 统计信息
                                     item {
                                         AnimatedBlurFadeText(
                                             targetText = when {
                                                 isEditMode -> "已选 $selectedCount 人"
                                                 searchQuery.isEmpty() && (selectedGroupFilter == null || selectedGroupFilter == Long.MIN_VALUE) ->
-                                                    "共 ${state.total} 个关注"
+                                                    "共 ${successState.total} 个关注"
                                                 searchQuery.isEmpty() -> "当前分组 ${filteredUsers.size} 人"
                                                 else -> "找到 ${filteredUsers.size} 个结果"
                                             },
-                                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                                            modifier = Modifier.padding(horizontal = AppSpacingTokens.Large, vertical = AppSpacingTokens.Medium)
                                         ) { text, animatedModifier ->
-                                            Text(
+                                            AppText(
                                                 text = text,
-                                                fontSize = 13.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                fontSize = MaterialTheme.typography.labelMedium.fontSize,
+                                                color = AppContentColors.secondaryText(),
                                                 modifier = animatedModifier
                                             )
                                         }
@@ -843,18 +1028,18 @@ fun FollowingListScreen(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .horizontalScroll(rememberScrollState())
-                                                .padding(horizontal = 16.dp, vertical = 4.dp),
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                .padding(horizontal = AppSpacingTokens.Large, vertical = AppSpacingTokens.ExtraSmall),
+                                            horizontalArrangement = Arrangement.spacedBy(AppSpacingTokens.Small)
                                         ) {
                                             groupFilterChips.forEach { chip ->
                                                 val chipFilterId = if (chip.tagid == Long.MIN_VALUE) null else chip.tagid
-                                                FilterChip(
+                                                AppFilterChip(
                                                     selected = selectedGroupFilter == chipFilterId ||
                                                         (selectedGroupFilter == null && chip.tagid == Long.MIN_VALUE),
                                                     onClick = { selectedGroupFilter = chipFilterId },
                                                     label = {
                                                         AnimatedBlurFadeText(targetText = "${chip.name} ${chip.count}") { text, modifier ->
-                                                            Text(text = text, modifier = modifier)
+                                                            AppText(text = text, modifier = modifier)
                                                         }
                                                     }
                                                 )
@@ -864,20 +1049,30 @@ fun FollowingListScreen(
 
                                     if (isFollowGroupMetaLoading) {
                                         item {
-                                            Text(
-                                                text = "分组信息加载中...($followGroupMetaLoadedCount/${state.users.size})",
-                                                fontSize = 12.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                                            AppText(
+                                                text = "分组信息加载中...($followGroupMetaLoadedCount/${followedUsers.size})",
+                                                fontSize = MaterialTheme.typography.labelSmall.fontSize,
+                                                color = AppContentColors.secondaryText(),
+                                                modifier = Modifier.padding(horizontal = AppSpacingTokens.Large, vertical = AppSpacingTokens.ExtraSmall)
                                             )
                                         }
                                     }
 
-                                    items(filteredUsers, key = { it.mid }) { user ->
+                                    items(
+                                        items = filteredUsers,
+                                        key = { it.mid },
+                                        contentType = { FOLLOWING_USER_ROW_CONTENT_TYPE }
+                                    ) { user ->
+                                        LaunchedEffect(user.mid, filteredUsers.size) {
+                                            if (user.mid == filteredUsers.lastOrNull()?.mid && searchQuery.isBlank()) {
+                                                viewModel.loadMore()
+                                            }
+                                        }
                                         FollowingUserItem(
                                             user = user,
                                             isEditMode = isEditMode,
                                             isSelected = selectedMids.contains(user.mid),
+                                            onFansClick = { onFansClick(user.mid) },
                                             modifier = Modifier.animateItem(),
                                             onClick = {
                                                 if (isEditMode) {
@@ -891,117 +1086,53 @@ fun FollowingListScreen(
 
                                     // 加载更多 (仅在未搜索时显示，因为搜索是本地过滤)
                                     if (searchQuery.isEmpty()) {
-                                        if (state.isLoadingMore) {
+                                        if (successState.isLoadingMore) {
                                             item {
                                                 Box(
                                                     modifier = Modifier
                                                         .fillMaxWidth()
-                                                        .padding(16.dp),
+                                                        .padding(AppSpacingTokens.Large),
                                                     contentAlignment = Alignment.Center
                                                 ) {
-                                                    CupertinoActivityIndicator()
+                                                    AdaptiveLoadingIndicator()
                                                 }
                                             }
-                                        } else if (state.hasMore) {
+                                        } else if (successState.hasMore) {
                                             item {
                                                 Box(
                                                     modifier = Modifier
                                                         .fillMaxWidth()
                                                         .clickable { viewModel.loadMore() }
-                                                        .padding(16.dp),
+                                                        .padding(AppSpacingTokens.Large),
                                                     contentAlignment = Alignment.Center
                                                 ) {
-                                                    Text(
+                                                    AppText(
                                                         "加载更多",
-                                                        color = MaterialTheme.colorScheme.primary,
-                                                        fontSize = 14.sp
+                                                        color = AppContentColors.accent(),
+                                                        fontSize = MaterialTheme.typography.labelMedium.fontSize
                                                     )
                                                 }
                                             }
                                         }
                                     }
-                                }
-                            }
-                        }
-
-                        if (isEditMode) {
-                            Surface(
-                                tonalElevation = 3.dp,
-                                shadowElevation = 3.dp
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 16.dp, vertical = 10.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    OutlinedButton(
-                                        onClick = {
-                                            selectedMids = resolveFollowingSelectAll(
-                                                visibleMids = visibleMids,
-                                                currentSelected = selectedMids
-                                            )
-                                        },
-                                        enabled = !isBatchUnfollowing
-                                    ) {
-                                        val allVisibleSelected = visibleMids.isNotEmpty() &&
-                                            visibleMids.all { selectedMids.contains(it) }
-                                        Text(if (allVisibleSelected) "取消全选" else "全选当前")
-                                    }
-
-                                    OutlinedButton(
-                                        onClick = {
-                                            showBatchGroupDialog = true
-                                            groupDialogLoading = true
-                                            scope.launch {
-                                                val result = viewModel.prepareBatchGroupDialogData(selectedMids.toList())
-                                                result.onSuccess { dialogData ->
-                                                    groupDialogTags = dialogData.tags
-                                                    groupDialogSelection = dialogData.initialSelection
-                                                    groupDialogMixed = dialogData.hasMixedSelection
-                                                }.onFailure {
-                                                    showBatchGroupDialog = false
-                                                    snackbarHostState.showSnackbar("加载分组失败: ${it.message}")
-                                                }
-                                                groupDialogLoading = false
-                                            }
-                                        },
-                                        enabled = hasSelection && !isBatchUnfollowing
-                                    ) {
-                                        Text("设置分组")
-                                    }
-
-                                    Button(
-                                        onClick = { showBatchUnfollowConfirm = true },
-                                        enabled = hasSelection && !isBatchUnfollowing,
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        if (isBatchUnfollowing) {
-                                            CircularProgressIndicator(
-                                                modifier = Modifier.size(16.dp),
-                                                strokeWidth = 2.dp,
-                                                color = MaterialTheme.colorScheme.onPrimary
-                                            )
-                                        } else {
-                                            Text("取消关注 ($selectedCount)")
-                                        }
                                     }
                                 }
                             }
                         }
+                        }
+
 
                         if (showBatchUnfollowConfirm) {
-                            AlertDialog(
+                            AppAlertDialog(
                                 onDismissRequest = {
                                     if (!isBatchUnfollowing) showBatchUnfollowConfirm = false
                                 },
-                                title = { Text("批量取消关注") },
-                                text = { Text("确认取消关注已选择的 $selectedCount 位 UP 主吗？") },
+                                title = { AppText("批量取消关注") },
+                                text = { AppText("确认取消关注已选择的 $selectedCount 位 UP 主吗？") },
                                 confirmButton = {
-                                    Button(
+                                    AppButton(
                                         onClick = {
-                                            val targets = state.users.filter { selectedMids.contains(it.mid) }
+                                            val targets = followedUsers.filter { selectedMids.contains(it.mid) }
                                             scope.launch {
                                                 val result = viewModel.batchUnfollow(targets)
                                                 snackbarHostState.showSnackbar(
@@ -1019,56 +1150,56 @@ fun FollowingListScreen(
                                         },
                                         enabled = !isBatchUnfollowing
                                     ) {
-                                        Text("确认")
+                                        AppText("确认")
                                     }
                                 },
                                 dismissButton = {
-                                    TextButton(
+                                    AppTextButton(
                                         onClick = { showBatchUnfollowConfirm = false },
                                         enabled = !isBatchUnfollowing
                                     ) {
-                                        Text("取消")
+                                        AppText("取消")
                                     }
                                 }
                             )
                         }
 
                         if (showBatchGroupDialog) {
-                            AlertDialog(
+                            AppAlertDialog(
                                 onDismissRequest = {
                                     if (!groupDialogSaving) showBatchGroupDialog = false
                                 },
-                                title = { Text("批量设置分组") },
+                                title = { AppText("批量设置分组") },
                                 text = {
                                     if (groupDialogLoading) {
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .padding(vertical = 12.dp),
+                                                .padding(vertical = AppSpacingTokens.Medium),
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            CupertinoActivityIndicator()
+                                            AdaptiveLoadingIndicator()
                                         }
                                     } else {
                                         Column(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .heightIn(max = 320.dp)
+                                                .heightIn(max = resolveFollowingBatchGroupDialogMaxHeight())
                                                 .verticalScroll(rememberScrollState())
                                         ) {
                                             if (groupDialogMixed) {
-                                                Text(
+                                                AppText(
                                                     text = "检测到已选 UP 主原分组不一致，已默认全部不选。",
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    fontSize = 12.sp,
-                                                    modifier = Modifier.padding(bottom = 8.dp)
+                                                    color = AppContentColors.secondaryText(),
+                                                    fontSize = MaterialTheme.typography.labelSmall.fontSize,
+                                                    modifier = Modifier.padding(bottom = AppSpacingTokens.Small)
                                                 )
                                             }
                                             if (groupDialogTags.isEmpty()) {
-                                                Text(
+                                                AppText(
                                                     text = "暂无可用分组（不勾选即回到默认分组）",
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    fontSize = 13.sp
+                                                    color = AppContentColors.secondaryText(),
+                                                    fontSize = MaterialTheme.typography.labelMedium.fontSize
                                                 )
                                             } else {
                                                 groupDialogTags.forEach { tag ->
@@ -1082,10 +1213,10 @@ fun FollowingListScreen(
                                                                     groupDialogSelection + tag.tagid
                                                                 }
                                                             }
-                                                            .padding(vertical = 6.dp),
+                                                            .padding(vertical = AppSpacingTokens.ExtraSmall + AppSpacingTokens.Micro),
                                                         verticalAlignment = Alignment.CenterVertically
                                                     ) {
-                                                        Checkbox(
+                                                        AppCheckbox(
                                                             checked = groupDialogSelection.contains(tag.tagid),
                                                             onCheckedChange = { checked ->
                                                                 groupDialogSelection = if (checked == true) {
@@ -1095,25 +1226,25 @@ fun FollowingListScreen(
                                                                 }
                                                             }
                                                         )
-                                                        Text(
+                                                        AppText(
                                                             text = "${tag.name} (${tag.count})",
-                                                            fontSize = 14.sp,
-                                                            color = MaterialTheme.colorScheme.onSurface
+                                                            fontSize = MaterialTheme.typography.labelMedium.fontSize,
+                                                            color = AppContentColors.primaryText()
                                                         )
                                                     }
                                                 }
                                             }
-                                            Text(
+                                            AppText(
                                                 text = "确定后会完全覆盖原分组设置。",
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                fontSize = 12.sp,
-                                                modifier = Modifier.padding(top = 8.dp)
+                                                color = AppContentColors.secondaryText(),
+                                                fontSize = MaterialTheme.typography.labelSmall.fontSize,
+                                                modifier = Modifier.padding(top = AppSpacingTokens.Small)
                                             )
                                         }
                                     }
                                 },
                                 confirmButton = {
-                                    Button(
+                                    AppButton(
                                         onClick = {
                                             groupDialogSaving = true
                                             scope.launch {
@@ -1133,30 +1264,41 @@ fun FollowingListScreen(
                                         enabled = !groupDialogLoading && !groupDialogSaving
                                     ) {
                                         if (groupDialogSaving) {
-                                            CircularProgressIndicator(
-                                                modifier = Modifier.size(16.dp),
-                                                strokeWidth = 2.dp,
-                                                color = MaterialTheme.colorScheme.onPrimary
+                                            AppCircularProgressIndicator(
+                                                modifier = Modifier.size(AppSpacingTokens.Large),
+                                                strokeWidth = AppSpacingTokens.Micro,
+                                                color = AppContentColors.onAccent()
                                             )
                                         } else {
-                                            Text("确定")
+                                            AppText("确定")
                                         }
                                     }
                                 },
                                 dismissButton = {
-                                    TextButton(
+                                    AppTextButton(
                                         onClick = { showBatchGroupDialog = false },
                                         enabled = !groupDialogSaving
                                     ) {
-                                        Text("取消")
+                                        AppText("取消")
                                     }
                                 }
                             )
                         }
-                    }
-                }
             }
         }
+    }
+    if (showGroupOrder && accountIdentity.mid == mid) {
+        FollowGroupOrderDialog(
+            ownerMid = mid,
+            onDismiss = { showGroupOrder = false },
+            onSaved = { identity, ordered ->
+                viewModel.acceptSavedGroupOrder(identity, ordered)
+                selectedGroupFilter?.takeIf { isSortableFollowGroup(it) }?.let { selected ->
+                    if (ordered.none { it.tagid == selected }) selectedGroupFilter = null
+                }
+                scope.launch { snackbarHostState.showSnackbar("关注分组顺序已保存") }
+            },
+        )
     }
 }
 
@@ -1168,6 +1310,7 @@ private fun AnimatedBlurFadeText(
 ) {
     val blurAnim = remember { Animatable(0f) }
     val alphaAnim = remember { Animatable(1f) }
+    val standardMotionSpec = AppMotionTokens.standardSpec<Float>()
 
     LaunchedEffect(targetText) {
         blurAnim.snapTo(6f)
@@ -1175,20 +1318,20 @@ private fun AnimatedBlurFadeText(
         launch {
             blurAnim.animateTo(
                 targetValue = 0f,
-                animationSpec = tween(durationMillis = 220)
+                animationSpec = standardMotionSpec
             )
         }
         alphaAnim.animateTo(
             targetValue = 1f,
-            animationSpec = tween(durationMillis = 180)
+            animationSpec = standardMotionSpec
         )
     }
 
     AnimatedContent(
         targetState = targetText,
         transitionSpec = {
-            (fadeIn(animationSpec = tween(180)) togetherWith
-                fadeOut(animationSpec = tween(140))) using
+            (fadeIn(animationSpec = standardMotionSpec) togetherWith
+                fadeOut(animationSpec = standardMotionSpec)) using
                 SizeTransform(clip = false)
         },
         label = "following-count-blur-fade"
@@ -1202,11 +1345,63 @@ private fun AnimatedBlurFadeText(
     }
 }
 
+/**
+ * 关注用户行的 lazy item 身份。骨架行与真实用户行共用同一个 contentType，加载完成时
+ * LazyList 才能在原地替换 item，而不是「整批删除 + 整批新增」重建可视区。
+ */
+private const val FOLLOWING_USER_ROW_CONTENT_TYPE = "following_user_row"
+
+/** 首屏骨架行数，与原来的 itemCount 同量级，避免加载完成后列表长度突变。 */
+private const val FOLLOWING_LIST_SKELETON_ROW_COUNT = 10
+
+/**
+ * 关注用户行骨架：对齐 [FollowingUserItem] 的布局（水平 16dp / 垂直 12dp 内边距、
+ * 48dp 头像、昵称 + 签名两行）。行高基本一致，列表不会被突然撑长或缩短。
+ *
+ * 色块用固定色：骨架与真实行在同一个 LazyColumn 内原地替换，切换时只应看到「内容淡入」。
+ */
+@Composable
+private fun FollowingUserRowSkeleton(
+    modifier: Modifier = Modifier,
+    slotIndex: Int = 0,
+) {
+    val blockColor = rememberStaticSkeletonBlockColor()
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = AppSpacingTokens.Large, vertical = AppSpacingTokens.Medium),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        ContentSkeletonBlock(
+            color = blockColor,
+            shape = CircleShape,
+            modifier = Modifier.size(AppSpacingTokens.TripleExtraLarge),
+        )
+        Spacer(Modifier.width(AppSpacingTokens.Medium))
+        Column(modifier = Modifier.weight(1f)) {
+            ContentSkeletonBlock(
+                color = blockColor,
+                modifier = Modifier
+                    .fillMaxWidth(if (slotIndex % 2 == 0) 0.32f else 0.26f)
+                    .height(AppSpacingTokens.Medium + AppSpacingTokens.ExtraSmall),
+            )
+            Spacer(Modifier.height(AppSpacingTokens.ExtraSmall))
+            ContentSkeletonBlock(
+                color = blockColor,
+                modifier = Modifier
+                    .fillMaxWidth(if (slotIndex % 3 == 0) 0.58f else 0.44f)
+                    .height(AppSpacingTokens.Small),
+            )
+        }
+    }
+}
+
 @Composable
 private fun FollowingUserItem(
     user: FollowingUser,
     isEditMode: Boolean,
     isSelected: Boolean,
+    onFansClick: () -> Unit,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
@@ -1220,61 +1415,74 @@ private fun FollowingUserItem(
         modifier = modifier
             .fillMaxWidth()
             .clickable { onClick() }
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = AppSpacingTokens.Large, vertical = AppSpacingTokens.Medium),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // 头像
-        AsyncImage(
-            model = ImageRequest.Builder(LocalContext.current)
-                .data(FormatUtils.fixImageUrl(user.face))
-                .crossfade(true)
-                .build(),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .size(48.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surfaceVariant)
-        )
-        
-        Spacer(Modifier.width(12.dp))
-        
+        Box(modifier = Modifier.size(AppSpacingTokens.TripleExtraLarge)) {
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(FormatUtils.fixImageUrl(user.face))
+                    .crossfade(true)
+                    .build(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .matchParentSize()
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+            )
+            if (officialBadge != null) {
+                OfficialVerifyAvatarBadge(
+                    badge = officialBadge,
+                    modifier = Modifier.align(Alignment.BottomEnd)
+                )
+            } else {
+                UserAvatarCornerMarkBadge(
+                    mark = resolveUserAvatarCornerMark(
+                        officialType = null,
+                        vipStatus = user.vip?.vipStatus,
+                    ),
+                    modifier = Modifier.align(Alignment.BottomEnd),
+                    badgeSize = 14.dp,
+                )
+            }
+        }
+
+        Spacer(Modifier.width(AppSpacingTokens.Medium))
+
         // 用户信息
         Column(modifier = Modifier.weight(1f)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(
+                AppText(
                     text = user.uname,
-                    fontSize = 15.sp,
+                    fontSize = MaterialTheme.typography.bodyMedium.fontSize,
                     fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = AppContentColors.primaryText(),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false)
                 )
-                if (officialBadge != null) {
-                    Spacer(Modifier.width(6.dp))
-                    FollowingOfficialVerifyBadgeView(officialBadge)
-                }
             }
             if (followingSinceLabel.isNotEmpty()) {
-                Spacer(Modifier.height(4.dp))
-                Text(
+                Spacer(Modifier.height(AppSpacingTokens.ExtraSmall))
+                AppText(
                     text = followingSinceLabel,
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.primary,
+                    fontSize = MaterialTheme.typography.labelSmall.fontSize,
+                    color = AppContentColors.accent(),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
             if (user.sign.isNotEmpty()) {
-                Spacer(Modifier.height(4.dp))
-                Text(
+                Spacer(Modifier.height(AppSpacingTokens.ExtraSmall))
+                AppText(
                     text = user.sign,
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = MaterialTheme.typography.labelSmall.fontSize,
+                    color = AppContentColors.secondaryText(),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -1282,17 +1490,12 @@ private fun FollowingUserItem(
         }
 
         if (isEditMode) {
-            Checkbox(
+            AppCheckbox(
                 checked = isSelected,
                 onCheckedChange = { onClick() }
             )
+        } else {
+            AppTextButton(onClick = onFansClick) { AppText("粉丝") }
         }
     }
-}
-
-@Composable
-private fun FollowingOfficialVerifyBadgeView(
-    badge: FollowingOfficialVerifyBadge
-) {
-    OfficialVerifyBadge(badge = badge)
 }

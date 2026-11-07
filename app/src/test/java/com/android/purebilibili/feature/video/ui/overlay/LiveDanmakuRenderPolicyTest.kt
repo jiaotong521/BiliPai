@@ -4,21 +4,11 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class LiveDanmakuRenderPolicyTest {
-
     @Test
-    fun `data refresh restarts live danmaku engine before invalidating view`() {
-        val calls = mutableListOf<String>()
-
-        executeLiveDanmakuDataRefresh(
-            pause = { calls += "pause" },
-            setData = { calls += "setData" },
-            start = { calls += "start" },
-            invalidateView = { calls += "invalidateView" }
-        )
-
-        assertEquals(
-            listOf("pause", "setData", "start", "invalidateView"),
-            calls
-        )
+    fun emptyBatchDoesNotAppendAndTextBatchRetainsMessageOrder() {
+        val appended = mutableListOf<List<String>>()
+        appendLiveDanmakuBatch(emptyList<String>()) { appended.add(it) }
+        appendLiveDanmakuBatch(listOf("[直播表情]", "文字")) { appended.add(it) }
+        assertEquals(listOf(listOf("[直播表情]", "文字")), appended)
     }
 }

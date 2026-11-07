@@ -10,6 +10,43 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SpaceProfileEnhancementPolicyTest {
+    @Test
+    fun `shop selection survives the saved main tab index`() {
+        assertEquals(SpaceMainTab.SHOP, tabIndexToMainTab(mainTabToTabIndex(SpaceMainTab.SHOP)))
+    }
+
+    @Test
+    fun `article opus and opus filters survive collection tab enrichment`() {
+        val tabs = resolveSpaceContributionTabs(listOf(SpaceAggregateTab(param = "contribute", items = listOf(
+            SpaceAggregateTabItem(param = "video", title = "视频"),
+            SpaceAggregateTabItem(param = "article", title = "专栏"),
+            SpaceAggregateTabItem(param = "opus", title = "图文", filter = listOf(
+                com.android.purebilibili.data.model.response.SpaceOpusFilter(text = "全部图文", meta = "all"),
+                com.android.purebilibili.data.model.response.SpaceOpusFilter(text = "专栏", meta = "article"),
+            )),
+        ))))
+        val merged = mergeSpaceContributionTabsWithCollections(tabs, emptyList(), emptyList())
+        assertEquals(listOf(SpaceSubTab.VIDEO, SpaceSubTab.ARTICLE, SpaceSubTab.OPUS), merged.map { it.subTab })
+        assertEquals(listOf("all", "article"), merged.last().filters.map { it.meta })
+    }
+
+
+    @Test
+    fun `discovered opus content adds the missing article contribution tab`() {
+        val tabs = ensureSpaceContributionTabsForAvailableContent(
+            tabs = listOf(
+                SpaceContributionTab(
+                    id = "video",
+                    title = "视频",
+                    subTab = SpaceSubTab.VIDEO,
+                    param = "video"
+                )
+            ),
+            hasArticles = true
+        )
+
+        assertEquals(listOf(SpaceSubTab.VIDEO, SpaceSubTab.ARTICLE), tabs.map { it.subTab })
+    }
 
     @Test
     fun `shouldEnableSpaceTopPhotoPreview only when url is not blank`() {
@@ -107,8 +144,9 @@ class SpaceProfileEnhancementPolicyTest {
         val shell = buildInitialTabShellState(selectedTab = SpaceMainTab.DYNAMIC)
 
         assertEquals(SpaceMainTab.DYNAMIC, shell.selectedTab)
-        assertEquals(6, shell.tabStates.size)
+        assertFalse(shell.tabStates[SpaceMainTab.SHOP]?.hasLoaded ?: true)
         assertFalse(shell.tabStates[SpaceMainTab.HOME]?.hasLoaded ?: true)
+        assertFalse(shell.tabStates[SpaceMainTab.CHEESE]?.hasLoaded ?: true)
     }
 
     @Test
@@ -150,7 +188,11 @@ class SpaceProfileEnhancementPolicyTest {
         val contributionTabs = resolveSpaceContributionTabs(tab2)
 
         assertEquals(
-            listOf(SpaceMainTab.HOME, SpaceMainTab.DYNAMIC, SpaceMainTab.CONTRIBUTION, SpaceMainTab.FAVORITE),
+            listOf(
+                SpaceMainTab.HOME,
+                SpaceMainTab.DYNAMIC,
+                SpaceMainTab.CONTRIBUTION,
+            ),
             mainTabs.map { it.tab }
         )
         assertEquals(listOf("视频", "图文", "赛季", "系列"), contributionTabs.map { it.title })
@@ -161,26 +203,96 @@ class SpaceProfileEnhancementPolicyTest {
     }
 
     @Test
-    fun `resolveSpaceDisplayedMainTabs prefers home dynamic and contribution`() {
+    fun `resolveSpaceDisplayedMainTabs keeps only PiliPlus primary destinations and cheese when present`() {
         val tabs = listOf(
             SpaceMainTabItem(SpaceMainTab.HOME, "主页"),
             SpaceMainTabItem(SpaceMainTab.DYNAMIC, "动态"),
             SpaceMainTabItem(SpaceMainTab.CONTRIBUTION, "投稿"),
-            SpaceMainTabItem(SpaceMainTab.COLLECTIONS, "合集和系列")
+            SpaceMainTabItem(SpaceMainTab.COLLECTIONS, "合集"),
+            SpaceMainTabItem(SpaceMainTab.FAVORITE, "收藏"),
+            SpaceMainTabItem(SpaceMainTab.BANGUMI, "追番"),
+            SpaceMainTabItem(SpaceMainTab.CHEESE, "课堂")
+        )
+        val expected = listOf(
+            SpaceMainTab.HOME,
+            SpaceMainTab.DYNAMIC,
+            SpaceMainTab.CONTRIBUTION,
+            SpaceMainTab.CHEESE,
         )
 
         assertEquals(
-            listOf(SpaceMainTab.HOME, SpaceMainTab.DYNAMIC, SpaceMainTab.CONTRIBUTION),
+            expected,
             resolveSpaceDisplayedMainTabs(tabs, selectedTab = SpaceMainTab.HOME).map { it.tab }
         )
         assertEquals(
-            listOf(
-                SpaceMainTab.HOME,
-                SpaceMainTab.DYNAMIC,
-                SpaceMainTab.CONTRIBUTION,
-                SpaceMainTab.COLLECTIONS
-            ),
+            expected,
             resolveSpaceDisplayedMainTabs(tabs, selectedTab = SpaceMainTab.COLLECTIONS).map { it.tab }
+        )
+        assertEquals(
+            expected,
+            resolveSpaceDisplayedMainTabs(tabs, selectedTab = SpaceMainTab.CHEESE).map { it.tab }
+        )
+    }
+
+    @Test
+    fun `resolveSpacePrimaryTab maps library tabs back to contribution but keeps cheese primary`() {
+        assertEquals(SpaceMainTab.CONTRIBUTION, resolveSpacePrimaryTab(SpaceMainTab.FAVORITE))
+        assertEquals(SpaceMainTab.CONTRIBUTION, resolveSpacePrimaryTab(SpaceMainTab.BANGUMI))
+        assertEquals(SpaceMainTab.CONTRIBUTION, resolveSpacePrimaryTab(SpaceMainTab.COLLECTIONS))
+        assertEquals(SpaceMainTab.CHEESE, resolveSpacePrimaryTab(SpaceMainTab.CHEESE))
+        assertEquals(SpaceMainTab.DYNAMIC, resolveSpacePrimaryTab(SpaceMainTab.DYNAMIC))
+    }
+
+    @Test
+    fun `resolveSpaceSecondarySwitchItems appends library destinations after contribution tabs`() {
+        val items = resolveSpaceSecondarySwitchItems(buildDefaultSpaceContributionTabs())
+
+        assertEquals(
+            listOf("video", "article", "audio", SPACE_SECONDARY_COLLECTIONS_ID, SPACE_SECONDARY_FAVORITE_ID, SPACE_SECONDARY_BANGUMI_ID),
+            items.map { it.id }
+        )
+        assertEquals(SpaceMainTab.CONTRIBUTION, items.first().targetTab)
+        assertEquals(SpaceMainTab.COLLECTIONS, items.first { it.id == SPACE_SECONDARY_COLLECTIONS_ID }.targetTab)
+        assertEquals(SpaceMainTab.FAVORITE, items.first { it.id == SPACE_SECONDARY_FAVORITE_ID }.targetTab)
+        assertEquals(SpaceMainTab.BANGUMI, items.first { it.id == SPACE_SECONDARY_BANGUMI_ID }.targetTab)
+    }
+
+    @Test
+    fun `resolveSpaceSecondarySwitchItems includes cheese when available`() {
+        val items = resolveSpaceSecondarySwitchItems(
+            contributionTabs = buildDefaultSpaceContributionTabs(),
+            hasCheese = true
+        )
+
+        assertTrue(items.any { it.id == SPACE_SECONDARY_CHEESE_ID && it.targetTab == SpaceMainTab.CHEESE && it.title == "课堂" })
+        assertEquals(
+            listOf("video", "article", "audio", SPACE_SECONDARY_COLLECTIONS_ID, SPACE_SECONDARY_FAVORITE_ID, SPACE_SECONDARY_BANGUMI_ID, SPACE_SECONDARY_CHEESE_ID),
+            items.map { it.id }
+        )
+    }
+
+    @Test
+    fun `resolveSelectedSpaceSecondarySwitchId tracks library tabs`() {
+        assertEquals(
+            SPACE_SECONDARY_FAVORITE_ID,
+            resolveSelectedSpaceSecondarySwitchId(
+                selectedTab = SpaceMainTab.FAVORITE,
+                selectedContributionTabId = "video",
+            )
+        )
+        assertEquals(
+            SPACE_SECONDARY_CHEESE_ID,
+            resolveSelectedSpaceSecondarySwitchId(
+                selectedTab = SpaceMainTab.CHEESE,
+                selectedContributionTabId = "video",
+            )
+        )
+        assertEquals(
+            "article",
+            resolveSelectedSpaceSecondarySwitchId(
+                selectedTab = SpaceMainTab.CONTRIBUTION,
+                selectedContributionTabId = "article",
+            )
         )
     }
 

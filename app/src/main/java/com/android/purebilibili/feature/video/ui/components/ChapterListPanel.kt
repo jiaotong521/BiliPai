@@ -1,178 +1,61 @@
-// File: feature/video/ui/components/ChapterListPanel.kt
 package com.android.purebilibili.feature.video.ui.components
 
-import androidx.compose.animation.*
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import com.android.purebilibili.core.util.rememberHapticFeedback
+import com.android.purebilibili.core.util.HapticType
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import com.android.purebilibili.core.ui.components.AppSwitch as Switch
+import com.android.purebilibili.core.ui.components.AppText as Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
 import com.android.purebilibili.core.util.FormatUtils
 import com.android.purebilibili.data.model.response.ViewPoint
-import io.github.alexzhirkevich.cupertino.icons.CupertinoIcons
-import io.github.alexzhirkevich.cupertino.icons.outlined.Xmark
 
-/**
- * 📖 视频章节列表面板
- * 
- * 浮动小卡片设计（参考B站官方横屏样式）
- * 点击章节可跳转到对应时间
- */
 @Composable
 fun ChapterListPanel(
-    viewPoints: List<ViewPoint>,
-    currentPositionMs: Long,
-    onSeek: (Long) -> Unit,
-    onDismiss: () -> Unit,
-    modifier: Modifier = Modifier
+    viewPoints: List<ViewPoint>, currentPositionMs: Long,
+    onSeek: (Long) -> Unit, onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+    placement: PlayerListPopupPlacement = PlayerListPopupPlacement.START,
+    anchorBounds: IntRect? = null,
+    isFullscreen: Boolean = false, playerBounds: IntRect? = null,
+    showViewPoints: Boolean = true, onShowViewPointsChange: ((Boolean) -> Unit)? = null,
+    useGlassSurface: Boolean = false,
 ) {
-    // 计算当前章节索引
-    val currentChapterIndex = remember(currentPositionMs, viewPoints) {
-        viewPoints.indexOfLast { currentPositionMs >= it.fromMs }
-            .coerceAtLeast(0)
-    }
-    val listState = rememberLazyListState()
-    val nestedScrollConnection = rememberModalChildScrollConnection()
-    val surfaceInteractionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-    
-    // 点击背景关闭
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .clickable(onClick = onDismiss)
-    ) {
-        // 浮动卡片 - 左下角位置，固定宽度
-        Surface(
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(start = 16.dp, bottom = 60.dp)  // 避开进度条
-                .width(280.dp)  // 固定宽度
-                .heightIn(max = 200.dp)  // 最大高度
-                .clickable(
-                    interactionSource = surfaceInteractionSource,
-                    indication = null,
-                    onClick = {}
-                ),
-            shape = RoundedCornerShape(12.dp),
-            color = Color(0xE6222222),  // 深色半透明
-            shadowElevation = 8.dp
-        ) {
-            Column {
-                // 标题栏
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+    val selectionHaptic = rememberHapticFeedback(com.android.purebilibili.core.ui.AppHapticScene.PLAYER_SEEK)
+    val currentIndex = viewPoints.indexOfLast { currentPositionMs >= it.fromMs && currentPositionMs < it.to.toLong() * 1000L }
+    val state = rememberLazyListState(initialFirstVisibleItemIndex = currentIndex.coerceAtLeast(0))
+    PlayerDetailPanel(
+        "分段信息", isFullscreen, playerBounds, onDismiss,
+        draggable = true, useGlassSurface = useGlassSurface,
+    ) { requestDismiss ->
+        Row(modifier.fillMaxWidth().height(45.dp).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("分段信息", fontSize = 16.sp, modifier = Modifier.weight(1f))
+            if (onShowViewPointsChange != null) Switch(checked = showViewPoints, onCheckedChange = onShowViewPointsChange)
+            PanelAction(Icons.Default.Close, "关闭", requestDismiss)
+        }
+        LazyColumn(state = state, modifier = Modifier.weight(1f).fillMaxWidth(), overscrollEffect = null,
+            contentPadding = PaddingValues(top = 7.dp, bottom = 100.dp)) {
+            itemsIndexed(viewPoints) { index, point ->
+                val range = "${FormatUtils.formatDuration(point.from)} - ${FormatUtils.formatDuration(point.to)}"
+                PlayerPanelMediaRow(
+                    point.content, point.imgUrl, 0, index == currentIndex, range,
+                    expandTitle = true,
                 ) {
-                    Text(
-                        text = "视频章节",
-                        color = Color.White,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    
-                    Icon(
-                        CupertinoIcons.Outlined.Xmark,
-                        contentDescription = "关闭",
-                        tint = Color.White.copy(alpha = 0.6f),
-                        modifier = Modifier
-                            .size(18.dp)
-                            .clickable(onClick = onDismiss)
-                    )
-                }
-                
-                HorizontalDivider(color = Color.White.copy(alpha = 0.1f))
-                
-                // 章节列表 - 简洁设计
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .nestedScroll(nestedScrollConnection),
-                    contentPadding = PaddingValues(vertical = 4.dp)
-                ) {
-                    items(viewPoints.size, key = { it }) { index ->
-                        val point = viewPoints[index]
-                        val isCurrentChapter = index == currentChapterIndex
-                        
-                        ChapterListItem(
-                            chapter = point,
-                            isCurrentChapter = isCurrentChapter,
-                            onClick = {
-                                onSeek(point.fromMs)
-                                onDismiss()
-                            }
-                        )
-                    }
+                    if (index != currentIndex) selectionHaptic(HapticType.LIGHT)
+                    onSeek(point.fromMs)
+                    requestDismiss()
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun ChapterListItem(
-    chapter: ViewPoint,
-    isCurrentChapter: Boolean,
-    onClick: () -> Unit
-) {
-    val primaryColor = MaterialTheme.colorScheme.primary
-    
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .background(
-                if (isCurrentChapter) primaryColor.copy(alpha = 0.1f) else Color.Transparent
-            )
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        // 章节信息
-        Column(
-            modifier = Modifier.weight(1f)
-        ) {
-            Text(
-                text = chapter.content,
-                color = if (isCurrentChapter) primaryColor else Color.White,
-                fontSize = 13.sp,
-                fontWeight = if (isCurrentChapter) FontWeight.Medium else FontWeight.Normal,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            
-            Text(
-                text = FormatUtils.formatDuration(chapter.from) + " - " + FormatUtils.formatDuration(chapter.to),
-                color = Color.White.copy(alpha = 0.4f),
-                fontSize = 10.sp
-            )
-        }
-        
-        // 当前播放指示
-        if (isCurrentChapter) {
-            Text(
-                text = "正在播放",
-                color = primaryColor,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Medium
-            )
         }
     }
 }

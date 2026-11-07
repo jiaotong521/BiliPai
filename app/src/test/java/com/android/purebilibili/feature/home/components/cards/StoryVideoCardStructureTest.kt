@@ -7,15 +7,7 @@ import kotlin.test.assertTrue
 
 class StoryVideoCardStructureTest {
 
-    @Test
-    fun storyCardUsesWholeCardShellSharedBoundsWithoutMetadataKeys() {
-        val source = File("src/main/java/com/android/purebilibili/feature/home/components/cards/StoryVideoCard.kt")
-            .readText()
 
-        assertTrue(source.contains("videoCardShellSharedBoundsOrEmpty("))
-        assertFalse(source.contains("videoTitleSharedElementKey("))
-        assertFalse(source.contains("spring(dampingRatio = 0.8f, stiffness = 200f)"))
-    }
 
     @Test
     fun storyCoverContainerClipsPlaceholderAndImageTogether() {
@@ -25,7 +17,8 @@ class StoryVideoCardStructureTest {
             .substringAfter("// 卡片容器 (封面)")
             .substringBefore("// 封面比例由首页卡片样式统一配置。")
 
-        assertTrue(source.contains("val coverShape = RoundedCornerShape(cardCornerRadius)"))
+        assertTrue(source.contains("val cardShape = AppShapes.container(ContainerLevel.ProminentCard)"))
+        assertTrue(source.contains("val coverShape = cardShape"))
         assertTrue(coverContainerSource.contains(".testTag(\"home_story_video_cover\")"))
         assertTrue(coverContainerSource.contains(".aspectRatio(coverAspectRatio)"))
         assertTrue(coverContainerSource.contains(".clip(coverShape)"))

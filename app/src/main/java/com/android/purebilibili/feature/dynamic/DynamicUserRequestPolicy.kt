@@ -3,6 +3,15 @@ package com.android.purebilibili.feature.dynamic
 import com.android.purebilibili.core.util.appendDistinctByKey
 import com.android.purebilibili.data.model.response.DynamicItem
 
+internal fun filterSelectedUserDynamicItems(
+    items: List<DynamicItem>,
+    logicalTab: Int,
+): List<DynamicItem> = when (logicalTab) {
+    1 -> items.filter(::shouldIncludeDynamicItemInVideoTab)
+    3 -> items.filter(::shouldIncludeDynamicItemInArticleTab)
+    else -> items
+}
+
 internal fun shouldApplyUserDynamicsResult(
     selectedUid: Long?,
     requestUid: Long,
@@ -37,13 +46,13 @@ internal fun shouldAutoLoadSelectedUserDynamics(
     nextUid: Long,
     currentItems: List<DynamicItem>,
     userError: String?,
-    localMatchCount: Int
 ): Boolean {
-    if (nextUid != previousUid) {
-        return localMatchCount == 0
-    }
+    // The followed timeline is only a window of recent mixed-author content. A local
+    // match is useful for immediate paint, but never proves that the user's space feed
+    // is complete (it may contain just one video while their opus/articles are older).
+    if (nextUid != previousUid) return true
     if (!userError.isNullOrBlank()) return true
-    return currentItems.isEmpty() && localMatchCount == 0
+    return currentItems.isEmpty()
 }
 
 internal fun shouldReloadSelectedUserDynamics(
@@ -51,13 +60,11 @@ internal fun shouldReloadSelectedUserDynamics(
     nextUid: Long,
     currentItems: List<DynamicItem>,
     userError: String?,
-    localMatchCount: Int
 ): Boolean {
     return shouldAutoLoadSelectedUserDynamics(
         previousUid = previousUid,
         nextUid = nextUid,
         currentItems = currentItems,
         userError = userError,
-        localMatchCount = localMatchCount
     )
 }

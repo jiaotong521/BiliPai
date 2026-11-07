@@ -1,48 +1,19 @@
 package com.android.purebilibili.feature.video.ui.overlay
 
-import androidx.compose.ui.graphics.Color
-import com.android.purebilibili.feature.video.danmaku.CommandDanmakuType
+import com.android.purebilibili.feature.video.ui.feedback.canSubmitVideoFollowAction
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 
 class CommandDanmakuOverlayPolicyTest {
 
     @Test
-    fun `attention command labels match action type`() {
-        assertEquals("一键三连", resolveAttentionCommandLabel(1))
-        assertEquals("关注并三连", resolveAttentionCommandLabel(2))
-        assertEquals("关注 UP", resolveAttentionCommandLabel(0))
-    }
-
-    @Test
-    fun `follow and triple command does not unfollow existing followers`() {
-        val action = resolveAttentionCommandClickAction(attentionType = 2, isFollowing = true)
-
-        assertEquals(false, action.shouldFollow)
-        assertEquals(true, action.shouldTriple)
-    }
-
-    @Test
-    fun `follow and triple command follows first when not following`() {
-        val action = resolveAttentionCommandClickAction(attentionType = 2, isFollowing = false)
-
-        assertEquals(true, action.shouldFollow)
-        assertEquals(true, action.shouldTriple)
-    }
-
-    @Test
-    fun `follow only command ignores already followed author`() {
-        val action = resolveAttentionCommandClickAction(attentionType = 0, isFollowing = true)
-
-        assertEquals(false, action.shouldFollow)
-        assertEquals(false, action.shouldTriple)
-    }
-
-    @Test
-    fun `follow and triple attention card has enough width for portrait details`() {
-        assertTrue(resolveAttentionCommandCardWidthDp(2) > resolveAttentionCommandCardWidthDp(1))
-        assertTrue(resolveAttentionCommandCardWidthDp(2) >= 188)
+    fun `attention follow is disabled while unknown submitting or already followed`() {
+        assertFalse(canSubmitVideoFollowAction(false, false, false))
+        assertTrue(canSubmitVideoFollowAction(true, false, false))
+        assertFalse(canSubmitVideoFollowAction(true, false, true))
+        assertFalse(canSubmitVideoFollowAction(true, true, false))
     }
 
     @Test
@@ -55,8 +26,60 @@ class CommandDanmakuOverlayPolicyTest {
     }
 
     @Test
-    fun `attention command container is transparent while info commands keep readable scrim`() {
-        assertEquals(Color.Transparent, resolveCommandDanmakuContainerColor(CommandDanmakuType.ATTENTION))
-        assertTrue(resolveCommandDanmakuContainerColor(CommandDanmakuType.UP).alpha > 0.5f)
+    fun `command card width is capped by a narrow player viewport`() {
+        assertEquals(320, resolveCommandDanmakuCardWidthPx(320, 420))
+        assertEquals(0, resolveCommandDanmakuCardWidthPx(320, -1))
+    }
+
+    @Test
+    fun `command card vertical offset is clamped by measured card height`() {
+        assertEquals(192, resolveCommandDanmakuVerticalOffsetPx(320, 128, 0.8f))
+        assertEquals(0, resolveCommandDanmakuVerticalOffsetPx(320, 400, 0.8f))
+        assertEquals(0, resolveCommandDanmakuVerticalOffsetPx(320, 128, -0.2f))
+    }
+
+    @Test
+    fun `attention percentage positions keep both edges clear inside the viewport`() {
+        assertEquals(12, resolveAttentionCommandOffsetPx(320, 120, 0f, 12))
+        assertEquals(100, resolveAttentionCommandOffsetPx(320, 120, 0.5f, 12))
+        assertEquals(188, resolveAttentionCommandOffsetPx(320, 120, 1f, 12))
+        assertEquals(12, resolveAttentionCommandOffsetPx(320, 120, -1f, 12))
+        assertEquals(188, resolveAttentionCommandOffsetPx(320, 120, 2f, 12))
+    }
+
+    @Test
+    fun `attention placement handles oversized cards and unknown percentages without invalid offsets`() {
+        assertEquals(0, resolveAttentionCommandOffsetPx(80, 120, 1f, 12))
+        assertEquals(0, resolveAttentionCommandOffsetPx(0, 120, 0.5f, 12))
+        assertEquals(100, resolveAttentionCommandOffsetPx(320, 120, Float.NaN, 12))
+    }
+
+    @Test
+    fun `bottom right command stays above the permanently reserved control region`() {
+        val inset = resolveCommandDanmakuBottomInsetPx(
+            viewportHeightPx = 320,
+            surfaceHeightPx = 320,
+            controlsReserveHeightPx = 96,
+        )
+        val placementHeight = 320 - inset
+        val y = resolveAttentionCommandOffsetPx(placementHeight, 28, 1f, 12)
+
+        assertEquals(96, inset)
+        assertEquals(184, y)
+        assertEquals(212, y + 28)
+    }
+
+    @Test
+    fun `letterboxing only excludes controls that actually intersect the video viewport`() {
+        assertEquals(0, resolveCommandDanmakuBottomInsetPx(600, 1200, 180))
+        assertEquals(70, resolveCommandDanmakuBottomInsetPx(900, 1000, 120))
+        assertEquals(120, resolveCommandDanmakuBottomInsetPx(900, 900, 120))
+    }
+
+    @Test
+    fun `reserved controls cannot create a negative or oversized placement region`() {
+        assertEquals(320, resolveCommandDanmakuBottomInsetPx(320, 320, 500))
+        assertEquals(0, resolveCommandDanmakuBottomInsetPx(320, 320, -1))
+        assertEquals(0, resolveCommandDanmakuBottomInsetPx(0, 320, 96))
     }
 }

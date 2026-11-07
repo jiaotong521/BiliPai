@@ -42,6 +42,23 @@ class WatchLaterQueueUiPolicyTest {
     }
 
     @Test
+    fun singleItemExternalQueuesRemainAvailableForEverySupportedSource() {
+        for (source in listOf(
+            ExternalPlaylistSource.WATCH_LATER,
+            ExternalPlaylistSource.FAVORITE,
+            ExternalPlaylistSource.SPACE,
+        )) {
+            assertTrue(
+                shouldShowExternalPlaylistQueueBarByPolicy(
+                    isExternalPlaylist = true,
+                    externalPlaylistSource = source,
+                    playlistSize = 1,
+                )
+            )
+        }
+    }
+
+    @Test
     fun hideQueueBarWhenExternalSourceIsUnknown() {
         assertFalse(
             shouldShowExternalPlaylistQueueBarByPolicy(
@@ -105,4 +122,5 @@ class WatchLaterQueueUiPolicyTest {
             )
         )
     }
+
 }

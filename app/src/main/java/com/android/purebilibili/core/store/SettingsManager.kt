@@ -1,6 +1,9 @@
 // 文件路径: core/store/SettingsManager.kt
 package com.android.purebilibili.core.store
 
+import com.android.purebilibili.core.store.home.HomeWallpaperSelection
+import com.android.purebilibili.core.ui.wallpaper.WallpaperTransform
+import com.android.purebilibili.core.ui.wallpaper.sanitizeWallpaperTransform
 import android.content.Context
 import com.android.purebilibili.BuildConfig
 import androidx.datastore.preferences.core.MutablePreferences
@@ -8,21 +11,41 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.android.purebilibili.core.ui.AppIconStyle
+import com.android.purebilibili.core.ui.AppListItemStyle
+import com.android.purebilibili.core.ui.components.AppSingleChoicePresentation
+import com.android.purebilibili.core.ui.resolveAppIconStylePreference
+import com.android.purebilibili.core.ui.resolveAppListItemStylePreference
 import com.android.purebilibili.core.ui.blur.BlurIntensity
 import com.android.purebilibili.core.ui.transition.VIDEO_SHARED_TRANSITION_CUSTOM_DEFAULT_MILLIS
 import com.android.purebilibili.core.ui.transition.VideoSharedTransitionSpeed
 import com.android.purebilibili.core.ui.transition.normalizeVideoSharedTransitionCustomDurationMillis
 import com.android.purebilibili.core.store.home.HomeSettingsStore
+import com.android.purebilibili.core.store.home.dynamicUpListVisiblePreferencesKey
+import com.android.purebilibili.core.store.home.dynamicCommentPreviewVisiblePreferencesKey
+import com.android.purebilibili.core.store.home.glassPopupPalettePreferencesKey
+import com.android.purebilibili.core.store.home.liquidGlassReadabilityModePreferencesKey
 import com.android.purebilibili.core.store.navigation.NavigationSettingsStore
+import com.android.purebilibili.core.store.navigation.bottomBarItemLabelsPreferencesKey
+import com.android.purebilibili.core.store.navigation.miuixPredictiveBackMaxProgressPercentPreferencesKey
+import com.android.purebilibili.core.store.navigation.parseBottomBarItemLabels
 import com.android.purebilibili.core.store.player.PlayerSettingsStore
+import com.android.purebilibili.core.store.player.defaultAudioQualityPreferenceKey
+import com.android.purebilibili.core.store.player.longPressSpeedPreferenceKey
+import com.android.purebilibili.core.store.player.playbackSpeedOptionsPreferenceKey
+import com.android.purebilibili.core.theme.AppFontWeightPreset
 import com.android.purebilibili.core.theme.AppFontSizePreset
+import com.android.purebilibili.core.ui.components.AppTagChipSize
 import com.android.purebilibili.core.theme.AppUiScalePreset
 import com.android.purebilibili.core.theme.AndroidNativeVariant
+import com.android.purebilibili.core.theme.AppUiStyle
 import com.android.purebilibili.core.theme.UiPreset
 import com.android.purebilibili.core.theme.normalizeThemeColorIndex
+import com.android.purebilibili.core.theme.resolveColorContrastPreference
 import com.android.purebilibili.core.theme.resolveColorSpecPreference
 import com.android.purebilibili.core.theme.resolvePaletteStylePreference
 import com.android.purebilibili.data.model.response.LiveFavoriteTagEntry
@@ -31,6 +54,8 @@ import com.android.purebilibili.feature.settings.share.SettingsShareEntryDefinit
 import com.android.purebilibili.feature.settings.share.SettingsShareSection
 import com.android.purebilibili.feature.settings.AppLanguage
 import com.android.purebilibili.feature.settings.AppThemeMode
+import com.android.purebilibili.feature.settings.DarkThemeSchedule
+import com.android.purebilibili.feature.settings.normalizeDarkThemeSchedule
 import com.android.purebilibili.feature.settings.DarkThemeStyle
 import com.android.purebilibili.feature.settings.Md3ColorSource
 import com.android.purebilibili.feature.settings.normalizeMd3CustomColorHex
@@ -49,12 +74,23 @@ import com.android.purebilibili.feature.video.subtitle.normalizeSubtitleVertical
 import com.android.purebilibili.feature.video.ui.gesture.TwoFingerSpeedToggleState
 import com.android.purebilibili.feature.video.ui.gesture.applyHorizontalTwoFingerSpeedToggle
 import com.android.purebilibili.feature.video.ui.gesture.applyVerticalTwoFingerSpeedToggle
+import com.android.purebilibili.core.util.ENHANCED_DIAGNOSTIC_LOG_PREF_KEY
+import com.android.purebilibili.core.util.ENHANCED_DIAGNOSTIC_LOG_PREFS_NAME
+import com.android.purebilibili.core.util.isLargeScreenOrFoldableConfiguration
+import com.android.purebilibili.core.theme.SeedPaletteStyle
+import com.materialkolor.Contrast
 import com.materialkolor.PaletteStyle
 import com.materialkolor.dynamiccolor.ColorSpec
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onEach
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -73,6 +109,7 @@ internal const val DEFAULT_CRASH_TRACKING_ENABLED = true
 internal const val DEFAULT_ANALYTICS_ENABLED = true
 internal const val DEFAULT_QUALITY_SWITCH_FAILURE_DIALOG_ENABLED = true
 internal const val DEFAULT_QUALITY_SWITCH_FAILURE_DIALOG_ONCE_ENABLED = false
+internal const val DEFAULT_DASH_SEGMENT_REQUESTS_ENABLED = false
 
 internal fun resolveDefaultPlayerDiagnosticLoggingEnabled(isDebugBuild: Boolean): Boolean {
     return !isDebugBuild
@@ -105,6 +142,106 @@ enum class LiquidGlassMode(val value: Int, val label: String) {
     }
 }
 
+enum class LiquidGlassAdvancedPreset(val value: Int, val label: String) {
+    READABLE(0, "清晰"),
+    BALANCED(1, "均衡"),
+    PRISM(2, "棱镜"),
+    CUSTOM(3, "自定");
+
+    companion object {
+        fun fromValue(value: Int): LiquidGlassAdvancedPreset =
+            entries.find { it.value == value } ?: BALANCED
+    }
+}
+
+data class LiquidGlassAdvancedSettings(
+    val preset: LiquidGlassAdvancedPreset = LiquidGlassAdvancedPreset.BALANCED,
+    val progressiveBlurRadius: Float = 0.40f,
+    val progressiveBlurExtent: Float = 1.0f,
+    val progressiveBlurCurve: Float = 0.55f,
+    val contentReadability: Float = 0.62f,
+    val chromaticAberration: Float = 0.56f,
+    val contentDistortion: Float = 0.45f,
+)
+
+internal fun normalizeLiquidGlassAdvancedValue(value: Float, fallback: Float): Float =
+    if (value.isFinite()) value.coerceIn(0f, 1f) else fallback
+
+internal fun resolveLiquidGlassAdvancedPreset(
+    preset: LiquidGlassAdvancedPreset,
+): LiquidGlassAdvancedSettings = when (preset) {
+    LiquidGlassAdvancedPreset.READABLE -> LiquidGlassAdvancedSettings(
+        preset = preset,
+        progressiveBlurRadius = 0.25f,
+        progressiveBlurExtent = 0.6f,
+        progressiveBlurCurve = 0.4f,
+        contentReadability = 1f,
+        chromaticAberration = 0.08f,
+        contentDistortion = 0f,
+    )
+    LiquidGlassAdvancedPreset.BALANCED -> LiquidGlassAdvancedSettings(
+        preset = preset,
+        progressiveBlurRadius = 0.40f,
+        progressiveBlurExtent = 1.0f,
+        progressiveBlurCurve = 0.55f,
+        contentReadability = 0.62f,
+        chromaticAberration = 0.56f,
+        contentDistortion = 0.45f,
+    )
+    LiquidGlassAdvancedPreset.PRISM -> LiquidGlassAdvancedSettings(
+        preset = preset,
+        progressiveBlurRadius = 0.8f,
+        progressiveBlurExtent = 0.9f,
+        progressiveBlurCurve = 0.65f,
+        contentReadability = 0.72f,
+        chromaticAberration = 0.96f,
+        contentDistortion = 1f,
+    )
+    LiquidGlassAdvancedPreset.CUSTOM -> LiquidGlassAdvancedSettings(preset = preset)
+}
+
+internal fun resolveLiquidGlassAdvancedSettings(
+    presetValue: Int?,
+    progressiveBlurRadius: Float? = null,
+    progressiveBlurExtent: Float? = null,
+    progressiveBlurCurve: Float? = null,
+    contentReadability: Float?,
+    chromaticAberration: Float?,
+    contentDistortion: Float?,
+): LiquidGlassAdvancedSettings {
+    val preset = presetValue
+        ?.let(LiquidGlassAdvancedPreset::fromValue)
+        ?: LiquidGlassAdvancedPreset.BALANCED
+    val defaults = resolveLiquidGlassAdvancedPreset(preset)
+    if (preset != LiquidGlassAdvancedPreset.CUSTOM) return defaults
+    return defaults.copy(
+        progressiveBlurRadius = normalizeLiquidGlassAdvancedValue(
+            progressiveBlurRadius ?: defaults.progressiveBlurRadius,
+            defaults.progressiveBlurRadius,
+        ),
+        progressiveBlurExtent = normalizeLiquidGlassAdvancedValue(
+            progressiveBlurExtent ?: defaults.progressiveBlurExtent,
+            defaults.progressiveBlurExtent,
+        ),
+        progressiveBlurCurve = normalizeLiquidGlassAdvancedValue(
+            progressiveBlurCurve ?: defaults.progressiveBlurCurve,
+            defaults.progressiveBlurCurve,
+        ),
+        contentReadability = normalizeLiquidGlassAdvancedValue(
+            contentReadability ?: defaults.contentReadability,
+            defaults.contentReadability,
+        ),
+        chromaticAberration = normalizeLiquidGlassAdvancedValue(
+            chromaticAberration ?: defaults.chromaticAberration,
+            defaults.chromaticAberration,
+        ),
+        contentDistortion = normalizeLiquidGlassAdvancedValue(
+            contentDistortion ?: defaults.contentDistortion,
+            defaults.contentDistortion,
+        ),
+    )
+}
+
 internal fun resolveLegacyLiquidGlassMode(style: LiquidGlassStyle): LiquidGlassMode = when (style) {
     LiquidGlassStyle.IOS26 -> LiquidGlassMode.CLEAR
     LiquidGlassStyle.CLASSIC -> LiquidGlassMode.BALANCED
@@ -117,9 +254,29 @@ internal fun resolveDefaultLiquidGlassStrength(mode: LiquidGlassMode): Float = w
     LiquidGlassMode.FROSTED -> 0.62f
 }
 
-internal fun normalizeLiquidGlassStrength(value: Float): Float = value.coerceIn(0f, 1f)
+internal fun normalizeLiquidGlassStrength(value: Float): Float =
+    if (value.isFinite()) value.coerceIn(0f, 1f) else 0.52f
 
-internal fun normalizeLiquidGlassProgress(value: Float): Float = value.coerceIn(0f, 1f)
+internal fun normalizeLiquidGlassProgress(value: Float): Float =
+    if (value.isFinite()) value.coerceIn(0f, 1f) else 0.5f
+
+/** 长按倍速提示整体缩放（0.8×–1.5×，默认 1.0×）。 */
+internal const val LONG_PRESS_SPEED_HINT_SCALE_MIN = 0.8f
+internal const val LONG_PRESS_SPEED_HINT_SCALE_MAX = 1.5f
+internal const val LONG_PRESS_SPEED_HINT_DEFAULT_SCALE = 1.0f
+internal const val LONG_PRESS_SPEED_HINT_ALPHA_MIN = 0.3f
+internal const val LONG_PRESS_SPEED_HINT_ALPHA_MAX = 1.0f
+internal const val LONG_PRESS_SPEED_HINT_DEFAULT_ALPHA = 0.5f
+internal const val LONG_PRESS_SPEED_HINT_STEP = 0.05f
+
+internal fun normalizeLongPressSpeedHintScale(value: Float): Float =
+    if (!value.isFinite()) LONG_PRESS_SPEED_HINT_DEFAULT_SCALE
+    else value.coerceIn(LONG_PRESS_SPEED_HINT_SCALE_MIN, LONG_PRESS_SPEED_HINT_SCALE_MAX)
+
+/** 长按倍速提示背景/内容透明度（0.3–1.0，默认 0.5）。 */
+internal fun normalizeLongPressSpeedHintAlpha(value: Float): Float =
+    if (!value.isFinite()) LONG_PRESS_SPEED_HINT_DEFAULT_ALPHA
+    else value.coerceIn(LONG_PRESS_SPEED_HINT_ALPHA_MIN, LONG_PRESS_SPEED_HINT_ALPHA_MAX)
 
 internal fun resolveLegacyLiquidGlassProgress(
     mode: LiquidGlassMode,
@@ -140,6 +297,26 @@ internal fun resolveLegacyLiquidGlassProgress(style: LiquidGlassStyle): Float {
         mode = mode,
         strength = resolveDefaultLiquidGlassStrength(mode)
     )
+}
+
+/** Prefer the v2 continuous value, falling back to the complete legacy material selection. */
+internal fun resolveStoredLiquidGlassProgress(
+    progress: Float?,
+    legacyModeValue: Int?,
+    legacyStrength: Float?,
+    legacyStyleValue: Int?,
+): Float {
+    progress?.let { return normalizeLiquidGlassProgress(it) }
+    val legacyStyle = LiquidGlassStyle.fromValue(
+        legacyStyleValue ?: LiquidGlassStyle.SUKISU.value
+    )
+    val mode = legacyModeValue
+        ?.let(LiquidGlassMode::fromValue)
+        ?: resolveLegacyLiquidGlassMode(legacyStyle)
+    val strength = normalizeLiquidGlassStrength(
+        legacyStrength ?: resolveDefaultLiquidGlassStrength(mode)
+    )
+    return resolveLegacyLiquidGlassProgress(mode, strength)
 }
 
 internal fun resolveLiquidGlassModeFromProgress(progress: Float): LiquidGlassMode {
@@ -190,7 +367,6 @@ enum class HomeHeaderBlurMode(val value: Int, val label: String) {
 
 internal fun resolveHomeHeaderBlurEnabled(
     mode: HomeHeaderBlurMode,
-    uiPreset: UiPreset
 ): Boolean {
     return when (mode) {
         HomeHeaderBlurMode.FOLLOW_PRESET -> true
@@ -205,7 +381,7 @@ internal fun resolveHomeHeaderBlurModePreference(
 ): HomeHeaderBlurMode {
     return if (rawMode != null) {
         HomeHeaderBlurMode.fromValue(rawMode)
-    } else if (legacyEnabled == false) {
+    } else if (legacyEnabled != true) {
         HomeHeaderBlurMode.ALWAYS_OFF
     } else {
         HomeHeaderBlurMode.FOLLOW_PRESET
@@ -227,11 +403,11 @@ enum class PlaybackCompletionBehavior(val value: Int, val label: String) {
 }
 
 enum class PortraitPlayerCollapseMode(val value: Int, val label: String, val description: String) {
-    OFF(0, "关闭", "不自动缩小播放器"),
+    OFF(0, "关闭", "关闭播放时滚动缩小；暂停后仍可上滑简介或评论收起画面"),
     INTRO_ONLY(1, "竖屏", "竖屏视频评论区或简介上滑时缩小播放器"),
     COMMENT_ONLY(2, "横屏", "仅横屏视频详情页滚动时缩小播放器"),
-    BOTH(3, "全部", "横竖屏视频都使用播放器缩小策略"),
-    PAUSED_ONLY(4, "暂停时", "横竖屏视频暂停后，下滑评论或简介可缩小播放器");
+    BOTH(3, "全部", "横屏和竖屏视频均可随浏览缩小"),
+    PAUSED_ONLY(4, "暂停时", "视频暂停后，上滑评论隐藏视频，上滑简介缩小播放器");
 
     val enablesPortraitVideo: Boolean
         get() = this == INTRO_ONLY || this == BOTH || this == PAUSED_ONLY
@@ -262,7 +438,7 @@ enum class PortraitPlayerCollapseMode(val value: Int, val label: String, val des
 
 enum class FullscreenMode(val value: Int, val label: String, val description: String) {
     AUTO(0, "自动", "按视频方向自动切换全屏方向"),
-    NONE(1, "不改方向", "保持当前方向，仅切换全屏 UI"),
+    NONE(1, "不改方向", "保持当前方向，进入全屏"),
     VERTICAL(2, "竖屏", "进入全屏时保持竖屏"),
     HORIZONTAL(3, "横屏", "进入全屏时切换到横屏");
 
@@ -278,16 +454,32 @@ enum class FullscreenMode(val value: Int, val label: String, val description: St
 }
 
 enum class FullscreenAspectRatio(val value: Int, val label: String, val description: String) {
-    FIT(0, "适应", "完整显示画面，尽量不裁切"),
-    FILL(1, "填充", "填满屏幕，可能裁切边缘"),
+    FIT(0, "自动", "完整显示画面，尽量不裁切"),
+    FILL(1, "裁剪", "填满屏幕，可能裁切边缘"),
     RATIO_16_9(2, "16:9", "优先按 16:9 展示画面"),
     RATIO_4_3(3, "4:3", "优先按 4:3 展示画面"),
-    STRETCH(4, "拉伸", "铺满屏幕，可能导致画面变形");
+    STRETCH(4, "拉伸", "铺满屏幕，可能导致画面变形"),
+    FIT_WIDTH(5, "等宽", "保持源比例与播放器等宽"),
+    FIT_HEIGHT(6, "等高", "保持源比例与播放器等高"),
+    ORIGINAL(7, "原始", "按视频原始像素尺寸居中展示"),
+    SCALE_DOWN(8, "限制", "仅缩小超过播放器的画面，不放大小画面");
 
     companion object {
         fun fromValue(value: Int): FullscreenAspectRatio {
             return entries.find { it.value == value } ?: FIT
         }
+    }
+}
+
+/** 章节可视层的展示方式；隐藏时仍保留章节列表入口。 */
+enum class ChapterDisplayMode(val value: Int, val label: String, val description: String) {
+    HIDDEN(0, "彻底隐藏", "隐藏章节分段条和当前章节标题，仍可打开章节列表"),
+    WITH_CONTROLS(1, "随控制栏显示", "仅在控制栏展开时显示章节，收起后不遮挡画面字幕"),
+    PERSISTENT(2, "底部常驻", "横屏全屏收起控制栏后仍显示章节条，可能遮挡视频自带字幕");
+
+    companion object {
+        fun fromValue(value: Int): ChapterDisplayMode =
+            entries.find { it.value == value } ?: WITH_CONTROLS
     }
 }
 
@@ -308,6 +500,7 @@ enum class BottomProgressBehavior(
     }
 }
 
+
 enum class PlayerProgressPlacement(
     val value: Int,
     val label: String
@@ -324,24 +517,20 @@ enum class PlayerProgressPlacement(
 
 data class PlayerControlVisibilitySettings(
     val showCastButton: Boolean = true,
-    val showFollowButton: Boolean = true
+    val showFollowButton: Boolean = true,
+    /** 紧凑播放器控件：隐藏顶栏分享并收紧顶底栏间距。默认经典布局。 */
+    val compactPlayerChrome: Boolean = false
 )
 
 internal fun normalizeDanmakuDisplayArea(value: Float): Float {
-    val normalized = value.coerceIn(0.25f, 1.0f)
-    val supportedOptions = floatArrayOf(0.25f, 0.5f, 0.75f, 1.0f)
-    return supportedOptions.minByOrNull { abs(it - normalized) } ?: 0.5f
+    return if (value.isFinite()) value.coerceIn(0.1f, 1f) else 0.5f
 }
 
-internal fun normalizeDanmakuFontScale(value: Float): Float = value.coerceIn(0.3f, 2.0f)
+internal fun normalizeDanmakuFontScale(value: Float): Float =
+    if (value.isFinite()) value.coerceIn(0.5f, 2.5f) else 1f
 
-internal const val DEFAULT_HOME_REFRESH_COUNT = 20
-internal const val MIN_HOME_REFRESH_COUNT = 10
-internal const val MAX_HOME_REFRESH_COUNT = 30
-
-internal fun normalizeHomeRefreshCount(count: Int): Int {
-    return count.coerceIn(MIN_HOME_REFRESH_COUNT, MAX_HOME_REFRESH_COUNT)
-}
+/** 推荐流兜底条数；实际值由 HomeViewModel 按网格列数换算。 */
+internal const val DEFAULT_HOME_REFRESH_COUNT = 12
 
 enum class HomeFeedCardWidthPreset(
     val value: Int,
@@ -360,13 +549,20 @@ enum class HomeFeedCardWidthPreset(
     }
 }
 
-enum class HomeFeedCardStyle(val value: Int, val label: String) {
-    CURRENT(0, "当前样式"),
-    OFFICIAL(1, "官方样式");
+/**
+ * 双列视频卡封面框三档（全局一份设置，均居中 Crop）：
+ * - [CURRENT] 16:9：与 CDN 投稿源同比例，标准封面几乎不裁
+ * - [OFFICIAL] 4:3：更高列表框，左右会裁
+ * - [BILIPAI] 16:10：默认信息流封面比例
+ */
+enum class HomeFeedCardStyle(val value: Int, val label: String, val subtitle: String) {
+    CURRENT(0, "16:9", "完整显示，接近投稿源图"),
+    OFFICIAL(1, "4:3", "更高列表框，左右居中裁切"),
+    BILIPAI(2, "16:10", "默认信息流封面比例");
 
     companion object {
         fun fromValue(value: Int): HomeFeedCardStyle =
-            entries.find { it.value == value } ?: CURRENT
+            entries.find { it.value == value } ?: BILIPAI
     }
 }
 
@@ -378,6 +574,51 @@ enum class HomeDurationStyle(val value: Int, val label: String) {
     companion object {
         fun fromValue(value: Int): HomeDurationStyle =
             entries.find { it.value == value } ?: OUTSIDE_COVER
+    }
+}
+
+/**
+ * 首页/列表视频卡片标签（播放量、时长、信息区）表面效果。
+ * 轻模糊在滚动时会降级为软玻璃，避免列表掉帧。
+ */
+enum class HomeCardBadgeEffectMode(
+    val value: Int,
+    val label: String,
+    val subtitle: String
+) {
+    OFF(0, "关闭", "纯文字标签，性能最好"),
+    SOFT_GLASS(1, "软玻璃", "半透明描边拟态，无实时采样"),
+    LIGHT_BLUR(2, "实时模糊", "开发中，请勿使用：Haze 采样壁纸/背景");
+
+    companion object {
+        fun fromValue(value: Int): HomeCardBadgeEffectMode =
+            entries.find { it.value == value } ?: SOFT_GLASS
+    }
+}
+
+/**
+ * Card info strip (title + UP under cover) glass — independent of cover badge pills.
+ * Realtime blur (Haze) and realtime liquid glass (LayerBackdrop) are separate modes.
+ */
+enum class HomeCardInfoGlassMode(
+    val value: Int,
+    val label: String,
+    val subtitle: String
+) {
+    OFF(0, "关闭", "实色/轻 tint，性能最好（推荐）"),
+    REALTIME_BLUR(1, "实时模糊", "开发中，请勿使用：Haze 采样壁纸磨砂"),
+    REALTIME_LIQUID_GLASS(2, "实时液态玻璃", "开发中，请勿使用：折射液态玻璃"),
+    BLUR_AND_LIQUID(3, "模糊+液态", "开发中，请勿使用：Haze + 液态叠加");
+
+    val usesRealtimeBlur: Boolean
+        get() = this == REALTIME_BLUR || this == BLUR_AND_LIQUID
+
+    val usesRealtimeLiquidGlass: Boolean
+        get() = this == REALTIME_LIQUID_GLASS || this == BLUR_AND_LIQUID
+
+    companion object {
+        fun fromValue(value: Int): HomeCardInfoGlassMode =
+            entries.find { it.value == value } ?: OFF
     }
 }
 
@@ -403,77 +644,129 @@ enum class BottomBarLiquidGlassPreset(
     }
 }
 
+// 设置流加载前使用相同的轻量视觉默认值，避免首帧短暂启用模糊或卡片展开。
 data class HomeSettings(
     val displayMode: Int = 0,              // 展示模式 (0=网格, 1=故事卡片)
-    val isBottomBarFloating: Boolean = true,
+    val isBottomBarFloating: Boolean = false,
+    val navigationIconCrossScaleEnabled: Boolean = true,
     val bottomBarLabelMode: Int = 0,       // (0=图标+文字, 1=仅图标, 2=仅文字)
     val topTabLabelMode: Int = 2,          // (0=图标+文字, 1=仅图标, 2=仅文字)
+    val partitionSideRailOnRight: Boolean = false,
+    val hideTopTabs: Boolean = false,
     val homeTopRightAction: HomeTopRightAction = HomeTopRightAction.SETTINGS,
     val homeTopLayoutOrder: HomeTopLayoutOrder = HomeTopLayoutOrder.SEARCH_THEN_TABS,
-    val isHeaderBlurEnabled: Boolean = true,
-    val headerBlurMode: HomeHeaderBlurMode = HomeHeaderBlurMode.FOLLOW_PRESET,
-    val isBottomBarBlurEnabled: Boolean = true,
+    val isHeaderBlurEnabled: Boolean = false,
+    val headerBlurMode: HomeHeaderBlurMode = HomeHeaderBlurMode.ALWAYS_OFF,
+    val isBottomBarBlurEnabled: Boolean = false,
     val isTopBarLiquidGlassEnabled: Boolean = false,
     val isHomeSearchLiquidGlassEnabled: Boolean = false,
     val isBottomBarLiquidGlassEnabled: Boolean = false,
     val bottomBarLiquidGlassPreset: BottomBarLiquidGlassPreset =
         BottomBarLiquidGlassPreset.BILIPAI_TUNED,
-    val bottomBarInteractiveHighlightEnabled: Boolean = true,
     val isBottomBarSearchEnabled: Boolean = false,
+    val keepHomeTopSearchWithBottomSearch: Boolean = false,
+    val listScopedSearchEnabled: Boolean = false,
+    val linkedDockMergeOnScrollEnabled: Boolean = true,
+    val bottomBarScrollCompactEnabled: Boolean = true,
     val bottomBarSearchAutoExpandMode: BottomBarSearchAutoExpandMode =
         BottomBarSearchAutoExpandMode.EXPAND_AT_HOME_TOP,
     val bottomBarSearchLayoutMode: BottomBarSearchLayoutMode =
         BottomBarSearchLayoutMode.FULL_DOCK,
     val androidNativeLiquidGlassEnabled: Boolean = false,
+    val liquidGlassScenes: com.android.purebilibili.core.ui.AppLiquidGlassSettings = com.android.purebilibili.core.ui.AppLiquidGlassSettings(),
     val liquidGlassStyle: LiquidGlassStyle = LiquidGlassStyle.CLASSIC, // [New]
     val liquidGlassMode: LiquidGlassMode = LiquidGlassMode.BALANCED,
     val liquidGlassStrength: Float = 0.52f,
     val liquidGlassProgress: Float = 0.5f,
+    val liquidGlassReadabilityMode: LiquidGlassReadabilityMode =
+        LiquidGlassReadabilityMode.STABLE,
+    val liquidGlassAdvancedSettings: LiquidGlassAdvancedSettings = LiquidGlassAdvancedSettings(),
     val homeHeaderCollapseMode: HomeHeaderCollapseMode = HomeHeaderCollapseMode.BOTH,
+    val homeBarHideType: HomeBarHideType = HomeBarHideType.SYNC,
     val commonListHeaderCollapseMode: CommonListHeaderCollapseMode =
-        CommonListHeaderCollapseMode.SHOW_ON_REVERSE_SCROLL,
+        CommonListHeaderCollapseMode.SHOW_AT_TOP_ONLY,
     val isHeaderCollapseEnabled: Boolean = true,
-    val gridColumnCount: Int = 0, // [New] 网格列数 (0=自动, 1-6=固定)
+    val showPgcTimeline: Boolean = true,
+    val gridColumnCount: Int = 0, // [New] 网格列数 (0=自动, 1-7=固定)——宽屏（折叠屏内屏/平板）
+    val gridColumnCountCompact: Int = 0, // [New] 窄屏（折叠屏外屏/手机竖屏）独立列数记忆 (0=自动)
+    val gridColumnCustomizationEnabled: Boolean = true,
+    val gridColumnsSharedAcrossPages: Boolean = true,
+    val pinchToChangeGridColumnsEnabled: Boolean = true, // [新增] 双指缩放切换网格列数
     val homeFeedCardWidthPreset: HomeFeedCardWidthPreset = HomeFeedCardWidthPreset.AUTO,
-    val homeFeedCardStyle: HomeFeedCardStyle = HomeFeedCardStyle.OFFICIAL,
-    val homeHeroCarouselEnabled: Boolean = true,
+    val homeFeedCardStyle: HomeFeedCardStyle = HomeFeedCardStyle.BILIPAI,
+    val homeHeroCarouselEnabled: Boolean = false,
     val homeHeroCarouselAutoplayEnabled: Boolean = false,
+    val homeRefreshTipVisible: Boolean = true, // 推荐流刷新后在旧内容分界处显示提示
+    val homeRefreshUndoVisible: Boolean = false, // 刷新后的撤销按钮默认隐藏
     val cardAnimationEnabled: Boolean = false,    //  卡片进场动画（默认关闭）
-    val cardTransitionEnabled: Boolean = true,    //  卡片过渡动画（默认开启）
+    val cardTransitionEnabled: Boolean = false,   // 卡片展开过渡按需开启
     val videoSharedTransitionSpeed: VideoSharedTransitionSpeed = VideoSharedTransitionSpeed.STANDARD,
     val videoSharedTransitionCustomDurationMillis: Int =
         VIDEO_SHARED_TRANSITION_CUSTOM_DEFAULT_MILLIS,
-    val smartVisualGuardEnabled: Boolean = false, // [Retired] 智能流畅优先已下线，固定关闭
-    val compactVideoStatsOnCover: Boolean = true, //  播放量/评论数显示在封面底部（默认开启）
+    // [Retired] 旧的首页 feed「智能流畅优先」，固定关闭。
+    // 运行时视觉守卫是另一套机制，见 [runtimeVisualGuardEnabled]。
+    val smartVisualGuardEnabled: Boolean = false,
+    // 运行时视觉守卫：连续掉帧时自动降级毛玻璃/液态玻璃/景深。
+    // 影响面覆盖全 App 视觉，必须保留 kill switch——某机型 JankStats 读数异常时可关闭。
+    val runtimeVisualGuardEnabled: Boolean = true,
+    val compactVideoStatsOnCover: Boolean = false, // 播放/弹幕位于信息区，不叠加在封面上
     val lowQualityHomeCoverInDataSaver: Boolean = false, // 省流量时首页封面使用低清晰度
-    val showHomeCoverGlassBadges: Boolean = false, // 首页封面玻璃标签已退役
-    val showHomeInfoGlassBadges: Boolean = false, // 首页信息区玻璃标签已退役
-    val homeWallpaperEffectMode: HomeWallpaperEffectMode = HomeWallpaperEffectMode.SOFT_BLUR,
+    // 卡片标签 / 信息区玻璃效果已下线，保留字段仅为兼容旧数据结构。
+    val showHomeCoverGlassBadges: Boolean = false,
+    val showHomeInfoGlassBadges: Boolean = false,
+    val homeCardBadgeEffectMode: HomeCardBadgeEffectMode = HomeCardBadgeEffectMode.OFF,
+    val homeCardInfoGlassMode: HomeCardInfoGlassMode = HomeCardInfoGlassMode.OFF,
+    val homeWallpaperEffectMode: HomeWallpaperEffectMode = HomeWallpaperEffectMode.OFF,
     val homeWallpaperEffectScope: HomeWallpaperEffectScope = HomeWallpaperEffectScope.HOME_ONLY,
-    val showHomeUpBadges: Boolean = true, // 首页和相关推荐 UP 主标识显示
+    val showHomeUpBadges: Boolean = false, // 首页和相关推荐 UP 主标识显示(默认关闭,设置后全局生效)
+    val showHomeUpAvatars: Boolean = false, // 首页视频卡片 UP 主头像显示(默认关闭,设置后全局生效)
+    val showHomePublishTime: Boolean = true, // 首页视频卡片发布时间（默认显示，可关闭）
+    val showFullVideoCardContent: Boolean = false, // 视频卡片标题完整展示(默认关闭,设置后全局生效)
+    val videoCardLongPressActionEnabled: Boolean = false, // 长按视频卡片快捷操作与预览（默认关闭）
+    val homeCardDynamicTintEnabled: Boolean = false, // 卡片动态取色
+    val homeCardFrostedGlassEnabled: Boolean = false, // 卡片毛玻璃
     val homeDurationStyle: HomeDurationStyle = HomeDurationStyle.OUTSIDE_COVER,
     val easterEggEnabled: Boolean = false, // 下拉刷新趣味提示开关
     //  [修复] 默认值改为 true，避免在 Flow 加载实际值之前错误触发弹窗
     // 当 Flow 加载完成后，如果实际值是 false，LaunchedEffect 会再次触发并显示弹窗
     val crashTrackingConsentShown: Boolean = true
 ) {
-    val isLiquidGlassEnabled: Boolean
-        get() = isBottomBarLiquidGlassEnabled
+    fun isGlassSceneEnabled(scene: com.android.purebilibili.core.ui.AppLiquidGlassScene): Boolean =
+        androidNativeLiquidGlassEnabled && liquidGlassScenes.isEnabled(scene)
+
+    val bottomDockGlassEnabled: Boolean get() = isGlassSceneEnabled(com.android.purebilibili.core.ui.AppLiquidGlassScene.BOTTOM_DOCK)
+    val homeTopGlassEnabled: Boolean get() = isGlassSceneEnabled(com.android.purebilibili.core.ui.AppLiquidGlassScene.HOME_TOP_BAR)
+    val homeSearchGlassEnabled: Boolean get() = isGlassSceneEnabled(com.android.purebilibili.core.ui.AppLiquidGlassScene.HOME_SEARCH)
+    val commentBarGlassEnabled: Boolean get() = isGlassSceneEnabled(com.android.purebilibili.core.ui.AppLiquidGlassScene.COMMENT_BAR)
+    val otherGlassEnabled: Boolean get() = isGlassSceneEnabled(com.android.purebilibili.core.ui.AppLiquidGlassScene.OTHER_COMPONENTS)
+    val playerGlassEnabled: Boolean get() = isGlassSceneEnabled(com.android.purebilibili.core.ui.AppLiquidGlassScene.PLAYER_CONTROLS)
+    val popupGlassEnabled: Boolean get() = isGlassSceneEnabled(com.android.purebilibili.core.ui.AppLiquidGlassScene.MENUS_DIALOGS)
+    val nowPlayingGlassEnabled: Boolean get() = isGlassSceneEnabled(com.android.purebilibili.core.ui.AppLiquidGlassScene.NOW_PLAYING)
+    val isLiquidGlassEnabled: Boolean get() = otherGlassEnabled
 }
 
+internal fun resolveHomeCardFrostedGlassEnabled(
+    storedValue: Boolean?,
+    legacyCombinedValue: Boolean?,
+): Boolean = storedValue ?: legacyCombinedValue ?: false
+
 data class AppThemeSettings(
-    val uiPreset: UiPreset = UiPreset.MD3,
-    val androidNativeVariant: AndroidNativeVariant = AndroidNativeVariant.MATERIAL3,
+    val uiStyle: AppUiStyle = AppUiStyle.MATERIAL3,
     val themeMode: AppThemeMode = AppThemeMode.FOLLOW_SYSTEM,
+    val darkThemeSchedule: DarkThemeSchedule = DarkThemeSchedule(),
     val darkThemeStyle: DarkThemeStyle = DarkThemeStyle.DEFAULT,
     val appLanguage: AppLanguage = AppLanguage.FOLLOW_SYSTEM,
     val md3ColorSource: Md3ColorSource = Md3ColorSource.FOLLOW_WALLPAPER,
     val md3CustomColorHex: String = "#007AFF",
     val themeRoleOverrides: ThemeRoleOverrides = ThemeRoleOverrides(),
+    val wallpaperPaletteOverrides: WallpaperPaletteOverrides = WallpaperPaletteOverrides(),
+    val seedPaletteStyle: SeedPaletteStyle = SeedPaletteStyle.Standard,
     val colorStyle: PaletteStyle = PaletteStyle.TonalSpot,
-    val colorSpec: ColorSpec.SpecVersion = ColorSpec.SpecVersion.SPEC_2021,
+    val colorSpec: ColorSpec.SpecVersion = ColorSpec.SpecVersion.SPEC_2025,
+    val colorContrast: Contrast = Contrast.Default,
     val themeColorIndex: Int = 0,
     val appFontSizePreset: AppFontSizePreset = AppFontSizePreset.DEFAULT,
+    val appFontWeightPreset: AppFontWeightPreset = AppFontWeightPreset.FOLLOW_THEME,
     val appFontFileName: String = "",
     val appUiScalePreset: AppUiScalePreset = AppUiScalePreset.STANDARD,
     val appDpiOverridePercent: Int = 0,
@@ -481,7 +774,11 @@ data class AppThemeSettings(
     val appScreenshotGestureMode: AppScreenshotGestureMode =
         AppScreenshotGestureMode.TOP_RIGHT_TWO_FINGER_LONG_PRESS,
     val appScreenshotCaptureMode: AppScreenshotCaptureMode =
-        AppScreenshotCaptureMode.FULL_WINDOW
+        AppScreenshotCaptureMode.FULL_WINDOW,
+    val appIconStyle: AppIconStyle = AppIconStyle.AUTO,
+    val appListItemStyle: AppListItemStyle = AppListItemStyle.AUTO,
+    val singleChoicePresentation: AppSingleChoicePresentation =
+        AppSingleChoicePresentation.WINDOW_POPUP,
 )
 
 data class ThemeModeRoleOverrides(
@@ -542,7 +839,7 @@ enum class HomeWallpaperEffectMode(val value: Int, val label: String) {
 
 enum class HomeWallpaperEffectScope(val value: Int, val label: String) {
     HOME_ONLY(0, "仅首页"),
-    GLOBAL(1, "全局");
+    GLOBAL(1, "全局页面");
 
     companion object {
         fun fromValue(value: Int): HomeWallpaperEffectScope =
@@ -577,13 +874,17 @@ enum class HomeHeaderCollapseMode(
     val collapseSearch: Boolean,
     val collapseTabs: Boolean
 ) {
-    SEARCH_ONLY(0, "仅搜索", "列表下滑时只收起搜索行，标签页保持显示", true, false),
-    TABS_ONLY(1, "仅标签", "列表下滑时只收起标签页，搜索行保持显示", false, true),
-    BOTH(2, "都折叠", "搜索行和标签页都会随列表下滑收起", true, true),
-    OFF(3, "都不折叠", "搜索行和标签页始终展开", false, false);
+    SEARCH_ONLY(0, "仅搜索", "浏览下方内容时只收起搜索框", true, false),
+    TABS_ONLY(1, "仅标签", "浏览下方内容时只收起分类栏", false, true),
+    BOTH(2, "都收起", "浏览下方内容时，搜索框和分类栏都收起", true, true),
+    OFF(3, "始终显示", "搜索框和分类栏始终显示", false, false),
+    SHOW_AT_TOP_ONLY(4, "仅回顶显示", "浏览下方内容时收起搜索框和分类栏，仅回到列表顶部时恢复", true, true);
 
     val hasAnyCollapse: Boolean
         get() = collapseSearch || collapseTabs
+
+    val hideTopBar: Boolean
+        get() = collapseSearch
 
     companion object {
         fun fromValue(value: Int): HomeHeaderCollapseMode =
@@ -594,43 +895,55 @@ enum class HomeHeaderCollapseMode(
     }
 }
 
+enum class HomeBarHideType(
+    val value: Int,
+    val label: String,
+    val description: String
+) {
+    SYNC(0, "同步", "顶栏高度跟随手指滑动，向上滑动收起、反向下拉展开"),
+    INSTANT(1, "即时", "识别滑动方向后，顶栏整段收起或展开");
+
+    companion object {
+        fun fromValue(value: Int): HomeBarHideType =
+            entries.find { it.value == value } ?: SYNC
+    }
+}
+
 enum class CommonListHeaderCollapseMode(
     val value: Int,
     val label: String,
     val description: String
 ) {
-    ALWAYS_VISIBLE(0, "始终显示", "历史记录和收藏夹顶部栏保持展开"),
+    ALWAYS_VISIBLE(0, "始终显示", "历史记录和收藏夹等通用列表的顶部栏保持展开"),
     SHOW_ON_REVERSE_SCROLL(1, "上滑时显示", "向下浏览时折叠，反向上滑时恢复"),
     SHOW_AT_TOP_ONLY(2, "仅回顶显示", "向下浏览时折叠，仅回到列表顶部时恢复");
 
     companion object {
         fun fromValue(value: Int): CommonListHeaderCollapseMode =
-            entries.find { it.value == value } ?: SHOW_ON_REVERSE_SCROLL
+            entries.find { it.value == value } ?: SHOW_AT_TOP_ONLY
     }
 }
 
+internal fun resolveHomeHeaderCollapseModeForTopBarHide(
+    hideTopBar: Boolean
+): HomeHeaderCollapseMode {
+    return if (hideTopBar) HomeHeaderCollapseMode.BOTH else HomeHeaderCollapseMode.OFF
+}
+
+@Suppress("UNUSED_PARAMETER")
 internal fun resolveHomeHeaderCollapseModeForTopTabs(
     currentMode: HomeHeaderCollapseMode,
     collapseTabs: Boolean
 ): HomeHeaderCollapseMode {
-    return when {
-        currentMode.collapseSearch && collapseTabs -> HomeHeaderCollapseMode.BOTH
-        currentMode.collapseSearch -> HomeHeaderCollapseMode.SEARCH_ONLY
-        collapseTabs -> HomeHeaderCollapseMode.TABS_ONLY
-        else -> HomeHeaderCollapseMode.OFF
-    }
+    return resolveHomeHeaderCollapseModeForTopBarHide(currentMode.hideTopBar)
 }
 
+@Suppress("UNUSED_PARAMETER")
 internal fun resolveHomeHeaderCollapseModeForSearch(
     currentMode: HomeHeaderCollapseMode,
     collapseSearch: Boolean
 ): HomeHeaderCollapseMode {
-    return when {
-        collapseSearch && currentMode.collapseTabs -> HomeHeaderCollapseMode.BOTH
-        collapseSearch -> HomeHeaderCollapseMode.SEARCH_ONLY
-        currentMode.collapseTabs -> HomeHeaderCollapseMode.TABS_ONLY
-        else -> HomeHeaderCollapseMode.OFF
-    }
+    return resolveHomeHeaderCollapseModeForTopBarHide(collapseSearch)
 }
 
 internal fun resolveUiPresetPreferenceValue(rawValue: Int?): UiPreset {
@@ -654,11 +967,11 @@ enum class DanmakuPanelWidthMode(val value: Int, val label: String, val widthFra
 
 enum class PortraitDanmakuDisplayAreaMode(val value: Int, val label: String) {
     VIDEO_VIEWPORT(0, "视频画面"),
-    SCREEN_TOP(1, "屏幕顶部");
+    SCREEN_TOP(1, "视频上方");
 
     companion object {
         fun fromValue(value: Int): PortraitDanmakuDisplayAreaMode =
-            entries.find { it.value == value } ?: VIDEO_VIEWPORT
+            entries.find { it.value == value } ?: SCREEN_TOP
     }
 }
 
@@ -677,6 +990,16 @@ enum class TabletCommentPanelWidthPreset(
     }
 }
 
+enum class TabletSecondaryDefaultTab(val value: Int, val label: String) {
+    COMMENTS(0, "评论"),
+    RELATED(1, "推荐");
+
+    companion object {
+        fun fromValue(value: Int): TabletSecondaryDefaultTab =
+            entries.find { it.value == value } ?: RELATED
+    }
+}
+
 internal fun normalizeDanmakuFullscreenPanelWidthMode(
     mode: DanmakuPanelWidthMode
 ): DanmakuPanelWidthMode = DanmakuPanelWidthMode.THIRD
@@ -688,13 +1011,13 @@ enum class DanmakuSettingsScope(
 ) {
     PORTRAIT(
         keyPrefix = "portrait",
-        badgeLabel = "竖屏专用",
-        subtitle = "当前修改仅作用于竖屏观看"
+        badgeLabel = "非全屏专用",
+        subtitle = "开关、行距和区域与全屏同步，字号及其余样式独立"
     ),
     LANDSCAPE(
         keyPrefix = "landscape",
-        badgeLabel = "横屏专用",
-        subtitle = "当前修改仅作用于横屏观看"
+        badgeLabel = "全屏专用",
+        subtitle = "开关、行距和区域与非全屏同步，字号及其余样式独立"
     )
 }
 
@@ -717,18 +1040,19 @@ data class DanmakuSettings(
     val staticDanmakuToScroll: Boolean = false,
     val massiveMode: Boolean = false,
     val mergeDuplicates: Boolean = true,
-    val duplicateMergeWindowMs: Int = 500,
+    val duplicateMergeWindowMs: Int = 15_000,
     val duplicateMergeCountThreshold: Int = 2,
     val allowScroll: Boolean = true,
     val allowTop: Boolean = true,
     val allowBottom: Boolean = true,
     val allowColorful: Boolean = true,
     val allowSpecial: Boolean = true,
+    val weightFilterLevel: Int = 0,
     val hideInteractiveCommands: Boolean = false,
     val blockAttentionCommands: Boolean = false,
     val smartOcclusion: Boolean = false,
     val portraitDisplayAreaMode: PortraitDanmakuDisplayAreaMode =
-        PortraitDanmakuDisplayAreaMode.VIDEO_VIEWPORT,
+        PortraitDanmakuDisplayAreaMode.SCREEN_TOP,
     val fullscreenPanelWidthMode: DanmakuPanelWidthMode = DanmakuPanelWidthMode.THIRD,
     val blockRulesRaw: String = "",
     val blockRules: List<String> = emptyList()
@@ -738,10 +1062,24 @@ data class AppNavigationSettings(
     val bottomBarVisibilityMode: SettingsManager.BottomBarVisibilityMode = SettingsManager.BottomBarVisibilityMode.ALWAYS_VISIBLE,
     val orderedVisibleTabIds: List<String> = listOf("HOME", "DYNAMIC", "HISTORY", "LISTEN_VIDEO", "PROFILE"),
     val bottomBarItemColors: Map<String, Int> = emptyMap(),
+    val bottomBarItemLabels: Map<String, String> = emptyMap(),
     val tabletUseSidebar: Boolean = false,
+    val sidebarExpanded: Boolean = true,
+    val sidebarAccountSwitcherEnabled: Boolean = true,
     val predictiveBackEnabled: Boolean = true,
-    val predictiveBackAnimationStyle: String = "scale",
-    val predictiveBackExitDirection: String = "auto",
+    val predictiveBackAnimationStyle: String = "miuix",
+    val predictiveBackExitDirection: String = "always_right",
+    val miuixTransitionBlurEnabled: Boolean = true,
+    val miuixPredictiveBackMaxProgressPercent: Int = 100,
+    val videoTransitionMode: VideoTransitionMode = VideoTransitionMode.SYSTEM_PREFERRED,
+    val settingsContainerMorphEnabled: Boolean = true,
+    val settingsContainerRealtimeBlurEnabled: Boolean = false,
+    val liquidIndicatorWobbleEnabled: Boolean = true,
+    val liquidIndicatorDynamicLengthEnabled: Boolean = true,
+    // 编辑器保留原始配置，不能用运行时过滤后的可见项或生效策略反写用户选择。
+    val bottomBarOrder: List<String> = listOf("HOME", "DYNAMIC", "HISTORY", "LISTEN_VIDEO", "PROFILE"),
+    val bottomBarVisibleTabs: Set<String> = setOf("HOME", "DYNAMIC", "HISTORY", "LISTEN_VIDEO", "PROFILE"),
+    val savedBottomBarVisibilityMode: SettingsManager.BottomBarVisibilityMode = bottomBarVisibilityMode,
 )
 
 internal data class BottomTabMigrationResult(
@@ -773,9 +1111,39 @@ internal fun resolveListenVideoBottomTabMigration(
 }
 
 data class HomeTopTabSettings(
-    val orderIds: List<String> = listOf("RECOMMEND", "FOLLOW", "POPULAR", "LIVE", "GAME", "PARTITION"),
-    val visibleIds: Set<String> = setOf("RECOMMEND", "FOLLOW", "POPULAR", "LIVE", "GAME", "PARTITION")
+    val orderIds: List<String> = listOf("RECOMMEND", "FOLLOW", "POPULAR", "LIVE", "GAME"),
+    val visibleIds: Set<String> = setOf("RECOMMEND", "FOLLOW", "POPULAR", "LIVE", "GAME"),
+    val hideTopTabs: Boolean = false
 )
+
+/**
+ * 自动退出全屏策略。
+ * - [OFF]：不自动退
+ * - [CURRENT_PART]：当前分P/单视频结束就退（旧「开」语义中的激进行为）
+ * - [ALL_PARTS]：还有下一段可连播时保持全屏，全部播完再退（默认）
+ */
+enum class AutoExitFullscreenMode(val value: Int, val label: String, val subtitle: String) {
+    OFF(0, "关闭", "播放结束不自动退出全屏"),
+    CURRENT_PART(1, "当前分P结束", "每个分P/视频播完就退出全屏"),
+    ALL_PARTS(2, "全部连播结束", "合集/分P/列表全部播完再退出全屏");
+
+    companion object {
+        fun fromValue(value: Int): AutoExitFullscreenMode =
+            entries.find { it.value == value } ?: ALL_PARTS
+
+        /** 兼容旧布尔：true→全部结束再退，false→关闭 */
+        fun fromLegacyEnabled(enabled: Boolean): AutoExitFullscreenMode =
+            if (enabled) ALL_PARTS else OFF
+    }
+}
+
+internal fun resolveAutoExitFullscreenMode(
+    modeValue: Int?,
+    legacyEnabled: Boolean?,
+): AutoExitFullscreenMode {
+    if (modeValue != null) return AutoExitFullscreenMode.fromValue(modeValue)
+    return AutoExitFullscreenMode.fromLegacyEnabled(legacyEnabled ?: true)
+}
 
 data class PlayerInteractionSettings(
     val gestureSensitivity: Float = 1.0f,
@@ -788,21 +1156,38 @@ data class PlayerInteractionSettings(
     val pipNoDanmakuEnabled: Boolean = false,
     val seekForwardSeconds: Int = 10,
     val seekBackwardSeconds: Int = 10,
-    val inlineSwipeSeekSeconds: Int = 30,
-    val fullscreenSwipeSeekSeconds: Int = 15,
     val fullscreenSwipeSeekEnabled: Boolean = true,
     val fullscreenGestureReverse: Boolean = false,
     val hideVideoPageStatusBar: Boolean = false,
+    /** 动态环境光开启后，是否在竖屏全屏上下留白显示光晕；保留原存储键与默认值。 */
+    val portraitLetterboxAmbientHaze: Boolean = true,
     val tabletCommentPanelWidthPreset: TabletCommentPanelWidthPreset =
         TabletCommentPanelWidthPreset.STANDARD,
     val autoEnterFullscreenEnabled: Boolean = false,
     val autoExitFullscreenEnabled: Boolean = true,
+    /**
+     * 自动退出全屏粒度。旧布尔 [autoExitFullscreenEnabled]=true 映射为 [ALL_PARTS]，
+     * 避免连播下一P 时被 STATE_ENDED 踢回竖屏。
+     */
+    val autoExitFullscreenMode: AutoExitFullscreenMode = AutoExitFullscreenMode.ALL_PARTS,
     val fixedFullscreenAspectRatio: FullscreenAspectRatio = FullscreenAspectRatio.FIT,
     val subtitleAutoPreference: SubtitleAutoPreference = SubtitleAutoPreference.OFF,
     val longPressSpeed: Float = 2.0f,
     val longPressSpeedLockEnabled: Boolean = false,
     val longPressSpeedLockHintShown: Boolean = false,
+    /**
+     * 长按倍速浮层是否显示关闭（×）按钮。默认 false（始终隐藏），
+     * 不在设置页暴露，避免第二指点 × 打断长按加速。
+     */
+    val longPressSpeedHintCloseEnabled: Boolean = false,
+    val longPressSpeedHintHidden: Boolean = false,
+    val longPressSpeedHintScale: Float = 1.0f,
+    val longPressSpeedHintAlpha: Float = 0.5f,
     val subtitleVerticalOffsetFraction: Float = 0.0f,
+    /** Vertical offset for portrait immersive / story subtitles (independent of landscape). */
+    val subtitlePortraitVerticalOffsetFraction: Float = 0.0f,
+    /** Prevent player gestures from accidentally moving subtitle overlays. */
+    val subtitlePositionLocked: Boolean = true,
     val twoFingerVerticalSpeedEnabled: Boolean = false,
     val twoFingerHorizontalSpeedEnabled: Boolean = false,
     val hiResLongPressCompatHintShown: Boolean = false,
@@ -912,9 +1297,21 @@ internal fun mapDanmakuSettingsFromPreferences(
     return SettingsManager.mapDanmakuSettingsFromPreferences(preferences, scope)
 }
 
-internal fun mapAppNavigationSettingsFromPreferences(preferences: Preferences): AppNavigationSettings {
-    return SettingsManager.mapAppNavigationSettingsFromPreferences(preferences)
+internal fun mapAppNavigationSettingsFromPreferences(
+    preferences: Preferences,
+    defaultTabletUseSidebar: Boolean = false
+): AppNavigationSettings {
+    return SettingsManager.mapAppNavigationSettingsFromPreferences(
+        preferences = preferences,
+        defaultTabletUseSidebar = defaultTabletUseSidebar
+    )
 }
+
+/**
+ * 平板导航首启默认值：按设备类型预设（平板默认侧栏，手机默认底栏）。
+ * 与 [SettingsManager.getHorizontalAdaptationEnabled] 的 isTablet 预设机制一致。
+ */
+internal fun defaultTabletUseSidebar(isTabletDevice: Boolean): Boolean = isTabletDevice
 
 internal fun mapHomeTopTabSettingsFromPreferences(preferences: Preferences): HomeTopTabSettings {
     return SettingsManager.mapHomeTopTabSettingsFromPreferences(preferences)
@@ -996,11 +1393,21 @@ internal fun encodeCollectionSortPreferences(
 }
 
 object SettingsManager {
+    const val DEFAULT_AUTO_CACHE_CLEAR_THRESHOLD_GB = 5
+    enum class AutoCacheClearInterval(val days: Int, val label: String) {
+        NEVER(0, "从不"),
+        WEEKLY(7, "每周"),
+        MONTHLY(30, "每月")
+    }
     // 键定义
+    private val KEY_NEXT_WATCH_HINT_ENABLED = booleanPreferencesKey("next_watch_hint_enabled")
     private val KEY_AUTO_PLAY = booleanPreferencesKey("auto_play")
     private val KEY_PLAYBACK_COMPLETION_BEHAVIOR = intPreferencesKey("playback_completion_behavior")
     private val KEY_HW_DECODE = booleanPreferencesKey("hw_decode")
     private val KEY_THEME_MODE = intPreferencesKey("theme_mode_v2")
+    private val KEY_DARK_SCHEDULE_ENABLED = booleanPreferencesKey("dark_theme_schedule_enabled")
+    private val KEY_DARK_SCHEDULE_START = intPreferencesKey("dark_theme_schedule_start_minute")
+    private val KEY_DARK_SCHEDULE_END = intPreferencesKey("dark_theme_schedule_end_minute")
     private val KEY_DARK_THEME_STYLE = intPreferencesKey("dark_theme_style_v1")
     private val KEY_APP_LANGUAGE = intPreferencesKey("app_language_v1")
     private val KEY_UI_PRESET = intPreferencesKey("ui_preset")
@@ -1018,11 +1425,21 @@ object SettingsManager {
     private val KEY_THEME_DARK_PRIMARY_TEXT = stringPreferencesKey("theme_dark_primary_text")
     private val KEY_THEME_DARK_SECONDARY_TEXT = stringPreferencesKey("theme_dark_secondary_text")
     private val KEY_THEME_DARK_CONTROL_ACCENT = stringPreferencesKey("theme_dark_control_accent")
+    private val KEY_SEED_PALETTE_STYLE = stringPreferencesKey("seed_palette_style")
     private val KEY_THEME_COLOR_STYLE = stringPreferencesKey("theme_color_style")
     private val KEY_THEME_COLOR_SPEC = stringPreferencesKey("theme_color_spec")
+    private val KEY_THEME_COLOR_CONTRAST = stringPreferencesKey("theme_color_contrast")
+    private val KEY_SINGLE_CHOICE_PRESENTATION =
+        stringPreferencesKey("single_choice_presentation")
     private val KEY_BG_PLAY = booleanPreferencesKey("bg_play")
     //  [新增] 触感反馈 (默认开启)
+    private val KEY_LIQUID_GLASS_SCENES_DISABLED = intPreferencesKey("liquid_glass_scenes_disabled")
+    private val KEY_HAPTIC_SCENES_DISABLED = intPreferencesKey("haptic_scenes_disabled")
     private val KEY_HAPTIC_FEEDBACK_ENABLED = booleanPreferencesKey("haptic_feedback_enabled")
+    private val KEY_GLOBAL_TEXT_TAP_COPY_ENABLED =
+        booleanPreferencesKey("global_text_tap_copy_enabled")
+    // 「上次看到第 N P」提示开关（默认开启）
+    private val KEY_SHOW_CONTINUE_PART_NOTICE = booleanPreferencesKey("show_continue_part_notice")
     //  [新增] 手势灵敏度和主题色
     private val KEY_GESTURE_SENSITIVITY = floatPreferencesKey("gesture_sensitivity")
     private val KEY_SLIDE_VOLUME_BRIGHTNESS_ENABLED = booleanPreferencesKey("slide_volume_brightness_enabled")
@@ -1032,18 +1449,32 @@ object SettingsManager {
     private val KEY_SHOW_PLAYER_CAST_BUTTON = booleanPreferencesKey("show_player_cast_button")
     private val KEY_SHOW_VIDEO_FOLLOW_BUTTON = booleanPreferencesKey("show_video_follow_button")
     private val KEY_PLAYER_PROGRESS_PLACEMENT = intPreferencesKey("player_progress_placement")
+    private val KEY_COMPACT_PLAYER_CHROME = booleanPreferencesKey("compact_player_chrome")
     private val KEY_SEARCH_HOT_SECTION_ENABLED = booleanPreferencesKey("search_hot_section_enabled")
     private val KEY_SEARCH_DISCOVER_SECTION_ENABLED = booleanPreferencesKey("search_discover_section_enabled")
+    private val KEY_SEARCH_SUGGESTIONS_ENABLED = booleanPreferencesKey("search_suggestions_enabled")
     //  [新增] 双击跳转秒数 (可分开设置快进和后退)
     private val KEY_DOUBLE_TAP_SEEK_ENABLED = booleanPreferencesKey("double_tap_seek_enabled")
     private val KEY_SEEK_FORWARD_SECONDS = intPreferencesKey("seek_forward_seconds")
+    private val KEY_LIVE_QUALITY = intPreferencesKey("live_quality")
+    private val KEY_LIVE_CDN_HOST = stringPreferencesKey("live_cdn_host")
+    private val KEY_LIVE_WIFI_QUALITY = intPreferencesKey("live_wifi_quality")
+    private val KEY_LIVE_MOBILE_QUALITY = intPreferencesKey("live_mobile_quality")
+    private val KEY_LIVE_SUPER_CHAT_ENABLED = booleanPreferencesKey("live_super_chat_enabled")
+    private val KEY_LIVE_PREFERRED_STREAM = stringPreferencesKey("live_preferred_stream")
     private val KEY_SEEK_BACKWARD_SECONDS = intPreferencesKey("seek_backward_seconds")
-    //  [新增] 长按倍速 (默认 2.0x)
-    private val KEY_LONG_PRESS_SPEED = floatPreferencesKey("long_press_speed")
+    private val KEY_LONG_PRESS_SPEED_HINT_CLOSE_ENABLED =
+        booleanPreferencesKey("long_press_speed_hint_close_enabled")
+    private val KEY_LONG_PRESS_SPEED_HINT_HIDDEN =
+        booleanPreferencesKey("long_press_speed_hint_hidden")
     private val KEY_LONG_PRESS_SPEED_LOCK_ENABLED =
         booleanPreferencesKey("long_press_speed_lock_enabled")
     private val KEY_LONG_PRESS_SPEED_LOCK_HINT_SHOWN =
         booleanPreferencesKey("long_press_speed_lock_hint_shown")
+    private val KEY_LONG_PRESS_SPEED_HINT_SCALE =
+        floatPreferencesKey("long_press_speed_hint_scale")
+    private val KEY_LONG_PRESS_SPEED_HINT_ALPHA =
+        floatPreferencesKey("long_press_speed_hint_alpha")
     private val KEY_TWO_FINGER_VERTICAL_SPEED_ENABLED =
         booleanPreferencesKey("two_finger_vertical_speed_enabled")
     private val KEY_TWO_FINGER_HORIZONTAL_SPEED_ENABLED =
@@ -1052,35 +1483,54 @@ object SettingsManager {
         booleanPreferencesKey("hi_res_long_press_compat_hint_shown")
     private val KEY_SUBTITLE_VERTICAL_OFFSET_FRACTION =
         floatPreferencesKey("subtitle_vertical_offset_fraction")
+    private val KEY_SUBTITLE_PORTRAIT_VERTICAL_OFFSET_FRACTION =
+        floatPreferencesKey("subtitle_portrait_vertical_offset_fraction")
+    private val KEY_SUBTITLE_POSITION_LOCKED =
+        booleanPreferencesKey("subtitle_position_locked")
     //  [新增] 默认播放速度/记忆上次播放速度
     private val KEY_DEFAULT_PLAYBACK_SPEED = floatPreferencesKey("default_playback_speed")
     private val KEY_REMEMBER_LAST_PLAYBACK_SPEED = booleanPreferencesKey("remember_last_playback_speed")
     private val KEY_LAST_PLAYBACK_SPEED = floatPreferencesKey("last_playback_speed")
     private val KEY_THEME_COLOR_INDEX = intPreferencesKey("theme_color_index")
     private val KEY_APP_FONT_SIZE_PRESET = intPreferencesKey("app_font_size_preset")
+private val KEY_APP_FONT_WEIGHT = intPreferencesKey("app_font_weight")
     private val KEY_APP_FONT_FILE_NAME = stringPreferencesKey("app_font_file_name")
     private val KEY_APP_FONT_DISPLAY_NAME = stringPreferencesKey("app_font_display_name")
     private val KEY_APP_UI_SCALE_PRESET = intPreferencesKey("app_ui_scale_preset")
     private val KEY_APP_DPI_OVERRIDE_PERCENT = intPreferencesKey("app_dpi_override_percent")
     //  [新增] 应用图标 Key (Blue, Red, Green...)
     private val KEY_APP_ICON = androidx.datastore.preferences.core.stringPreferencesKey("app_icon_key")
+    private val KEY_APP_ICON_APPEARANCE = intPreferencesKey("app_icon_appearance")
+    private val KEY_APP_ICON_STYLE = stringPreferencesKey("app_icon_style")
+    private val KEY_APP_LIST_ITEM_STYLE = stringPreferencesKey("app_list_item_style")
     //  [新增] 底部栏样式 (true=悬浮, false=贴底)
     private val KEY_BOTTOM_BAR_FLOATING = booleanPreferencesKey("bottom_bar_floating")
+    private val KEY_NAVIGATION_ICON_CROSS_SCALE_ENABLED =
+        booleanPreferencesKey("navigation_icon_cross_scale_enabled")
     //  [新增] 底栏显示模式 (0=图标+文字, 1=仅图标, 2=仅文字)
     private val KEY_BOTTOM_BAR_LABEL_MODE = intPreferencesKey("bottom_bar_label_mode")
     //  [新增] 顶部标签显示模式 (0=图标+文字, 1=仅图标, 2=仅文字)
     private val KEY_TOP_TAB_LABEL_MODE = intPreferencesKey("top_tab_label_mode")
+    private val KEY_PARTITION_SIDE_RAIL_ON_RIGHT = booleanPreferencesKey("partition_side_rail_on_right")
+    private val KEY_HIDE_TOP_TABS = booleanPreferencesKey("hide_top_tabs")
     private val KEY_HOME_TOP_RIGHT_ACTION = intPreferencesKey("home_top_right_action")
     //  [新增] 顶部标签自定义 - 顺序和可见性
     private val KEY_TOP_TAB_ORDER = stringPreferencesKey("top_tab_order")
     private val KEY_TOP_TAB_VISIBLE_TABS = stringPreferencesKey("top_tab_visible_tabs")
+    //  搜索结果页分类栏顺序（SearchType.value 逗号分隔）
+    private val KEY_SEARCH_FILTER_TAB_ORDER = stringPreferencesKey("search_filter_tab_order")
     private val KEY_DYNAMIC_TAB_VISIBLE_TABS = stringPreferencesKey("dynamic_tab_visible_tabs")
+    private val KEY_DYNAMIC_TAB_ORDER = stringPreferencesKey("dynamic_tab_order")
+    private val KEY_LOUDNESS_NORMALIZATION_ENABLED = booleanPreferencesKey("loudness_normalization_enabled")
+    private val KEY_AUDIO_SPECTRUM_ENABLED = booleanPreferencesKey("audio_spectrum_enabled")
+    private val KEY_STARTUP_AUTO_PLAY_ENABLED = booleanPreferencesKey("startup_auto_play_enabled")
     private val KEY_DYNAMIC_IMAGE_PREVIEW_TEXT_VISIBLE =
         booleanPreferencesKey("dynamic_image_preview_text_visible")
-    private val KEY_DYNAMIC_ALL_TAB_HORIZONTAL_USER_LIST_VISIBLE =
-        booleanPreferencesKey("dynamic_all_tab_horizontal_user_list_visible")
+    private val KEY_DYNAMIC_DETAIL_IMAGE_LAYOUT = intPreferencesKey("dynamic_detail_image_layout")
     private val KEY_DYNAMIC_TOP_BAR_COLLAPSE_ON_SCROLL =
         booleanPreferencesKey("dynamic_top_bar_collapse_on_scroll")
+    private val KEY_DYNAMIC_TOP_ACTIONS_COLLAPSED =
+        booleanPreferencesKey("dynamic_top_actions_collapsed")
     private val KEY_LIVE_FAVORITE_TAGS = stringPreferencesKey("live_favorite_tags")
     
     //  [新增] 开屏壁纸
@@ -1089,6 +1539,7 @@ object SettingsManager {
     private val KEY_SPLASH_RANDOM_POOL_URIS = stringPreferencesKey("splash_random_pool_uris")
     private val KEY_SPLASH_ENABLED = booleanPreferencesKey("splash_enabled")
     private val KEY_SPLASH_RANDOM_ENABLED = booleanPreferencesKey("splash_random_enabled")
+    private val KEY_STARTUP_ANIMATION_STYLE = stringPreferencesKey("startup_animation_style")
     private val KEY_SPLASH_ICON_ANIMATION_ENABLED = booleanPreferencesKey("splash_icon_animation_enabled")
     private val KEY_SPLASH_ALIGNMENT_MOBILE = floatPreferencesKey("splash_alignment_mobile")
     private val KEY_SPLASH_ALIGNMENT_TABLET = floatPreferencesKey("splash_alignment_tablet")
@@ -1098,6 +1549,7 @@ object SettingsManager {
     private const val SPLASH_PREFS_KEY_RANDOM_POOL_URIS = "random_pool_uris"
     private const val SPLASH_PREFS_KEY_ENABLED = "enabled"
     private const val SPLASH_PREFS_KEY_RANDOM_ENABLED = "random_enabled"
+    private const val SPLASH_PREFS_KEY_ANIMATION_STYLE = "animation_style"
     private const val SPLASH_PREFS_KEY_ICON_ANIMATION_ENABLED = "icon_animation_enabled"
     private const val SPLASH_PREFS_KEY_ALIGNMENT_MOBILE = "alignment_mobile"
     private const val SPLASH_PREFS_KEY_ALIGNMENT_TABLET = "alignment_tablet"
@@ -1118,14 +1570,23 @@ object SettingsManager {
         const val TEXT_ONLY = 2
     }
 
-    private const val DEFAULT_TOP_TAB_ORDER = "RECOMMEND,FOLLOW,POPULAR,LIVE,GAME,PARTITION"
-    private const val DEFAULT_TOP_TAB_VISIBLE = "RECOMMEND,FOLLOW,POPULAR,LIVE,GAME,PARTITION"
-    private const val DEFAULT_DYNAMIC_TAB_VISIBLE = "all,video,pgc,article,up"
+    private const val DEFAULT_TOP_TAB_ORDER = "RECOMMEND,FOLLOW,POPULAR,LIVE,GAME"
+    private const val DEFAULT_SEARCH_FILTER_TAB_ORDER =
+        "video,bili_user,media_bangumi,media_ft,live_room,live_user,article,topic,photo"
+    private const val LEGACY_DEFAULT_SEARCH_FILTER_TAB_ORDER =
+        "video,media_bangumi,media_ft,live_room,live_user,bili_user,article,topic,photo"
+    private const val DEFAULT_TOP_TAB_VISIBLE = "RECOMMEND,FOLLOW,POPULAR,LIVE,GAME"
+    /** 首页顶部 dock 标签数量上限。 */
+    const val MAX_TOP_TABS = 5
+    private const val DEFAULT_DYNAMIC_TAB_VISIBLE = "all,video,pgc,article"
+    private const val DEFAULT_DYNAMIC_TAB_ORDER = "all,video,pgc,article"
     //  [新增] 模糊效果开关
     private val KEY_HEADER_BLUR_ENABLED = booleanPreferencesKey("header_blur_enabled")
     private val KEY_HOME_HEADER_BLUR_MODE = intPreferencesKey("home_header_blur_mode")
     private val KEY_HEADER_COLLAPSE_ENABLED = booleanPreferencesKey("header_collapse_enabled")
     private val KEY_HOME_HEADER_COLLAPSE_MODE = intPreferencesKey("home_header_collapse_mode")
+    private val KEY_HOME_BAR_HIDE_TYPE = intPreferencesKey("home_bar_hide_type")
+    private val KEY_SHOW_PGC_TIMELINE = booleanPreferencesKey("show_pgc_timeline")
     private val KEY_COMMON_LIST_HEADER_COLLAPSE_MODE =
         intPreferencesKey("common_list_header_collapse_mode")
     private val KEY_HOME_TOP_LAYOUT_ORDER = intPreferencesKey("home_top_layout_order")
@@ -1134,15 +1595,20 @@ object SettingsManager {
     private val KEY_HOME_SEARCH_LIQUID_GLASS_ENABLED =
         booleanPreferencesKey("home_search_liquid_glass_enabled")
     private val KEY_BOTTOM_BAR_LIQUID_GLASS_ENABLED = booleanPreferencesKey("bottom_bar_liquid_glass_enabled")
-    private val KEY_BOTTOM_BAR_INTERACTIVE_HIGHLIGHT_ENABLED =
-        booleanPreferencesKey("bottom_bar_interactive_highlight_enabled")
     private val KEY_BOTTOM_BAR_SEARCH_ENABLED = booleanPreferencesKey("bottom_bar_search_enabled")
+    private val KEY_KEEP_HOME_TOP_SEARCH = booleanPreferencesKey("keep_home_top_search_with_bottom_search")
+    private val KEY_BOTTOM_BAR_SCROLL_COMPACT_ENABLED = booleanPreferencesKey("bottom_bar_scroll_compact_enabled")
+    private val KEY_LINKED_DOCK_MERGE_ON_SCROLL_ENABLED =
+        booleanPreferencesKey("linked_dock_merge_on_scroll_enabled")
+    private val KEY_LIST_SCOPED_SEARCH_ENABLED = booleanPreferencesKey("list_scoped_search_enabled")
     private val KEY_BOTTOM_BAR_SEARCH_AUTO_EXPAND_MODE =
         intPreferencesKey("bottom_bar_search_auto_expand_mode")
     private val KEY_BOTTOM_BAR_SEARCH_LAYOUT_MODE =
         intPreferencesKey("bottom_bar_search_layout_mode")
     private val KEY_ANDROID_NATIVE_LIQUID_GLASS_ENABLED =
         booleanPreferencesKey("android_native_liquid_glass_enabled")
+    private val KEY_LIQUID_CONTROLS_USE_THEME_COLOR = booleanPreferencesKey("liquid_controls_use_theme_color")
+    private val KEY_LIQUID_SWITCH_THUMB_MODE = stringPreferencesKey("liquid_switch_thumb_mode")
     private val KEY_LEGACY_ANDROID_NATIVE_TOP_TAB_LIQUID_GLASS_ENABLED =
         booleanPreferencesKey("android_native_top_tab_liquid_glass_enabled")
     //  Legacy shared Liquid Glass toggle, kept as migration fallback.
@@ -1156,8 +1622,19 @@ object SettingsManager {
     private val KEY_BLUR_INTENSITY = stringPreferencesKey("blur_intensity")
     //  [合并] 首页展示模式 (0=Grid, 1=Story, 2=Glass)
     private val KEY_DISPLAY_MODE = intPreferencesKey("display_mode")
+    // 屏幕显示模式：0 表示交还系统自动选择，其余值对应 Display.Mode.modeId。
+    private val KEY_SCREEN_DISPLAY_MODE_ID = intPreferencesKey("screen_display_mode_id")
     //  [新增] 网格列数 (0=Auto)
     private val KEY_GRID_COLUMN_COUNT = intPreferencesKey("grid_column_count")
+    //  [新增] 窄屏（折叠屏外屏/手机竖屏）独立列数记忆，与宽屏（内屏/平板）的
+    //  KEY_GRID_COLUMN_COUNT 互不影响；0=Auto（外屏自动解析为 2 列）。
+    private val KEY_GRID_COLUMN_COUNT_COMPACT = intPreferencesKey("grid_column_count_compact")
+    private val KEY_GRID_COLUMN_CUSTOMIZATION_ENABLED =
+        booleanPreferencesKey("grid_column_customization_enabled")
+    private val KEY_GRID_COLUMNS_SHARED_ACROSS_PAGES =
+        booleanPreferencesKey("grid_columns_shared_across_pages")
+    private val KEY_PINCH_TO_CHANGE_GRID_COLUMNS_ENABLED =
+        booleanPreferencesKey("pinch_to_change_grid_columns_enabled")
     private val KEY_HOME_FEED_CARD_WIDTH_PRESET =
         intPreferencesKey("home_feed_card_width_preset")
     private val KEY_HOME_FEED_CARD_STYLE = intPreferencesKey("home_feed_card_style")
@@ -1167,27 +1644,73 @@ object SettingsManager {
         booleanPreferencesKey("home_hero_carousel_autoplay_enabled")
     //  [新增] 卡片动画开关
     private val KEY_CARD_ANIMATION_ENABLED = booleanPreferencesKey("card_animation_enabled")
+    private val KEY_MAID_LOTTIE_ANIMATION_ENABLED =
+        booleanPreferencesKey("maid_lottie_animation_enabled")
     //  [新增] 卡片过渡动画开关
     private val KEY_CARD_TRANSITION_ENABLED = booleanPreferencesKey("card_transition_enabled")
+    private val KEY_VIDEO_TRANSITION_MODE = stringPreferencesKey("video_transition_mode")
+    // 实时画面转场：SDR 用 TextureView 一镜到底；HDR 仍 SurfaceView（不降画质），morph 走封面
+    private val KEY_LIVE_SURFACE_CARD_TRANSITION_ENABLED =
+        booleanPreferencesKey("live_surface_card_transition_enabled")
+    // 直播间 SC 醒目留言浮层：默认开启；关闭弹幕时一律隐藏，此处提供独立开关
+    private val KEY_LIVE_SUPER_CHAT_PANEL_ENABLED = booleanPreferencesKey("live_super_chat_panel_enabled")
+    private val KEY_LIVE_SUPER_CHAT_FLASH_ENABLED =
+        booleanPreferencesKey("live_super_chat_flash_enabled")
+    private val KEY_LIVE_DANMAKU_ENABLED = booleanPreferencesKey("live_danmaku_enabled")
+    private val KEY_LIVE_AUTO_MINI_PLAYER_ENABLED = booleanPreferencesKey("live_auto_mini_player_enabled")
+    private val KEY_LIVE_SUPER_CHAT_PERSISTENT =
+        booleanPreferencesKey("live_super_chat_persistent")
+    private val KEY_LIVE_SUPER_CHAT_MAX_WIDTH_DP =
+        intPreferencesKey("live_super_chat_max_width_dp")
+    private val KEY_LIVE_PORTRAIT_EXPAND_ENABLED =
+        booleanPreferencesKey("live_portrait_expand_enabled")
+    private val KEY_LIVE_KEYBOARD_CONTROLS_ENABLED =
+        booleanPreferencesKey("live_keyboard_controls_enabled")
+    private val KEY_VIDEO_TRANSITION_REALTIME_BLUR_ENABLED =
+        booleanPreferencesKey("video_transition_realtime_blur_enabled")
     private val KEY_VIDEO_SHARED_TRANSITION_SPEED =
         intPreferencesKey("video_shared_transition_speed")
     private val KEY_VIDEO_SHARED_TRANSITION_CUSTOM_DURATION_MILLIS =
         intPreferencesKey("video_shared_transition_custom_duration_millis")
     //  [新增] 界面入场动画 master 开关(全 App 统一入场动效),默认开启
+    private val KEY_GLOBAL_DRAG_FEEDBACK_ENABLED = booleanPreferencesKey("global_drag_feedback_enabled")
     private val KEY_UI_ENTRANCE_ANIMATION_ENABLED =
         booleanPreferencesKey("ui_entrance_animation_enabled")
     // [New] 运行时视觉降级守卫开关
     private val KEY_SMART_VISUAL_GUARD_ENABLED = booleanPreferencesKey("smart_visual_guard_enabled")
+    // 新 key：旧 key 的 false 是「已下线」的产物，不应被迁移成「用户主动关闭」。
+    private val KEY_RUNTIME_VISUAL_GUARD_ENABLED =
+        booleanPreferencesKey("runtime_visual_guard_enabled")
     //  [新增] 视频卡片统计信息贴封面开关
     private val KEY_COMPACT_VIDEO_STATS_ON_COVER = booleanPreferencesKey("compact_video_stats_on_cover")
     private val KEY_LOW_QUALITY_HOME_COVER_IN_DATA_SAVER =
         booleanPreferencesKey("low_quality_home_cover_in_data_saver")
     private val KEY_HOME_COVER_GLASS_BADGES_VISIBLE = booleanPreferencesKey("home_cover_glass_badges_visible")
     private val KEY_HOME_INFO_GLASS_BADGES_VISIBLE = booleanPreferencesKey("home_info_glass_badges_visible")
+    private val KEY_HOME_CARD_BADGE_EFFECT_MODE = intPreferencesKey("home_card_badge_effect_mode")
+    private val KEY_HOME_CARD_INFO_GLASS_MODE = intPreferencesKey("home_card_info_glass_mode")
     private val KEY_HOME_WALLPAPER_URI = stringPreferencesKey("home_wallpaper_uri")
+    private val KEY_HOME_WALLPAPER_SCALE_MOBILE = floatPreferencesKey("home_wallpaper_scale_mobile")
+    private val KEY_HOME_WALLPAPER_OFFSET_X_MOBILE = floatPreferencesKey("home_wallpaper_offset_x_mobile")
+    private val KEY_HOME_WALLPAPER_OFFSET_Y_MOBILE = floatPreferencesKey("home_wallpaper_offset_y_mobile")
+    private val KEY_HOME_WALLPAPER_SCALE_TABLET = floatPreferencesKey("home_wallpaper_scale_tablet")
+    private val KEY_HOME_WALLPAPER_OFFSET_X_TABLET = floatPreferencesKey("home_wallpaper_offset_x_tablet")
+    private val KEY_HOME_WALLPAPER_OFFSET_Y_TABLET = floatPreferencesKey("home_wallpaper_offset_y_tablet")
     private val KEY_HOME_WALLPAPER_EFFECT_MODE = intPreferencesKey("home_wallpaper_effect_mode")
     private val KEY_HOME_WALLPAPER_EFFECT_SCOPE = intPreferencesKey("home_wallpaper_effect_scope")
     private val KEY_HOME_UP_BADGES_VISIBLE = booleanPreferencesKey("home_up_badges_visible")
+    private val KEY_HOME_REFRESH_TIP_VISIBLE = booleanPreferencesKey("home_refresh_tip_visible")
+    private val KEY_HOME_REFRESH_UNDO_VISIBLE = booleanPreferencesKey("home_refresh_undo_visible")
+    private val KEY_HOME_UP_AVATARS_VISIBLE = booleanPreferencesKey("home_up_avatars_visible")
+    private val KEY_HOME_PUBLISH_TIME_VISIBLE = booleanPreferencesKey("home_publish_time_visible")
+    private val KEY_FULL_VIDEO_CARD_CONTENT_VISIBLE =
+        booleanPreferencesKey("full_video_card_content_visible")
+    private val KEY_VIDEO_CARD_LONG_PRESS_ACTION_ENABLED =
+        booleanPreferencesKey("video_card_long_press_action_enabled")
+    private val KEY_HOME_CARD_DYNAMIC_TINT_ENABLED =
+        booleanPreferencesKey("home_card_dynamic_tint_enabled")
+    private val KEY_HOME_CARD_FROSTED_GLASS_ENABLED =
+        booleanPreferencesKey("home_card_frosted_glass_enabled")
     private val KEY_HOME_VIDEO_DURATION_BADGES_VISIBLE =
         booleanPreferencesKey("home_video_duration_badges_visible")
     private val KEY_HOME_DURATION_STYLE = intPreferencesKey("home_duration_style")
@@ -1195,34 +1718,80 @@ object SettingsManager {
     private val KEY_CRASH_TRACKING_CONSENT_SHOWN = booleanPreferencesKey("crash_tracking_consent_shown")
     private val KEY_LIQUID_GLASS_MODE = intPreferencesKey("liquid_glass_mode")
     private val KEY_LIQUID_GLASS_STRENGTH = floatPreferencesKey("liquid_glass_strength")
-    private val KEY_LIQUID_GLASS_PROGRESS = floatPreferencesKey("liquid_glass_progress")
-    private val FIXED_LIQUID_GLASS_STYLE = LiquidGlassStyle.SUKISU
-    private val FIXED_LIQUID_GLASS_MODE = LiquidGlassMode.BALANCED
-    private const val FIXED_LIQUID_GLASS_STRENGTH = 0.52f
-    private const val FIXED_LIQUID_GLASS_PROGRESS = 0.5f
+    // V2 stores the continuous material position; reads migrate the complete legacy selection
+    // when this key is absent so upgrades preserve the user's clear/balanced/frosted intent.
+    private val KEY_LIQUID_GLASS_PROGRESS = floatPreferencesKey("liquid_glass_material_progress_v2")
+    private val KEY_LIQUID_GLASS_PREVIEW_IMAGE_URI =
+        stringPreferencesKey("liquid_glass_preview_image_uri")
+    private val KEY_LIQUID_GLASS_ADVANCED_PRESET =
+        intPreferencesKey("liquid_glass_advanced_preset")
+    private val KEY_LIQUID_GLASS_PROGRESSIVE_BLUR_RADIUS =
+        floatPreferencesKey("liquid_glass_progressive_blur_radius")
+    private val KEY_LIQUID_GLASS_PROGRESSIVE_BLUR_EXTENT =
+        floatPreferencesKey("liquid_glass_progressive_blur_extent")
+    private val KEY_LIQUID_GLASS_PROGRESSIVE_BLUR_CURVE =
+        floatPreferencesKey("liquid_glass_progressive_blur_curve")
+    private val KEY_LIQUID_GLASS_CONTENT_READABILITY =
+        floatPreferencesKey("liquid_glass_content_readability")
+    private val KEY_LIQUID_GLASS_CHROMATIC_ABERRATION =
+        floatPreferencesKey("liquid_glass_chromatic_aberration")
+    private val KEY_LIQUID_GLASS_CONTENT_DISTORTION =
+        floatPreferencesKey("liquid_glass_content_distortion")
+    private val KEY_PROGRESSIVE_TOP_BLUR_ENABLED =
+        booleanPreferencesKey("progressive_top_blur_enabled")
+    private val KEY_PROGRESSIVE_TOP_FADE_ENABLED =
+        booleanPreferencesKey("progressive_top_fade_enabled")
     //  [新增] 底栏自定义 - 顺序和可见性
     private val KEY_BOTTOM_BAR_ORDER = stringPreferencesKey("bottom_bar_order")  // 逗号分隔的项目顺序
     private val KEY_BOTTOM_BAR_VISIBLE_TABS = stringPreferencesKey("bottom_bar_visible_tabs")  // 逗号分隔的可见项目
     private val KEY_BOTTOM_BAR_ITEM_COLORS = stringPreferencesKey("bottom_bar_item_colors")  //  格式: HOME:0,DYNAMIC:1,...
     private const val DEFAULT_BOTTOM_BAR_ORDER = "HOME,DYNAMIC,HISTORY,LISTEN_VIDEO,PROFILE"
     private const val DEFAULT_BOTTOM_BAR_VISIBLE_TABS = "HOME,DYNAMIC,HISTORY,LISTEN_VIDEO,PROFILE"
-    //  [新增] 评论默认排序（1=回复,2=最新,3=最热,4=点赞）
+    // 评论默认排序（2=最新,3=最热）
     private val KEY_COMMENT_DEFAULT_SORT_MODE = intPreferencesKey("comment_default_sort_mode")
     private val KEY_COMMENT_FRAUD_DETECTION_ENABLED =
         booleanPreferencesKey("comment_fraud_detection_enabled")
+    private val KEY_AUTO_CACHE_CLEAR_INTERVAL = intPreferencesKey("auto_cache_clear_interval_days")
+    private val KEY_AUTO_CACHE_CLEAR_THRESHOLD_GB = intPreferencesKey("auto_cache_clear_threshold_gb")
+    private val KEY_LAST_AUTO_CACHE_CLEAR_AT = longPreferencesKey("last_auto_cache_clear_at")
+    private val KEY_COMMENT_AVATAR_PUSH_ENABLED =
+        booleanPreferencesKey("comment_avatar_push_enabled")
     private val KEY_COMMENT_MEMBER_DECORATIONS_ENABLED =
         booleanPreferencesKey("comment_member_decorations_enabled")
+    private val KEY_DETAILED_COMMENT_TIME_ENABLED =
+        booleanPreferencesKey("detailed_comment_time_enabled")
+    private val KEY_COMMENT_REPLY_PREVIEW_VISIBLE =
+        booleanPreferencesKey("comment_reply_preview_visible")
+
+    /** 偏好的调用方作用域之外落盘专用；进程存续期即作用域生命期。 */
+    private val commentPreferenceWriteScope =
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+    private val KEY_SUB_REPLY_LOADED_COUNT_ENABLED =
+        booleanPreferencesKey("sub_reply_loaded_count_enabled")
     private val KEY_IMAGE_PREVIEW_LONG_PRESS_SAVE_ENABLED =
         booleanPreferencesKey("image_preview_long_press_save_enabled")
+    private val KEY_IMAGE_PREVIEW_3D_PAGE_ENABLED =
+        booleanPreferencesKey("image_preview_3d_page_enabled")
     //  [新增] 离开播放页后停止播放（优先于小窗/画中画模式）
     private val KEY_STOP_PLAYBACK_ON_EXIT = booleanPreferencesKey("stop_playback_on_exit")
     private val KEY_BACKGROUND_PLAYBACK_ENABLED = booleanPreferencesKey("background_playback_enabled")
     private val KEY_AUDIO_FOCUS_ENABLED = booleanPreferencesKey("audio_focus_enabled")
     private val KEY_AUDIO_MODE_AUTO_PIP_ENABLED = booleanPreferencesKey("audio_mode_auto_pip_enabled")
+    private val KEY_AUDIO_NOW_PLAYING_BAR_ENABLED = booleanPreferencesKey("audio_now_playing_bar_enabled")
+    private val KEY_AUDIO_NOW_PLAYING_BAR_DELETE_BUTTON = booleanPreferencesKey("audio_now_playing_bar_delete_button")
+    private val KEY_AUDIO_NOW_PLAYING_BAR_IMMERSIVE_ENABLED =
+        booleanPreferencesKey("audio_now_playing_bar_immersive_enabled")
+    private val KEY_AUDIO_NOW_PLAYING_BAR_OPENS_AUDIO_MODE =
+        booleanPreferencesKey("audio_now_playing_bar_opens_audio_mode")
+    private val KEY_MUSIC_LYRICS_UI_STYLE = intPreferencesKey("music_lyrics_ui_style")
     private val KEY_VIDEO_AI_SUMMARY_ENTRY_ENABLED = booleanPreferencesKey("video_ai_summary_entry_enabled")
     private val KEY_VIDEO_NOTE_ENABLED = booleanPreferencesKey("video_note_enabled")
     private val KEY_VIDEO_NOTE_DEFAULT_COLLAPSED = booleanPreferencesKey("video_note_default_collapsed")
     private val KEY_VIDEO_INFO_DEFAULT_EXPANDED = booleanPreferencesKey("video_info_default_expanded")
+    private val KEY_VIDEO_ARGUE_MSG_SHOWN = booleanPreferencesKey("video_argue_msg_shown")
+    private val KEY_VIDEO_TAG_SIZE_PRESET = intPreferencesKey("video_tag_size_preset")
+    private val KEY_VIDEO_DETAIL_CHROME_SCROLL_HIDE_ENABLED =
+        booleanPreferencesKey("video_detail_chrome_scroll_hide_enabled")
     private const val VIDEO_NOTE_CACHE_PREFS = "video_note_settings"
     private const val CACHE_KEY_VIDEO_NOTE_ENABLED = "video_note_enabled"
     private const val CACHE_KEY_VIDEO_NOTE_DEFAULT_COLLAPSED = "video_note_default_collapsed"
@@ -1245,11 +1814,44 @@ object SettingsManager {
                 preferences[KEY_HEADER_COLLAPSE_ENABLED] ?: true
             )
         val legacyLiquidGlassEnabled = preferences[KEY_LIQUID_GLASS_ENABLED] ?: false
+        val legacyLiquidGlassStyle = LiquidGlassStyle.fromValue(
+            preferences[KEY_LIQUID_GLASS_STYLE] ?: LiquidGlassStyle.SUKISU.value
+        )
+        val liquidGlassMode = preferences[KEY_LIQUID_GLASS_MODE]
+            ?.let(LiquidGlassMode::fromValue)
+            ?: resolveLegacyLiquidGlassMode(legacyLiquidGlassStyle)
+        val liquidGlassStrength = normalizeLiquidGlassStrength(
+            preferences[KEY_LIQUID_GLASS_STRENGTH]
+                ?: resolveDefaultLiquidGlassStrength(liquidGlassMode)
+        )
+        val liquidGlassProgress = resolveStoredLiquidGlassProgress(
+            progress = preferences[KEY_LIQUID_GLASS_PROGRESS],
+            legacyModeValue = preferences[KEY_LIQUID_GLASS_MODE],
+            legacyStrength = preferences[KEY_LIQUID_GLASS_STRENGTH],
+            legacyStyleValue = preferences[KEY_LIQUID_GLASS_STYLE],
+        )
+        val liquidGlassReadabilityMode = LiquidGlassReadabilityMode.fromValue(
+            preferences[liquidGlassReadabilityModePreferencesKey]
+                ?: LiquidGlassReadabilityMode.STABLE.value
+        )
+        val liquidGlassAdvancedSettings = resolveLiquidGlassAdvancedSettings(
+            presetValue = preferences[KEY_LIQUID_GLASS_ADVANCED_PRESET],
+            progressiveBlurRadius = preferences[KEY_LIQUID_GLASS_PROGRESSIVE_BLUR_RADIUS],
+            progressiveBlurExtent = preferences[KEY_LIQUID_GLASS_PROGRESSIVE_BLUR_EXTENT],
+            progressiveBlurCurve = preferences[KEY_LIQUID_GLASS_PROGRESSIVE_BLUR_CURVE],
+            contentReadability = preferences[KEY_LIQUID_GLASS_CONTENT_READABILITY],
+            chromaticAberration = preferences[KEY_LIQUID_GLASS_CHROMATIC_ABERRATION],
+            contentDistortion = preferences[KEY_LIQUID_GLASS_CONTENT_DISTORTION],
+        )
         return HomeSettings(
             displayMode = preferences[KEY_DISPLAY_MODE] ?: 0,
-            isBottomBarFloating = preferences[KEY_BOTTOM_BAR_FLOATING] ?: true,
+            isBottomBarFloating = preferences[KEY_BOTTOM_BAR_FLOATING] ?: false,
+            navigationIconCrossScaleEnabled =
+                preferences[KEY_NAVIGATION_ICON_CROSS_SCALE_ENABLED] ?: true,
             bottomBarLabelMode = preferences[KEY_BOTTOM_BAR_LABEL_MODE] ?: BottomBarLabelMode.ICON_AND_TEXT,
             topTabLabelMode = preferences[KEY_TOP_TAB_LABEL_MODE] ?: TopTabLabelMode.TEXT_ONLY,
+            partitionSideRailOnRight = preferences[KEY_PARTITION_SIDE_RAIL_ON_RIGHT] ?: false,
+            hideTopTabs = preferences[KEY_HIDE_TOP_TABS] ?: false,
             homeTopRightAction = HomeTopRightAction.fromValue(
                 preferences[KEY_HOME_TOP_RIGHT_ACTION] ?: HomeTopRightAction.SETTINGS.value
             ),
@@ -1258,14 +1860,17 @@ object SettingsManager {
             ),
             isHeaderBlurEnabled = headerBlurMode != HomeHeaderBlurMode.ALWAYS_OFF,
             headerBlurMode = headerBlurMode,
-            isBottomBarBlurEnabled = preferences[KEY_BOTTOM_BAR_BLUR_ENABLED] ?: true,
+            isBottomBarBlurEnabled = preferences[KEY_BOTTOM_BAR_BLUR_ENABLED] ?: false,
             isTopBarLiquidGlassEnabled = preferences[KEY_TOP_BAR_LIQUID_GLASS_ENABLED] ?: false,
             isHomeSearchLiquidGlassEnabled =
                 preferences[KEY_HOME_SEARCH_LIQUID_GLASS_ENABLED]
                     ?: (preferences[KEY_TOP_BAR_LIQUID_GLASS_ENABLED] ?: false),
             isBottomBarLiquidGlassEnabled = preferences[KEY_BOTTOM_BAR_LIQUID_GLASS_ENABLED] ?: legacyLiquidGlassEnabled,
-            bottomBarInteractiveHighlightEnabled = true,
             isBottomBarSearchEnabled = preferences[KEY_BOTTOM_BAR_SEARCH_ENABLED] ?: false,
+            keepHomeTopSearchWithBottomSearch = preferences[KEY_KEEP_HOME_TOP_SEARCH] ?: false,
+            linkedDockMergeOnScrollEnabled = preferences[KEY_LINKED_DOCK_MERGE_ON_SCROLL_ENABLED] ?: true,
+            bottomBarScrollCompactEnabled = preferences[KEY_BOTTOM_BAR_SCROLL_COMPACT_ENABLED] ?: true,
+            listScopedSearchEnabled = preferences[KEY_LIST_SCOPED_SEARCH_ENABLED] ?: false,
             bottomBarSearchAutoExpandMode = BottomBarSearchAutoExpandMode.fromValue(
                 preferences[KEY_BOTTOM_BAR_SEARCH_AUTO_EXPAND_MODE]
                     ?: BottomBarSearchAutoExpandMode.EXPAND_AT_HOME_TOP.value
@@ -1276,30 +1881,43 @@ object SettingsManager {
             ),
             androidNativeLiquidGlassEnabled =
                 preferences[KEY_ANDROID_NATIVE_LIQUID_GLASS_ENABLED]
-                    ?: preferences[KEY_LEGACY_ANDROID_NATIVE_TOP_TAB_LIQUID_GLASS_ENABLED]
                     ?: false,
-            liquidGlassStyle = FIXED_LIQUID_GLASS_STYLE,
-            liquidGlassMode = FIXED_LIQUID_GLASS_MODE,
-            liquidGlassStrength = FIXED_LIQUID_GLASS_STRENGTH,
-            liquidGlassProgress = FIXED_LIQUID_GLASS_PROGRESS,
+            liquidGlassScenes = com.android.purebilibili.core.ui.AppLiquidGlassSettings(preferences[KEY_LIQUID_GLASS_SCENES_DISABLED] ?: 0),
+            liquidGlassStyle = legacyLiquidGlassStyle,
+            liquidGlassMode = liquidGlassMode,
+            liquidGlassStrength = liquidGlassStrength,
+            liquidGlassProgress = liquidGlassProgress,
+            liquidGlassReadabilityMode = liquidGlassReadabilityMode,
+            liquidGlassAdvancedSettings = liquidGlassAdvancedSettings,
             homeHeaderCollapseMode = headerCollapseMode,
+            homeBarHideType = HomeBarHideType.fromValue(
+                preferences[KEY_HOME_BAR_HIDE_TYPE] ?: HomeBarHideType.SYNC.value
+            ),
             commonListHeaderCollapseMode = CommonListHeaderCollapseMode.fromValue(
                 preferences[KEY_COMMON_LIST_HEADER_COLLAPSE_MODE]
-                    ?: CommonListHeaderCollapseMode.SHOW_ON_REVERSE_SCROLL.value
+                    ?: CommonListHeaderCollapseMode.SHOW_AT_TOP_ONLY.value
             ),
             isHeaderCollapseEnabled = headerCollapseMode.hasAnyCollapse,
+            showPgcTimeline = preferences[KEY_SHOW_PGC_TIMELINE] ?: true,
             gridColumnCount = preferences[KEY_GRID_COLUMN_COUNT] ?: 0,
+            gridColumnCountCompact = preferences[KEY_GRID_COLUMN_COUNT_COMPACT] ?: 0,
+            gridColumnCustomizationEnabled = preferences[KEY_GRID_COLUMN_CUSTOMIZATION_ENABLED] ?: true,
+            gridColumnsSharedAcrossPages = preferences[KEY_GRID_COLUMNS_SHARED_ACROSS_PAGES] ?: true,
+            pinchToChangeGridColumnsEnabled =
+                preferences[KEY_PINCH_TO_CHANGE_GRID_COLUMNS_ENABLED] ?: true,
             homeFeedCardWidthPreset = HomeFeedCardWidthPreset.fromValue(
                 preferences[KEY_HOME_FEED_CARD_WIDTH_PRESET] ?: HomeFeedCardWidthPreset.AUTO.value
             ),
             homeFeedCardStyle = HomeFeedCardStyle.fromValue(
-                preferences[KEY_HOME_FEED_CARD_STYLE] ?: HomeFeedCardStyle.OFFICIAL.value
+                preferences[KEY_HOME_FEED_CARD_STYLE] ?: HomeFeedCardStyle.BILIPAI.value
             ),
-            homeHeroCarouselEnabled = preferences[KEY_HOME_HERO_CAROUSEL_ENABLED] ?: true,
+            homeHeroCarouselEnabled = preferences[KEY_HOME_HERO_CAROUSEL_ENABLED] ?: false,
             homeHeroCarouselAutoplayEnabled =
                 preferences[KEY_HOME_HERO_CAROUSEL_AUTOPLAY_ENABLED] ?: false,
+            homeRefreshTipVisible = preferences[KEY_HOME_REFRESH_TIP_VISIBLE] ?: true,
+            homeRefreshUndoVisible = preferences[KEY_HOME_REFRESH_UNDO_VISIBLE] ?: false,
             cardAnimationEnabled = preferences[KEY_CARD_ANIMATION_ENABLED] ?: false,
-            cardTransitionEnabled = preferences[KEY_CARD_TRANSITION_ENABLED] ?: true,
+            cardTransitionEnabled = preferences[KEY_CARD_TRANSITION_ENABLED] ?: false,
             videoSharedTransitionSpeed = VideoSharedTransitionSpeed.fromValue(
                 preferences[KEY_VIDEO_SHARED_TRANSITION_SPEED]
                     ?: VideoSharedTransitionSpeed.STANDARD.value
@@ -1310,18 +1928,32 @@ object SettingsManager {
                         ?: VIDEO_SHARED_TRANSITION_CUSTOM_DEFAULT_MILLIS
                 ),
             smartVisualGuardEnabled = false,
-            compactVideoStatsOnCover = preferences[KEY_COMPACT_VIDEO_STATS_ON_COVER] ?: true,
+            runtimeVisualGuardEnabled =
+                preferences[KEY_RUNTIME_VISUAL_GUARD_ENABLED] ?: true,
+            compactVideoStatsOnCover = preferences[KEY_COMPACT_VIDEO_STATS_ON_COVER] ?: false,
             lowQualityHomeCoverInDataSaver =
                 preferences[KEY_LOW_QUALITY_HOME_COVER_IN_DATA_SAVER] ?: false,
+            // 已下线：忽略旧数据，确保历史上开启过实时模糊/液态玻璃的用户不会继续走该路径。
             showHomeCoverGlassBadges = false,
             showHomeInfoGlassBadges = false,
+            homeCardBadgeEffectMode = HomeCardBadgeEffectMode.OFF,
+            homeCardInfoGlassMode = HomeCardInfoGlassMode.OFF,
             homeWallpaperEffectMode = HomeWallpaperEffectMode.fromValue(
-                preferences[KEY_HOME_WALLPAPER_EFFECT_MODE] ?: HomeWallpaperEffectMode.SOFT_BLUR.value
+                preferences[KEY_HOME_WALLPAPER_EFFECT_MODE] ?: HomeWallpaperEffectMode.OFF.value
             ),
             homeWallpaperEffectScope = HomeWallpaperEffectScope.fromValue(
                 preferences[KEY_HOME_WALLPAPER_EFFECT_SCOPE] ?: HomeWallpaperEffectScope.HOME_ONLY.value
             ),
-            showHomeUpBadges = preferences[KEY_HOME_UP_BADGES_VISIBLE] ?: true,
+            showHomeUpBadges = preferences[KEY_HOME_UP_BADGES_VISIBLE] ?: false,
+            showHomeUpAvatars = preferences[KEY_HOME_UP_AVATARS_VISIBLE] ?: false,
+            showHomePublishTime = preferences[KEY_HOME_PUBLISH_TIME_VISIBLE] ?: true,
+            showFullVideoCardContent = preferences[KEY_FULL_VIDEO_CARD_CONTENT_VISIBLE] ?: false,
+            videoCardLongPressActionEnabled = preferences[KEY_VIDEO_CARD_LONG_PRESS_ACTION_ENABLED] ?: false,
+            homeCardDynamicTintEnabled = preferences[KEY_HOME_CARD_DYNAMIC_TINT_ENABLED] ?: false,
+            homeCardFrostedGlassEnabled = resolveHomeCardFrostedGlassEnabled(
+                storedValue = preferences[KEY_HOME_CARD_FROSTED_GLASS_ENABLED],
+                legacyCombinedValue = preferences[KEY_HOME_CARD_DYNAMIC_TINT_ENABLED],
+            ),
             homeDurationStyle = preferences[KEY_HOME_DURATION_STYLE]
                 ?.let(HomeDurationStyle::fromValue)
                 ?: if (preferences[KEY_HOME_VIDEO_DURATION_BADGES_VISIBLE] ?: true) {
@@ -1347,9 +1979,18 @@ object SettingsManager {
             .split(",")
             .filter { it.isNotBlank() }
             .toSet()
+        // 旧版本可能保存超过上限的可见标签：按用户顺序裁剪到 MAX_TOP_TABS，
+        // 保证运行时展示与设置界面上限一致。
+        val cappedVisibleIds = if (visibleIds.size <= MAX_TOP_TABS) {
+            visibleIds
+        } else {
+            orderIds.filter { it in visibleIds }.take(MAX_TOP_TABS).toSet()
+        }
+        val hideTopTabs = preferences[KEY_HIDE_TOP_TABS] ?: false
         return HomeTopTabSettings(
             orderIds = orderIds,
-            visibleIds = visibleIds
+            visibleIds = cappedVisibleIds,
+            hideTopTabs = hideTopTabs
         )
     }
 
@@ -1371,21 +2012,21 @@ object SettingsManager {
             pipNoDanmakuEnabled = preferences[KEY_PIP_NO_DANMAKU] ?: false,
             seekForwardSeconds = (preferences[KEY_SEEK_FORWARD_SECONDS] ?: 10).coerceIn(1, 60),
             seekBackwardSeconds = (preferences[KEY_SEEK_BACKWARD_SECONDS] ?: 10).coerceIn(1, 60),
-            inlineSwipeSeekSeconds = normalizeInlineSwipeSeekSeconds(
-                preferences[KEY_INLINE_SWIPE_SEEK_SECONDS] ?: 30
-            ),
-            fullscreenSwipeSeekSeconds = normalizeFullscreenSwipeSeekSeconds(
-                preferences[KEY_FULLSCREEN_SWIPE_SEEK_SECONDS] ?: 15
-            ),
             fullscreenSwipeSeekEnabled = preferences[KEY_FULLSCREEN_SWIPE_SEEK_ENABLED] ?: true,
             fullscreenGestureReverse = preferences[KEY_FULLSCREEN_GESTURE_REVERSE] ?: false,
             hideVideoPageStatusBar = preferences[KEY_HIDE_VIDEO_PAGE_STATUS_BAR] ?: false,
+            portraitLetterboxAmbientHaze =
+                preferences[KEY_PORTRAIT_LETTERBOX_AMBIENT_HAZE] ?: true,
             tabletCommentPanelWidthPreset = TabletCommentPanelWidthPreset.fromValue(
                 preferences[KEY_TABLET_COMMENT_PANEL_WIDTH_PRESET]
                     ?: TabletCommentPanelWidthPreset.STANDARD.value
             ),
             autoEnterFullscreenEnabled = preferences[KEY_AUTO_ENTER_FULLSCREEN] ?: false,
             autoExitFullscreenEnabled = preferences[KEY_AUTO_EXIT_FULLSCREEN] ?: true,
+            autoExitFullscreenMode = resolveAutoExitFullscreenMode(
+                modeValue = preferences[KEY_AUTO_EXIT_FULLSCREEN_MODE],
+                legacyEnabled = preferences[KEY_AUTO_EXIT_FULLSCREEN],
+            ),
             fixedFullscreenAspectRatio = FullscreenAspectRatio.fromValue(
                 preferences[KEY_FULLSCREEN_ASPECT_RATIO] ?: FullscreenAspectRatio.FIT.value
             ),
@@ -1393,13 +2034,26 @@ object SettingsManager {
                 preferences[KEY_SUBTITLE_AUTO_PREFERENCE] ?: SubtitleAutoPreference.OFF.ordinal
             ) { SubtitleAutoPreference.OFF },
             longPressSpeed = normalizeLongPressSpeed(
-                preferences[KEY_LONG_PRESS_SPEED] ?: DEFAULT_LONG_PRESS_SPEED
+                preferences[longPressSpeedPreferenceKey] ?: DEFAULT_LONG_PRESS_SPEED
             ),
             longPressSpeedLockEnabled = preferences[KEY_LONG_PRESS_SPEED_LOCK_ENABLED] ?: false,
             longPressSpeedLockHintShown = preferences[KEY_LONG_PRESS_SPEED_LOCK_HINT_SHOWN] ?: false,
+            longPressSpeedHintCloseEnabled =
+                preferences[KEY_LONG_PRESS_SPEED_HINT_CLOSE_ENABLED] ?: false,
+            longPressSpeedHintHidden = preferences[KEY_LONG_PRESS_SPEED_HINT_HIDDEN] ?: false,
+            longPressSpeedHintScale = normalizeLongPressSpeedHintScale(
+                preferences[KEY_LONG_PRESS_SPEED_HINT_SCALE] ?: LONG_PRESS_SPEED_HINT_DEFAULT_SCALE
+            ),
+            longPressSpeedHintAlpha = normalizeLongPressSpeedHintAlpha(
+                preferences[KEY_LONG_PRESS_SPEED_HINT_ALPHA] ?: LONG_PRESS_SPEED_HINT_DEFAULT_ALPHA
+            ),
             subtitleVerticalOffsetFraction = normalizeSubtitleVerticalOffsetFraction(
                 preferences[KEY_SUBTITLE_VERTICAL_OFFSET_FRACTION] ?: 0.0f
             ),
+            subtitlePortraitVerticalOffsetFraction = normalizeSubtitleVerticalOffsetFraction(
+                preferences[KEY_SUBTITLE_PORTRAIT_VERTICAL_OFFSET_FRACTION] ?: 0.0f
+            ),
+            subtitlePositionLocked = preferences[KEY_SUBTITLE_POSITION_LOCKED] ?: true,
             twoFingerVerticalSpeedEnabled = preferences[KEY_TWO_FINGER_VERTICAL_SPEED_ENABLED] ?: false,
             twoFingerHorizontalSpeedEnabled = preferences[KEY_TWO_FINGER_HORIZONTAL_SPEED_ENABLED] ?: false,
             hiResLongPressCompatHintShown = preferences[KEY_HI_RES_LONG_PRESS_COMPAT_HINT_SHOWN] ?: false,
@@ -1419,7 +2073,8 @@ object SettingsManager {
         .map { preferences ->
             PlayerControlVisibilitySettings(
                 showCastButton = preferences[KEY_SHOW_PLAYER_CAST_BUTTON] ?: true,
-                showFollowButton = preferences[KEY_SHOW_VIDEO_FOLLOW_BUTTON] ?: true
+                showFollowButton = preferences[KEY_SHOW_VIDEO_FOLLOW_BUTTON] ?: true,
+                compactPlayerChrome = preferences[KEY_COMPACT_PLAYER_CHROME] ?: false
             )
         }
         .distinctUntilChanged()
@@ -1431,6 +2086,11 @@ object SettingsManager {
     suspend fun setShowVideoFollowButton(context: Context, visible: Boolean) {
         context.settingsDataStore.edit { it[KEY_SHOW_VIDEO_FOLLOW_BUTTON] = visible }
     }
+
+    suspend fun setCompactPlayerChrome(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { it[KEY_COMPACT_PLAYER_CHROME] = enabled }
+    }
+
 
     fun getPlayerProgressPlacement(context: Context): Flow<PlayerProgressPlacement> =
         context.settingsDataStore.data.map { preferences ->
@@ -1450,6 +2110,8 @@ object SettingsManager {
     // --- Auto Play on Enter (Click to Play) ---
     private val KEY_CLICK_TO_PLAY = booleanPreferencesKey("click_to_play")
     private val KEY_RESUME_PLAYBACK_PROMPT_ENABLED = booleanPreferencesKey("resume_playback_prompt_enabled")
+    private val KEY_SPACE_PLAYED_VIDEO_LOCATE_PROMPT_ENABLED =
+        booleanPreferencesKey("space_played_video_locate_prompt_enabled")
     private const val RESUME_PROMPT_CACHE_PREFS = "resume_prompt_cache"
     private const val CACHE_KEY_RESUME_PROMPT_ENABLED = "resume_prompt_enabled"
     private const val CACHE_KEY_RESUME_PROMPT_SHOWN = "resume_prompt_shown"
@@ -1458,6 +2120,11 @@ object SettingsManager {
     private const val LONG_PRESS_SPEED_LOCK_CACHE_PREFS = "long_press_speed_lock_cache"
     private const val CACHE_KEY_LONG_PRESS_SPEED_LOCK_ENABLED = "long_press_speed_lock_enabled"
     private const val CACHE_KEY_LONG_PRESS_SPEED_LOCK_HINT_SHOWN = "long_press_speed_lock_hint_shown"
+    private const val CACHE_KEY_LONG_PRESS_SPEED_HINT_CLOSE_ENABLED =
+        "long_press_speed_hint_close_enabled"
+    private const val CACHE_KEY_LONG_PRESS_SPEED_HINT_HIDDEN = "long_press_speed_hint_hidden"
+    private const val CACHE_KEY_LONG_PRESS_SPEED_HINT_SCALE = "long_press_speed_hint_scale"
+    private const val CACHE_KEY_LONG_PRESS_SPEED_HINT_ALPHA = "long_press_speed_hint_alpha"
     private const val VIDEO_PAGE_STATUS_BAR_CACHE_PREFS = "video_page_status_bar_cache"
     private const val CACHE_KEY_HIDE_VIDEO_PAGE_STATUS_BAR = "hide_video_page_status_bar"
 
@@ -1494,6 +2161,16 @@ object SettingsManager {
             .getBoolean(CACHE_KEY_RESUME_PROMPT_ENABLED, true)
     }
 
+    fun getSpacePlayedVideoLocatePromptEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data
+            .map { preferences -> preferences[KEY_SPACE_PLAYED_VIDEO_LOCATE_PROMPT_ENABLED] ?: true }
+
+    suspend fun setSpacePlayedVideoLocatePromptEnabled(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_SPACE_PLAYED_VIDEO_LOCATE_PROMPT_ENABLED] = enabled
+        }
+    }
+
     fun hasResumePlaybackPromptShown(context: Context, promptKey: String): Boolean {
         if (promptKey.isBlank()) return false
         val shownSet = context.getSharedPreferences(RESUME_PROMPT_CACHE_PREFS, Context.MODE_PRIVATE)
@@ -1519,6 +2196,26 @@ object SettingsManager {
     }
 
     // --- Auto Play Next ---
+    private val KEY_RESILIENT_VIDEO_BUFFER = booleanPreferencesKey("resilient_video_buffer")
+    private const val CACHE_KEY_RESILIENT_VIDEO_BUFFER = "resilient_video_buffer"
+
+    fun getResilientVideoBuffer(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { it[KEY_RESILIENT_VIDEO_BUFFER] ?: false }
+        .onEach { enabled ->
+            context.getSharedPreferences("auto_play_cache", Context.MODE_PRIVATE)
+                .edit().putBoolean(CACHE_KEY_RESILIENT_VIDEO_BUFFER, enabled).apply()
+        }
+
+    suspend fun setResilientVideoBuffer(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { it[KEY_RESILIENT_VIDEO_BUFFER] = enabled }
+        context.getSharedPreferences("auto_play_cache", Context.MODE_PRIVATE)
+            .edit().putBoolean(CACHE_KEY_RESILIENT_VIDEO_BUFFER, enabled).apply()
+    }
+
+    fun getResilientVideoBufferSync(context: Context): Boolean =
+        context.getSharedPreferences("auto_play_cache", Context.MODE_PRIVATE)
+            .getBoolean(CACHE_KEY_RESILIENT_VIDEO_BUFFER, false)
+
     private val KEY_EXTERNAL_PLAYLIST_AUTO_CONTINUE =
         booleanPreferencesKey("external_playlist_auto_continue")
     private const val CACHE_KEY_EXTERNAL_PLAYLIST_AUTO_CONTINUE = "external_playlist_auto_continue"
@@ -1526,6 +2223,13 @@ object SettingsManager {
 
     @Volatile
     private var playbackCompletionBehaviorMemoryCache: Int? = null
+
+    fun getNextWatchHintEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_NEXT_WATCH_HINT_ENABLED] ?: true }
+
+    suspend fun setNextWatchHintEnabled(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { preferences -> preferences[KEY_NEXT_WATCH_HINT_ENABLED] = enabled }
+    }
 
     fun getAutoPlay(context: Context): Flow<Boolean> = context.settingsDataStore.data
         .map { preferences -> preferences[KEY_AUTO_PLAY] ?: true }
@@ -1640,13 +2344,24 @@ object SettingsManager {
     internal fun mapAppThemeSettingsFromPreferences(preferences: Preferences): AppThemeSettings {
         val rawDpiOverride = preferences[KEY_APP_DPI_OVERRIDE_PERCENT] ?: 0
         val defaultRoleOverrides = ThemeRoleOverrides()
+        // 两值运行时模型：优先新键；缺失时回退旧键解析并归一化。
+        // 新用户缺失主题键默认 Material 3；历史/非法组合由迁移表兼容为 MIUIX。
+        val uiStyle = resolveThemeSelectionFromPreferences(
+            preferences,
+            KEY_UI_PRESET,
+            KEY_ANDROID_NATIVE_VARIANT
+        )
         return AppThemeSettings(
-            uiPreset = resolveUiPresetPreferenceValue(preferences[KEY_UI_PRESET]),
-            androidNativeVariant = resolveAndroidNativeVariantPreferenceValue(
-                preferences[KEY_ANDROID_NATIVE_VARIANT]
-            ),
+            uiStyle = uiStyle,
             themeMode = resolveThemeModePreference(
                 preferences[KEY_THEME_MODE] ?: AppThemeMode.FOLLOW_SYSTEM.value
+            ),
+            darkThemeSchedule = normalizeDarkThemeSchedule(
+                DarkThemeSchedule(
+                    enabled = preferences[KEY_DARK_SCHEDULE_ENABLED] ?: false,
+                    startMinute = preferences[KEY_DARK_SCHEDULE_START] ?: 22 * 60,
+                    endMinute = preferences[KEY_DARK_SCHEDULE_END] ?: 7 * 60,
+                ),
             ),
             darkThemeStyle = resolveDarkThemeStylePreference(
                 darkThemeStyleValue = preferences[KEY_DARK_THEME_STYLE],
@@ -1658,6 +2373,7 @@ object SettingsManager {
                 legacyDynamicColorEnabled = preferences[KEY_DYNAMIC_COLOR]
             ),
             md3CustomColorHex = normalizeMd3CustomColorHex(preferences[KEY_MD3_CUSTOM_COLOR_HEX]),
+            wallpaperPaletteOverrides = readWallpaperPaletteOverrides(preferences),
             themeRoleOverrides = ThemeRoleOverrides(
                 enabled = preferences[KEY_THEME_ROLE_OVERRIDES_ENABLED] ?: false,
                 light = ThemeModeRoleOverrides(
@@ -1697,11 +2413,16 @@ object SettingsManager {
                     )
                 )
             ),
+            seedPaletteStyle = SeedPaletteStyle.fromStored(preferences[KEY_SEED_PALETTE_STYLE]),
             colorStyle = resolvePaletteStylePreference(preferences[KEY_THEME_COLOR_STYLE]),
             colorSpec = resolveColorSpecPreference(preferences[KEY_THEME_COLOR_SPEC]),
+            colorContrast = resolveColorContrastPreference(preferences[KEY_THEME_COLOR_CONTRAST]),
             themeColorIndex = normalizeThemeColorIndex(preferences[KEY_THEME_COLOR_INDEX] ?: 0),
             appFontSizePreset = AppFontSizePreset.fromValue(
                 preferences[KEY_APP_FONT_SIZE_PRESET] ?: AppFontSizePreset.DEFAULT.value
+            ),
+            appFontWeightPreset = AppFontWeightPreset.fromValue(
+                preferences[KEY_APP_FONT_WEIGHT] ?: AppFontWeightPreset.FOLLOW_THEME.value
             ),
             appFontFileName = preferences[KEY_APP_FONT_FILE_NAME].orEmpty(),
             appUiScalePreset = AppUiScalePreset.fromValue(
@@ -1710,7 +2431,7 @@ object SettingsManager {
             appDpiOverridePercent = if (rawDpiOverride == 0) {
                 0
             } else {
-                rawDpiOverride.coerceIn(85, 115)
+                rawDpiOverride.coerceIn(90, 115)
             },
             appGestureScreenshotEnabled = preferences[KEY_APP_GESTURE_SCREENSHOT_ENABLED] ?: false,
             appScreenshotGestureMode = AppScreenshotGestureMode.fromValue(
@@ -1720,17 +2441,60 @@ object SettingsManager {
             appScreenshotCaptureMode = AppScreenshotCaptureMode.fromValue(
                 preferences[KEY_APP_SCREENSHOT_CAPTURE_MODE]
                     ?: AppScreenshotCaptureMode.FULL_WINDOW.value
-            )
+            ),
+            singleChoicePresentation = AppSingleChoicePresentation.fromStorageValue(
+                preferences[KEY_SINGLE_CHOICE_PRESENTATION]
+            ),
+            appIconStyle = resolveAppIconStylePreference(preferences[KEY_APP_ICON_STYLE]),
+            appListItemStyle = resolveAppListItemStylePreference(preferences[KEY_APP_LIST_ITEM_STYLE])
         )
     }
 
-    fun getAppThemeSettings(context: Context): Flow<AppThemeSettings> = context.settingsDataStore.data
-        .map(::mapAppThemeSettingsFromPreferences)
-        .distinctUntilChanged()
+    fun getAppThemeSettings(context: Context): Flow<AppThemeSettings> = flow {
+        ensureThemeSelectionMigrated(context, KEY_UI_PRESET, KEY_ANDROID_NATIVE_VARIANT)
+        emitAll(
+            context.settingsDataStore.data
+                .map(::mapAppThemeSettingsFromPreferences)
+                .distinctUntilChanged()
+        )
+    }
+
+    fun getCachedDarkThemeSchedule(context: Context): DarkThemeSchedule {
+        val prefs = context.getSharedPreferences("theme_cache", Context.MODE_PRIVATE)
+        return normalizeDarkThemeSchedule(
+            DarkThemeSchedule(
+                enabled = prefs.getBoolean("dark_theme_schedule_enabled", false),
+                startMinute = prefs.getInt("dark_theme_schedule_start_minute", 22 * 60),
+                endMinute = prefs.getInt("dark_theme_schedule_end_minute", 7 * 60),
+            ),
+        )
+    }
 
     fun getInitialAppThemeSettings(context: Context): AppThemeSettings {
         return AppThemeSettings(
-            appLanguage = getAppLanguageSync(context)
+            appLanguage = getAppLanguageSync(context),
+            darkThemeSchedule = getCachedDarkThemeSchedule(context),
+        )
+    }
+
+    fun getDarkThemeSchedule(context: Context): Flow<DarkThemeSchedule> =
+        getAppThemeSettings(context).map { it.darkThemeSchedule }.distinctUntilChanged()
+
+    suspend fun setDarkThemeSchedule(context: Context, schedule: DarkThemeSchedule) {
+        require(schedule.startMinute in 0..1439 && schedule.endMinute in 0..1439)
+        require(schedule.startMinute != schedule.endMinute)
+        editSettingsAndCommitPrefs(
+            context, "theme_cache",
+            editSettings = {
+                this[KEY_DARK_SCHEDULE_ENABLED] = schedule.enabled
+                this[KEY_DARK_SCHEDULE_START] = schedule.startMinute
+                this[KEY_DARK_SCHEDULE_END] = schedule.endMinute
+            },
+            editPrefs = {
+                putBoolean("dark_theme_schedule_enabled", schedule.enabled)
+                putInt("dark_theme_schedule_start_minute", schedule.startMinute)
+                putInt("dark_theme_schedule_end_minute", schedule.endMinute)
+            },
         )
     }
 
@@ -1756,23 +2520,23 @@ object SettingsManager {
 
     suspend fun setThemeMode(context: Context, mode: AppThemeMode) {
         var resolvedDarkThemeStyle = DarkThemeStyle.DEFAULT
-        context.settingsDataStore.edit { preferences ->
-            resolvedDarkThemeStyle = resolveDarkThemeStylePreference(
-                darkThemeStyleValue = preferences[KEY_DARK_THEME_STYLE],
-                legacyThemeModeValue = preferences[KEY_THEME_MODE]
-            )
-            if (preferences[KEY_DARK_THEME_STYLE] == null) {
-                preferences[KEY_DARK_THEME_STYLE] = resolvedDarkThemeStyle.value
+        val success = editSettingsAndCommitPrefs(
+            context, "theme_cache",
+            editSettings = {
+                resolvedDarkThemeStyle = resolveDarkThemeStylePreference(
+                    darkThemeStyleValue = this[KEY_DARK_THEME_STYLE],
+                    legacyThemeModeValue = this[KEY_THEME_MODE]
+                )
+                if (this[KEY_DARK_THEME_STYLE] == null) {
+                    this[KEY_DARK_THEME_STYLE] = resolvedDarkThemeStyle.value
+                }
+                this[KEY_THEME_MODE] = mode.value
+            },
+            editPrefs = {
+                putInt("theme_mode", mode.value)
+                putInt("dark_theme_style", resolvedDarkThemeStyle.value)
             }
-            preferences[KEY_THEME_MODE] = mode.value
-        }
-        //  同步到 SharedPreferences，供 PureApplication 同步读取使用
-        // 使用 commit() 确保立即写入
-        val success = context.getSharedPreferences("theme_cache", Context.MODE_PRIVATE)
-            .edit()
-            .putInt("theme_mode", mode.value)
-            .putInt("dark_theme_style", resolvedDarkThemeStyle.value)
-            .commit()
+        )
         com.android.purebilibili.core.util.Logger.d("SettingsManager", " Theme mode saved: ${mode.value} (${mode.label}), success=$success")
         
         //  同时应用到 AppCompatDelegate，使当前运行时生效
@@ -1785,13 +2549,36 @@ object SettingsManager {
     }
 
     suspend fun setAppLanguage(context: Context, appLanguage: AppLanguage) {
+        editSettingsAndCommitPrefs(
+            context, "theme_cache",
+            editSettings = { this[KEY_APP_LANGUAGE] = appLanguage.value },
+            editPrefs = { putInt("app_language", appLanguage.value) },
+        )
+    }
+
+    suspend fun setAppIconStyle(context: Context, style: AppIconStyle) {
+        editSettingsAndCommitPrefs(
+            context, "theme_cache",
+            editSettings = { this[KEY_APP_ICON_STYLE] = style.name },
+            editPrefs = { putString("app_icon_style", style.name) },
+        )
+    }
+
+    suspend fun setAppListItemStyle(context: Context, style: AppListItemStyle) {
+        editSettingsAndCommitPrefs(
+            context, "theme_cache",
+            editSettings = { this[KEY_APP_LIST_ITEM_STYLE] = style.name },
+            editPrefs = { putString("app_list_item_style", style.name) },
+        )
+    }
+
+    suspend fun setSingleChoicePresentation(
+        context: Context,
+        presentation: AppSingleChoicePresentation,
+    ) {
         context.settingsDataStore.edit { preferences ->
-            preferences[KEY_APP_LANGUAGE] = appLanguage.value
+            preferences[KEY_SINGLE_CHOICE_PRESENTATION] = presentation.storageValue
         }
-        context.getSharedPreferences("theme_cache", Context.MODE_PRIVATE)
-            .edit()
-            .putInt("app_language", appLanguage.value)
-            .commit()
     }
 
     fun getAppLanguageSync(context: Context): AppLanguage {
@@ -1800,35 +2587,56 @@ object SettingsManager {
         return resolveAppLanguagePreference(rawValue)
     }
 
+    fun getAppIconStyle(context: Context): Flow<AppIconStyle> =
+        context.settingsDataStore.data.map { preferences ->
+            resolveAppIconStylePreference(preferences[KEY_APP_ICON_STYLE])
+        }
+
+    fun getAppListItemStyle(context: Context): Flow<AppListItemStyle> =
+        context.settingsDataStore.data.map { preferences ->
+            resolveAppListItemStylePreference(preferences[KEY_APP_LIST_ITEM_STYLE])
+        }
+
+    fun getSingleChoicePresentation(context: Context): Flow<AppSingleChoicePresentation> =
+        context.settingsDataStore.data.map { preferences ->
+            AppSingleChoicePresentation.fromStorageValue(
+                preferences[KEY_SINGLE_CHOICE_PRESENTATION]
+            )
+        }
+
     suspend fun setDarkThemeStyle(context: Context, style: DarkThemeStyle) {
-        context.settingsDataStore.edit { preferences -> preferences[KEY_DARK_THEME_STYLE] = style.value }
-        val success = context.getSharedPreferences("theme_cache", Context.MODE_PRIVATE)
-            .edit().putInt("dark_theme_style", style.value).commit()
+        val success = editSettingsAndCommitPrefs(
+            context, "theme_cache",
+            editSettings = { this[KEY_DARK_THEME_STYLE] = style.value },
+            editPrefs = { putInt("dark_theme_style", style.value) },
+        )
         com.android.purebilibili.core.util.Logger.d(
             "SettingsManager",
             " Dark theme style saved: ${style.value} (${style.label}), success=$success"
         )
     }
 
-    fun getUiPreset(context: Context): Flow<UiPreset> = context.settingsDataStore.data
-        .map { preferences ->
-            resolveUiPresetPreferenceValue(preferences[KEY_UI_PRESET])
-        }
-
-    suspend fun setUiPreset(context: Context, preset: UiPreset) {
-        context.settingsDataStore.edit { preferences ->
-            preferences[KEY_UI_PRESET] = preset.value
-        }
+    fun getUiStyle(context: Context): Flow<AppUiStyle> = flow {
+        ensureThemeSelectionMigrated(context, KEY_UI_PRESET, KEY_ANDROID_NATIVE_VARIANT)
+        emitAll(
+            context.settingsDataStore.data
+                .map { preferences ->
+                    resolveThemeSelectionFromPreferences(
+                        preferences,
+                        KEY_UI_PRESET,
+                        KEY_ANDROID_NATIVE_VARIANT
+                    )
+                }
+                .distinctUntilChanged()
+        )
     }
 
-    fun getAndroidNativeVariant(context: Context): Flow<AndroidNativeVariant> =
-        context.settingsDataStore.data.map { preferences ->
-            resolveAndroidNativeVariantPreferenceValue(preferences[KEY_ANDROID_NATIVE_VARIANT])
-        }
-
-    suspend fun setAndroidNativeVariant(context: Context, variant: AndroidNativeVariant) {
+    suspend fun setUiStyle(context: Context, uiStyle: AppUiStyle) {
+        // 只写新稳定键，不再双写旧键；两值模型不存在非法运行时值。
         context.settingsDataStore.edit { preferences ->
-            preferences[KEY_ANDROID_NATIVE_VARIANT] = variant.value
+            preferences[KEY_THEME_SELECTION] = uiStyle.name
+            preferences.remove(KEY_UI_PRESET)
+            preferences.remove(KEY_ANDROID_NATIVE_VARIANT)
         }
     }
 
@@ -1838,7 +2646,7 @@ object SettingsManager {
             resolveMd3ColorSourcePreference(
                 sourceValue = preferences[KEY_MD3_COLOR_SOURCE],
                 legacyDynamicColorEnabled = preferences[KEY_DYNAMIC_COLOR]
-            ) == Md3ColorSource.FOLLOW_WALLPAPER
+            ) != Md3ColorSource.CUSTOM
         }
 
     suspend fun setDynamicColor(context: Context, value: Boolean) {
@@ -1856,22 +2664,68 @@ object SettingsManager {
             )
         }
 
-    suspend fun setMd3ColorSource(context: Context, source: Md3ColorSource) {
-        context.settingsDataStore.edit { preferences ->
-            preferences[KEY_MD3_COLOR_SOURCE] = source.name
-            // 保持旧 key 同步，避免旧入口或导入旧配置时出现来源状态不一致。
-            preferences[KEY_DYNAMIC_COLOR] = source == Md3ColorSource.FOLLOW_WALLPAPER
+    /** All color selection entrances commit source, seed and advanced control accents together. */
+    internal fun updateMd3ColorSelection(
+        preferences: MutablePreferences,
+        source: Md3ColorSource,
+        customHex: String? = null,
+        presetIndex: Int? = null,
+    ) {
+        val normalizedIndex = presetIndex?.let(::normalizeThemeColorIndex)
+        val selectedHex = if (normalizedIndex != null) {
+            com.android.purebilibili.core.theme.formatMd3CustomColorHex(
+                com.android.purebilibili.core.theme.ThemeColors[normalizedIndex]
+            )
+        } else customHex?.let { normalizeMd3CustomColorHex(it) }
+        preferences[KEY_MD3_COLOR_SOURCE] = source.name
+        preferences[KEY_DYNAMIC_COLOR] = source != Md3ColorSource.CUSTOM
+        if (normalizedIndex != null) preferences[KEY_THEME_COLOR_INDEX] = normalizedIndex
+        if (selectedHex != null) {
+            preferences[KEY_MD3_CUSTOM_COLOR_HEX] = selectedHex
+            if (preferences[KEY_THEME_ROLE_OVERRIDES_ENABLED] == true) {
+                preferences[KEY_THEME_LIGHT_CONTROL_ACCENT] = selectedHex
+                preferences[KEY_THEME_DARK_CONTROL_ACCENT] = selectedHex
+            }
+        }
+        // Wallpaper edits stay saved, but the endpoint resolver ignores them outside re-toning.
+    }
+
+    suspend fun setMd3ColorSource(context: Context, source: Md3ColorSource) = context.settingsDataStore.edit { preferences ->
+        updateMd3ColorSelection(preferences, source)
+    }
+
+    fun getMd3CustomColorHex(context: Context): Flow<String> = context.settingsDataStore.data.map {
+        normalizeMd3CustomColorHex(it[KEY_MD3_CUSTOM_COLOR_HEX])
+    }
+
+    suspend fun setMd3CustomColorHex(context: Context, hex: String) = context.settingsDataStore.edit { preferences ->
+        updateMd3ColorSelection(preferences, Md3ColorSource.CUSTOM, customHex = hex)
+    }
+
+    suspend fun applyMd3CustomColor(context: Context, hex: String) = setMd3CustomColorHex(context, hex)
+
+    fun getWallpaperPaletteOverrides(context: Context): Flow<WallpaperPaletteOverrides> =
+        context.settingsDataStore.data.map(::readWallpaperPaletteOverrides)
+
+    suspend fun setWallpaperPaletteColor(
+        context: Context,
+        darkTheme: Boolean,
+        role: WallpaperPaletteRole,
+        hex: String?,
+    ) = context.settingsDataStore.edit { preferences ->
+        val key = wallpaperPalettePreferenceKeys.getValue(darkTheme to role)
+        if (hex == null) preferences.remove(key)
+        else if (com.android.purebilibili.feature.settings.isValidMd3CustomColorHex(hex)) {
+            preferences[key] = normalizeMd3CustomColorHex(hex)
         }
     }
 
-    fun getMd3CustomColorHex(context: Context): Flow<String> = context.settingsDataStore.data
-        .map { preferences -> normalizeMd3CustomColorHex(preferences[KEY_MD3_CUSTOM_COLOR_HEX]) }
-
-    suspend fun setMd3CustomColorHex(context: Context, hex: String) {
+    suspend fun resetWallpaperPaletteColors(context: Context, darkTheme: Boolean) =
         context.settingsDataStore.edit { preferences ->
-            preferences[KEY_MD3_CUSTOM_COLOR_HEX] = normalizeMd3CustomColorHex(hex)
+            WallpaperPaletteRole.entries.forEach { role ->
+                preferences.remove(wallpaperPalettePreferenceKeys.getValue(darkTheme to role))
+            }
         }
-    }
 
     fun getThemeRoleOverrides(context: Context): Flow<ThemeRoleOverrides> =
         context.settingsDataStore.data.map { preferences ->
@@ -1917,11 +2771,36 @@ object SettingsManager {
         }
     }
 
+    fun getSeedPaletteStyle(context: Context): Flow<SeedPaletteStyle> = context.settingsDataStore.data
+        .map { preferences -> SeedPaletteStyle.fromStored(preferences[KEY_SEED_PALETTE_STYLE]) }
+        .distinctUntilChanged()
+
+    suspend fun setSeedPaletteStyle(context: Context, style: SeedPaletteStyle) {
+        context.settingsDataStore.edit { preferences -> preferences[KEY_SEED_PALETTE_STYLE] = style.name }
+    }
+
     fun getThemeColorStyle(context: Context): Flow<PaletteStyle> = context.settingsDataStore.data
         .map { preferences -> resolvePaletteStylePreference(preferences[KEY_THEME_COLOR_STYLE]) }
 
     suspend fun setThemeColorStyle(context: Context, style: PaletteStyle) {
-        context.settingsDataStore.edit { preferences -> preferences[KEY_THEME_COLOR_STYLE] = style.name }
+        context.settingsDataStore.edit { preferences -> preferences[KEY_THEME_COLOR_STYLE] = style.toString() }
+    }
+
+    /** Apply the invitation only after confirmation, in one transaction. Keep the user's
+     * source, seed, advanced colors, contrast and glass preferences untouched. */
+    internal suspend fun applyCmfUpdateTrial(context: Context, expected: AppThemeSettings): Boolean {
+        var applied = false
+        context.settingsDataStore.edit { preferences ->
+            val current = mapAppThemeSettingsFromPreferences(preferences)
+            // Recheck the preview snapshot, so another settings change cannot be overwritten.
+            if (current != expected || current.uiStyle != AppUiStyle.MATERIAL3 ||
+                current.md3ColorSource != Md3ColorSource.CUSTOM) return@edit
+            preferences[KEY_SEED_PALETTE_STYLE] = SeedPaletteStyle.Standard.name
+            preferences[KEY_THEME_COLOR_STYLE] = PaletteStyle.Cmf().toString()
+            preferences[KEY_THEME_COLOR_SPEC] = ColorSpec.SpecVersion.SPEC_2026.name
+            applied = true
+        }
+        return applied
     }
 
     fun getThemeColorSpec(context: Context): Flow<ColorSpec.SpecVersion> = context.settingsDataStore.data
@@ -1929,6 +2808,13 @@ object SettingsManager {
 
     suspend fun setThemeColorSpec(context: Context, spec: ColorSpec.SpecVersion) {
         context.settingsDataStore.edit { preferences -> preferences[KEY_THEME_COLOR_SPEC] = spec.name }
+    }
+
+    fun getThemeColorContrast(context: Context): Flow<Contrast> = context.settingsDataStore.data
+        .map { preferences -> resolveColorContrastPreference(preferences[KEY_THEME_COLOR_CONTRAST]) }
+
+    suspend fun setThemeColorContrast(context: Context, contrast: Contrast) {
+        context.settingsDataStore.edit { preferences -> preferences[KEY_THEME_COLOR_CONTRAST] = contrast.name }
     }
 
     fun getAppFontSizePreset(context: Context): Flow<AppFontSizePreset> = context.settingsDataStore.data
@@ -1941,6 +2827,19 @@ object SettingsManager {
     suspend fun setAppFontSizePreset(context: Context, preset: AppFontSizePreset) {
         context.settingsDataStore.edit { preferences ->
             preferences[KEY_APP_FONT_SIZE_PRESET] = preset.value
+        }
+    }
+
+    fun getAppFontWeightPreset(context: Context): Flow<AppFontWeightPreset> = context.settingsDataStore.data
+        .map { preferences ->
+            AppFontWeightPreset.fromValue(
+                preferences[KEY_APP_FONT_WEIGHT] ?: AppFontWeightPreset.FOLLOW_THEME.value
+            )
+        }
+
+    suspend fun setAppFontWeightPreset(context: Context, preset: AppFontWeightPreset) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_APP_FONT_WEIGHT] = preset.value
         }
     }
 
@@ -1984,12 +2883,12 @@ object SettingsManager {
     fun getAppDpiOverridePercent(context: Context): Flow<Int> = context.settingsDataStore.data
         .map { preferences ->
             val rawValue = preferences[KEY_APP_DPI_OVERRIDE_PERCENT] ?: 0
-            if (rawValue == 0) 0 else rawValue.coerceIn(85, 115)
+            if (rawValue == 0) 0 else rawValue.coerceIn(90, 115)
         }
 
     suspend fun setAppDpiOverridePercent(context: Context, percent: Int) {
         context.settingsDataStore.edit { preferences ->
-            preferences[KEY_APP_DPI_OVERRIDE_PERCENT] = if (percent == 0) 0 else percent.coerceIn(85, 115)
+            preferences[KEY_APP_DPI_OVERRIDE_PERCENT] = if (percent == 0) 0 else percent.coerceIn(90, 115)
         }
     }
 
@@ -2012,6 +2911,18 @@ object SettingsManager {
     fun getHapticFeedbackEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
         .map { preferences -> preferences[KEY_HAPTIC_FEEDBACK_ENABLED] ?: true } // 默认开启
 
+    fun getHapticSettings(context: Context): Flow<com.android.purebilibili.core.ui.AppHapticSettings> =
+        context.settingsDataStore.data.map {
+            com.android.purebilibili.core.ui.AppHapticSettings(it[KEY_HAPTIC_SCENES_DISABLED] ?: 0)
+        }
+
+    suspend fun setHapticSceneEnabled(context: Context, scene: com.android.purebilibili.core.ui.AppHapticScene, enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            val current = com.android.purebilibili.core.ui.AppHapticSettings(preferences[KEY_HAPTIC_SCENES_DISABLED] ?: 0)
+            preferences[KEY_HAPTIC_SCENES_DISABLED] = current.withEnabled(scene, enabled).disabledMask
+        }
+    }
+
     suspend fun setHapticFeedbackEnabled(context: Context, value: Boolean) {
         context.settingsDataStore.edit { preferences -> preferences[KEY_HAPTIC_FEEDBACK_ENABLED] = value }
         // 同步到 SharedPreferences，供同步读取 (例如 modifier 中)
@@ -2023,6 +2934,31 @@ object SettingsManager {
         // 优先读取缓存
         return context.getSharedPreferences("haptic_cache", Context.MODE_PRIVATE)
             .getBoolean("enabled", true)
+    }
+
+    fun getGlobalTextTapCopyEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_GLOBAL_TEXT_TAP_COPY_ENABLED] ?: false }
+
+    suspend fun setGlobalTextTapCopyEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_GLOBAL_TEXT_TAP_COPY_ENABLED] = value
+        }
+    }
+
+    /** 播放器信息返回上次观看的分P时，播放器内展示「上次看到第 N P」提示；镜像 SP 供同步读取。 */
+    fun getShowContinuePartNoticeSync(context: Context): Boolean =
+        context.getSharedPreferences("playback_notice_cache", Context.MODE_PRIVATE)
+            .getBoolean("show_continue_part_notice", true)
+
+    fun getShowContinuePartNotice(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_SHOW_CONTINUE_PART_NOTICE] ?: true }
+
+    suspend fun setShowContinuePartNotice(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_SHOW_CONTINUE_PART_NOTICE] = value
+        }
+        context.getSharedPreferences("playback_notice_cache", Context.MODE_PRIVATE)
+            .edit().putBoolean("show_continue_part_notice", value).apply()
     }
 
     //  [新增] --- 手势灵敏度 (0.5 ~ 2.0, 默认 1.0) ---
@@ -2082,6 +3018,43 @@ object SettingsManager {
     fun getSeekForwardSeconds(context: Context): Flow<Int> = context.settingsDataStore.data
         .map { preferences -> preferences[KEY_SEEK_FORWARD_SECONDS] ?: 10 }
 
+    /** 分网络保存直播画质；已有的单份画质作为首次迁移值。 */
+    fun getLivePreferredQuality(context: Context, isWifi: Boolean = true): Flow<Int> = context.settingsDataStore.data
+        .map { preferences ->
+            preferences[if (isWifi) KEY_LIVE_WIFI_QUALITY else KEY_LIVE_MOBILE_QUALITY]
+                ?: preferences[KEY_LIVE_QUALITY]?.takeIf { it > 0 }
+                ?: if (isWifi) 10000 else 250
+        }
+
+    fun getLiveSuperChatEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { it[KEY_LIVE_SUPER_CHAT_ENABLED] ?: true }
+
+    suspend fun setLiveSuperChatEnabled(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { it[KEY_LIVE_SUPER_CHAT_ENABLED] = enabled }
+    }
+
+    fun getLiveCdnHost(context: Context): Flow<String?> = context.settingsDataStore.data
+        .map { it[KEY_LIVE_CDN_HOST] }
+
+    suspend fun setLiveCdnHost(context: Context, host: String?) {
+        context.settingsDataStore.edit {
+            if (host.isNullOrBlank()) it.remove(KEY_LIVE_CDN_HOST) else it[KEY_LIVE_CDN_HOST] = host
+        }
+    }
+
+    fun getLivePreferredStream(context: Context): Flow<String?> = context.settingsDataStore.data
+        .map { it[KEY_LIVE_PREFERRED_STREAM] }
+
+    suspend fun setLivePreferredStream(context: Context, value: String) {
+        context.settingsDataStore.edit { it[KEY_LIVE_PREFERRED_STREAM] = value }
+    }
+
+    suspend fun setLivePreferredQuality(context: Context, qn: Int, isWifi: Boolean = true) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[if (isWifi) KEY_LIVE_WIFI_QUALITY else KEY_LIVE_MOBILE_QUALITY] = qn
+        }
+    }
+
     suspend fun setSeekForwardSeconds(context: Context, seconds: Int) {
         context.settingsDataStore.edit { preferences -> 
             preferences[KEY_SEEK_FORWARD_SECONDS] = seconds.coerceIn(1, 60)
@@ -2097,14 +3070,11 @@ object SettingsManager {
         }
     }
 
-    //  [新增] --- 长按倍速 (默认 2.0x) ---
-    fun getLongPressSpeed(context: Context): Flow<Float> = context.settingsDataStore.data
-        .map { preferences -> normalizeLongPressSpeed(preferences[KEY_LONG_PRESS_SPEED] ?: DEFAULT_LONG_PRESS_SPEED) }
+    fun getLongPressSpeed(context: Context): Flow<Float> =
+        PlayerSettingsStore.getLongPressSpeed(context)
 
     suspend fun setLongPressSpeed(context: Context, speed: Float) {
-        context.settingsDataStore.edit { preferences -> 
-            preferences[KEY_LONG_PRESS_SPEED] = normalizeLongPressSpeed(speed)
-        }
+        PlayerSettingsStore.setLongPressSpeed(context, speed)
     }
 
     fun getLongPressSpeedLockEnabled(context: Context): Flow<Boolean> =
@@ -2145,6 +3115,88 @@ object SettingsManager {
             .getBoolean(CACHE_KEY_LONG_PRESS_SPEED_LOCK_HINT_SHOWN, false)
     }
 
+    /** 隐藏开关：是否在长按倍速浮层显示 ×。默认 false。不进入设置 UI。 */
+    fun getLongPressSpeedHintCloseEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data
+            .map { preferences -> preferences[KEY_LONG_PRESS_SPEED_HINT_CLOSE_ENABLED] ?: false }
+
+    suspend fun setLongPressSpeedHintCloseEnabled(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_LONG_PRESS_SPEED_HINT_CLOSE_ENABLED] = enabled
+        }
+        context.getSharedPreferences(LONG_PRESS_SPEED_LOCK_CACHE_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(CACHE_KEY_LONG_PRESS_SPEED_HINT_CLOSE_ENABLED, enabled)
+            .apply()
+    }
+
+    fun getLongPressSpeedHintCloseEnabledSync(context: Context): Boolean {
+        return context.getSharedPreferences(LONG_PRESS_SPEED_LOCK_CACHE_PREFS, Context.MODE_PRIVATE)
+            .getBoolean(CACHE_KEY_LONG_PRESS_SPEED_HINT_CLOSE_ENABLED, false)
+    }
+
+    fun getLongPressSpeedHintHidden(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data
+            .map { preferences -> preferences[KEY_LONG_PRESS_SPEED_HINT_HIDDEN] ?: false }
+
+    suspend fun setLongPressSpeedHintHidden(context: Context, hidden: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_LONG_PRESS_SPEED_HINT_HIDDEN] = hidden
+        }
+        context.getSharedPreferences(LONG_PRESS_SPEED_LOCK_CACHE_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(CACHE_KEY_LONG_PRESS_SPEED_HINT_HIDDEN, hidden)
+            .apply()
+    }
+
+    fun getLongPressSpeedHintHiddenSync(context: Context): Boolean =
+        context.getSharedPreferences(LONG_PRESS_SPEED_LOCK_CACHE_PREFS, Context.MODE_PRIVATE)
+            .getBoolean(CACHE_KEY_LONG_PRESS_SPEED_HINT_HIDDEN, false)
+
+    fun getLongPressSpeedHintScale(context: Context): Flow<Float> = context.settingsDataStore.data
+        .map { preferences ->
+            normalizeLongPressSpeedHintScale(
+                preferences[KEY_LONG_PRESS_SPEED_HINT_SCALE] ?: LONG_PRESS_SPEED_HINT_DEFAULT_SCALE
+            )
+        }
+
+    suspend fun setLongPressSpeedHintScale(context: Context, scale: Float) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_LONG_PRESS_SPEED_HINT_SCALE] = normalizeLongPressSpeedHintScale(scale)
+        }
+        context.getSharedPreferences(LONG_PRESS_SPEED_LOCK_CACHE_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putFloat(CACHE_KEY_LONG_PRESS_SPEED_HINT_SCALE, normalizeLongPressSpeedHintScale(scale))
+            .apply()
+    }
+
+    fun getLongPressSpeedHintScaleSync(context: Context): Float =
+        context.getSharedPreferences(LONG_PRESS_SPEED_LOCK_CACHE_PREFS, Context.MODE_PRIVATE)
+            .getFloat(CACHE_KEY_LONG_PRESS_SPEED_HINT_SCALE, LONG_PRESS_SPEED_HINT_DEFAULT_SCALE)
+            .let(::normalizeLongPressSpeedHintScale)
+
+    fun getLongPressSpeedHintAlpha(context: Context): Flow<Float> = context.settingsDataStore.data
+        .map { preferences ->
+            normalizeLongPressSpeedHintAlpha(
+                preferences[KEY_LONG_PRESS_SPEED_HINT_ALPHA] ?: LONG_PRESS_SPEED_HINT_DEFAULT_ALPHA
+            )
+        }
+
+    suspend fun setLongPressSpeedHintAlpha(context: Context, alpha: Float) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_LONG_PRESS_SPEED_HINT_ALPHA] = normalizeLongPressSpeedHintAlpha(alpha)
+        }
+        context.getSharedPreferences(LONG_PRESS_SPEED_LOCK_CACHE_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putFloat(CACHE_KEY_LONG_PRESS_SPEED_HINT_ALPHA, normalizeLongPressSpeedHintAlpha(alpha))
+            .apply()
+    }
+
+    fun getLongPressSpeedHintAlphaSync(context: Context): Float =
+        context.getSharedPreferences(LONG_PRESS_SPEED_LOCK_CACHE_PREFS, Context.MODE_PRIVATE)
+            .getFloat(CACHE_KEY_LONG_PRESS_SPEED_HINT_ALPHA, LONG_PRESS_SPEED_HINT_DEFAULT_ALPHA)
+            .let(::normalizeLongPressSpeedHintAlpha)
+
     fun getSubtitleVerticalOffsetFraction(context: Context): Flow<Float> = context.settingsDataStore.data
         .map { preferences ->
             normalizeSubtitleVerticalOffsetFraction(
@@ -2156,6 +3208,32 @@ object SettingsManager {
         context.settingsDataStore.edit { preferences ->
             preferences[KEY_SUBTITLE_VERTICAL_OFFSET_FRACTION] =
                 normalizeSubtitleVerticalOffsetFraction(value)
+        }
+    }
+
+    fun getSubtitlePortraitVerticalOffsetFraction(context: Context): Flow<Float> =
+        context.settingsDataStore.data
+            .map { preferences ->
+                normalizeSubtitleVerticalOffsetFraction(
+                    preferences[KEY_SUBTITLE_PORTRAIT_VERTICAL_OFFSET_FRACTION] ?: 0.0f
+                )
+            }
+
+    suspend fun setSubtitlePortraitVerticalOffsetFraction(context: Context, value: Float) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_SUBTITLE_PORTRAIT_VERTICAL_OFFSET_FRACTION] =
+                normalizeSubtitleVerticalOffsetFraction(value)
+        }
+    }
+
+    fun getSubtitlePositionLocked(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data.map { preferences ->
+            preferences[KEY_SUBTITLE_POSITION_LOCKED] ?: true
+        }
+
+    suspend fun setSubtitlePositionLocked(context: Context, locked: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_SUBTITLE_POSITION_LOCKED] = locked
         }
     }
 
@@ -2210,7 +3288,18 @@ object SettingsManager {
             .getBoolean(CACHE_KEY_HI_RES_LONG_PRESS_HINT_SHOWN, false)
     }
 
-    //  [新增] --- 默认播放速度 / 记忆上次速度 ---
+    //  播放器菜单、双指调速与默认速度共用倍速列表；长按速度独立设置
+    fun getPlaybackSpeedOptions(context: Context): Flow<List<Float>> =
+        PlayerSettingsStore.getPlaybackSpeedOptions(context)
+
+    suspend fun addPlaybackSpeedOption(context: Context, speed: Float) {
+        PlayerSettingsStore.addPlaybackSpeedOption(context, speed)
+    }
+
+    suspend fun removePlaybackSpeedOption(context: Context, speed: Float) {
+        PlayerSettingsStore.removePlaybackSpeedOption(context, speed)
+    }
+
     fun getDefaultPlaybackSpeed(context: Context): Flow<Float> =
         PlayerSettingsStore.getDefaultPlaybackSpeed(context)
 
@@ -2229,6 +3318,7 @@ object SettingsManager {
         PlayerSettingsStore.getLastPlaybackSpeed(context)
 
     suspend fun setLastPlaybackSpeed(context: Context, speed: Float) {
+        if (!ContentDisplayPreferences.rememberPlayerAdjustments(context).first()) return
         PlayerSettingsStore.setLastPlaybackSpeed(context, speed)
     }
 
@@ -2249,13 +3339,23 @@ object SettingsManager {
     fun getPreferredPlayerVolumeSync(context: Context): Float =
         PlayerSettingsStore.getPreferredPlayerVolumeSync(context)
 
+    fun getPlayerInsightMode(context: Context): Flow<PlayerSettingsStore.PlayerInsightMode> =
+        PlayerSettingsStore.getPlayerInsightMode(context)
+
+    suspend fun setPlayerInsightMode(context: Context, mode: PlayerSettingsStore.PlayerInsightMode) {
+        PlayerSettingsStore.setPlayerInsightMode(context, mode)
+    }
+
+    fun getPlayerInsightModeSync(context: Context): PlayerSettingsStore.PlayerInsightMode =
+        PlayerSettingsStore.getPlayerInsightModeSync(context)
+
     //  [新增] --- 主题色索引 (默认 0 = 经典蓝) ---
     fun getThemeColorIndex(context: Context): Flow<Int> = context.settingsDataStore.data
         .map { preferences -> normalizeThemeColorIndex(preferences[KEY_THEME_COLOR_INDEX] ?: 0) }
 
     suspend fun setThemeColorIndex(context: Context, index: Int) {
         context.settingsDataStore.edit { preferences -> 
-            preferences[KEY_THEME_COLOR_INDEX] = normalizeThemeColorIndex(index)
+            updateMd3ColorSelection(preferences, Md3ColorSource.CUSTOM, presetIndex = index)
         }
     }
     
@@ -2271,13 +3371,50 @@ object SettingsManager {
         }
     }
 
+    fun getScreenDisplayModeId(context: Context): Flow<Int> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_SCREEN_DISPLAY_MODE_ID] ?: 0 }
+
+    suspend fun setScreenDisplayModeId(context: Context, modeId: Int) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_SCREEN_DISPLAY_MODE_ID] = modeId.coerceAtLeast(0)
+        }
+    }
+
     //  [新增] --- 网格列数 ---
     fun getGridColumnCount(context: Context): Flow<Int> = context.settingsDataStore.data
         .map { preferences -> preferences[KEY_GRID_COLUMN_COUNT] ?: 0 }
 
     suspend fun setGridColumnCount(context: Context, count: Int) {
-        context.settingsDataStore.edit { preferences -> 
-            preferences[KEY_GRID_COLUMN_COUNT] = count
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_GRID_COLUMN_COUNT] = count.coerceIn(0, 7)
+        }
+    }
+
+    //  窄屏（折叠屏外屏/手机竖屏）独立列数记忆；内屏/平板写 setGridColumnCount。
+    suspend fun setGridColumnCountCompact(context: Context, count: Int) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_GRID_COLUMN_COUNT_COMPACT] = count.coerceIn(0, 4)
+        }
+    }
+
+    suspend fun setGridColumnCustomizationEnabled(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_GRID_COLUMN_CUSTOMIZATION_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setGridColumnsSharedAcrossPages(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_GRID_COLUMNS_SHARED_ACROSS_PAGES] = enabled
+        }
+    }
+
+    fun getPinchToChangeGridColumnsEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_PINCH_TO_CHANGE_GRID_COLUMNS_ENABLED] ?: true }
+
+    suspend fun setPinchToChangeGridColumnsEnabled(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_PINCH_TO_CHANGE_GRID_COLUMNS_ENABLED] = enabled
         }
     }
 
@@ -2299,7 +3436,7 @@ object SettingsManager {
     fun getHomeFeedCardStyle(context: Context): Flow<HomeFeedCardStyle> =
         context.settingsDataStore.data.map { preferences ->
             HomeFeedCardStyle.fromValue(
-                preferences[KEY_HOME_FEED_CARD_STYLE] ?: HomeFeedCardStyle.OFFICIAL.value
+                preferences[KEY_HOME_FEED_CARD_STYLE] ?: HomeFeedCardStyle.BILIPAI.value
             )
         }
 
@@ -2313,7 +3450,7 @@ object SettingsManager {
         context.settingsDataStore.data.map { preferences ->
             CommonListHeaderCollapseMode.fromValue(
                 preferences[KEY_COMMON_LIST_HEADER_COLLAPSE_MODE]
-                    ?: CommonListHeaderCollapseMode.SHOW_ON_REVERSE_SCROLL.value
+                    ?: CommonListHeaderCollapseMode.SHOW_AT_TOP_ONLY.value
             )
         }
 
@@ -2328,7 +3465,7 @@ object SettingsManager {
 
     fun getHomeHeroCarouselEnabled(context: Context): Flow<Boolean> =
         context.settingsDataStore.data.map { preferences ->
-            preferences[KEY_HOME_HERO_CAROUSEL_ENABLED] ?: true
+            preferences[KEY_HOME_HERO_CAROUSEL_ENABLED] ?: false
         }
 
     suspend fun setHomeHeroCarouselEnabled(context: Context, value: Boolean) {
@@ -2355,13 +3492,126 @@ object SettingsManager {
     suspend fun setCardAnimationEnabled(context: Context, value: Boolean) {
         context.settingsDataStore.edit { preferences -> preferences[KEY_CARD_ANIMATION_ENABLED] = value }
     }
+
+    fun getMaidLottieAnimationEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_MAID_LOTTIE_ANIMATION_ENABLED] ?: true }
+
+    suspend fun setMaidLottieAnimationEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_MAID_LOTTIE_ANIMATION_ENABLED] = value
+        }
+    }
     
-    //  [新增] --- 卡片过渡动画开关 ---
+    // 卡片展开过渡默认关闭，已保存的用户选择保持优先。
     fun getCardTransitionEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
-        .map { preferences -> preferences[KEY_CARD_TRANSITION_ENABLED] ?: true }  // 默认开启
+        .map { preferences -> preferences[KEY_CARD_TRANSITION_ENABLED] ?: false }
+
+    suspend fun setVideoTransitionMode(context: Context, mode: VideoTransitionMode) {
+        context.settingsDataStore.edit { it[KEY_VIDEO_TRANSITION_MODE] = mode.storageValue }
+    }
 
     suspend fun setCardTransitionEnabled(context: Context, value: Boolean) {
         context.settingsDataStore.edit { preferences -> preferences[KEY_CARD_TRANSITION_ENABLED] = value }
+    }
+
+    /** 默认关闭：稳妥封面过渡；开启后 SDR 可用实时画面双向 morph，HDR 仍不强制 TextureView。 */
+    fun getLiveSurfaceCardTransitionEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data
+            .map { preferences -> preferences[KEY_LIVE_SURFACE_CARD_TRANSITION_ENABLED] ?: false }
+
+    suspend fun setLiveSurfaceCardTransitionEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_LIVE_SURFACE_CARD_TRANSITION_ENABLED] = value
+        }
+    }
+
+    /** 默认开启：SC 浮层跟随弹幕开关显示；关闭后即使弹幕开启也不再弹出 SC 卡片。 */
+    fun getLiveSuperChatPanelEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data.map { it[KEY_LIVE_SUPER_CHAT_PANEL_ENABLED] ?: true }
+
+    suspend fun setLiveSuperChatPanelEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { it[KEY_LIVE_SUPER_CHAT_PANEL_ENABLED] = value }
+    }
+
+    fun getLiveSuperChatFlashEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data
+            .map { preferences -> preferences[KEY_LIVE_SUPER_CHAT_FLASH_ENABLED] ?: true }
+
+    fun getLiveAutoMiniPlayerEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data.map { it[KEY_LIVE_AUTO_MINI_PLAYER_ENABLED] ?: true }
+
+    suspend fun setLiveAutoMiniPlayerEnabled(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { it[KEY_LIVE_AUTO_MINI_PLAYER_ENABLED] = enabled }
+    }
+
+    fun getLiveDanmakuEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data
+            .map { preferences -> preferences[KEY_LIVE_DANMAKU_ENABLED] ?: true }
+
+    suspend fun setLiveDanmakuEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_LIVE_DANMAKU_ENABLED] = value
+        }
+    }
+
+    suspend fun setLiveSuperChatFlashEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_LIVE_SUPER_CHAT_FLASH_ENABLED] = value
+        }
+    }
+
+    fun getLiveSuperChatPersistent(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data.map { preferences ->
+            preferences[KEY_LIVE_SUPER_CHAT_PERSISTENT] ?: false
+        }
+
+    suspend fun setLiveSuperChatPersistent(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_LIVE_SUPER_CHAT_PERSISTENT] = value
+        }
+    }
+
+    fun getLiveSuperChatMaxWidthDp(context: Context): Flow<Int> =
+        context.settingsDataStore.data.map { preferences ->
+            (preferences[KEY_LIVE_SUPER_CHAT_MAX_WIDTH_DP] ?: 360).coerceIn(260, 640)
+        }
+
+    suspend fun setLiveSuperChatMaxWidthDp(context: Context, value: Int) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_LIVE_SUPER_CHAT_MAX_WIDTH_DP] = value.coerceIn(260, 640)
+        }
+    }
+
+    fun getLivePortraitExpandEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data.map { preferences ->
+            preferences[KEY_LIVE_PORTRAIT_EXPAND_ENABLED] ?: false
+        }
+
+    suspend fun setLivePortraitExpandEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_LIVE_PORTRAIT_EXPAND_ENABLED] = value
+        }
+    }
+
+    fun getLiveKeyboardControlsEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data.map { preferences ->
+            preferences[KEY_LIVE_KEYBOARD_CONTROLS_ENABLED] ?: true
+        }
+
+    suspend fun setLiveKeyboardControlsEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_LIVE_KEYBOARD_CONTROLS_ENABLED] = value
+        }
+    }
+
+    fun getVideoTransitionRealtimeBlurEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data
+            .map { preferences -> preferences[KEY_VIDEO_TRANSITION_REALTIME_BLUR_ENABLED] ?: false }
+
+    suspend fun setVideoTransitionRealtimeBlurEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_VIDEO_TRANSITION_REALTIME_BLUR_ENABLED] = value
+        }
     }
 
     fun getVideoSharedTransitionSpeed(context: Context): Flow<VideoSharedTransitionSpeed> =
@@ -2404,6 +3654,13 @@ object SettingsManager {
     }
 
     //  [新增] --- 界面入场动画 master 开关(全 App 统一入场动效) ---
+    fun getGlobalDragFeedbackEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_GLOBAL_DRAG_FEEDBACK_ENABLED] ?: true }
+
+    suspend fun setGlobalDragFeedbackEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences -> preferences[KEY_GLOBAL_DRAG_FEEDBACK_ENABLED] = value }
+    }
+
     fun getUiEntranceAnimationEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
         .map { preferences -> preferences[KEY_UI_ENTRANCE_ANIMATION_ENABLED] ?: true }  // 默认开启
 
@@ -2420,9 +3677,20 @@ object SettingsManager {
         }
     }
 
+    /** 运行时视觉守卫总开关。默认开启；关闭后 Tracker 立即复位并停止采样判定。 */
+    fun getRuntimeVisualGuardEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data
+            .map { preferences -> preferences[KEY_RUNTIME_VISUAL_GUARD_ENABLED] ?: true }
+
+    suspend fun setRuntimeVisualGuardEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_RUNTIME_VISUAL_GUARD_ENABLED] = value
+        }
+    }
+
     //  [新增] --- 视频卡片统计信息贴封面 ---
     fun getCompactVideoStatsOnCover(context: Context): Flow<Boolean> = context.settingsDataStore.data
-        .map { preferences -> preferences[KEY_COMPACT_VIDEO_STATS_ON_COVER] ?: true }
+        .map { preferences -> preferences[KEY_COMPACT_VIDEO_STATS_ON_COVER] ?: false }
 
     suspend fun setCompactVideoStatsOnCover(context: Context, value: Boolean) {
         context.settingsDataStore.edit { preferences -> preferences[KEY_COMPACT_VIDEO_STATS_ON_COVER] = value }
@@ -2438,36 +3706,119 @@ object SettingsManager {
     }
 
     fun getHomeCoverGlassBadgesVisible(context: Context): Flow<Boolean> = context.settingsDataStore.data
-        .map { preferences -> preferences[KEY_HOME_COVER_GLASS_BADGES_VISIBLE] ?: true }
+        .map { preferences ->
+            resolveHomeCardBadgeEffectMode(preferences) != HomeCardBadgeEffectMode.OFF
+        }
 
     suspend fun setHomeCoverGlassBadgesVisible(context: Context, value: Boolean) {
-        context.settingsDataStore.edit { preferences ->
-            preferences[KEY_HOME_COVER_GLASS_BADGES_VISIBLE] = value
-        }
+        setHomeCardBadgeEffectMode(
+            context,
+            if (value) HomeCardBadgeEffectMode.SOFT_GLASS else HomeCardBadgeEffectMode.OFF
+        )
     }
 
     fun getHomeInfoGlassBadgesVisible(context: Context): Flow<Boolean> = context.settingsDataStore.data
-        .map { preferences -> preferences[KEY_HOME_INFO_GLASS_BADGES_VISIBLE] ?: true }
+        .map { preferences ->
+            resolveHomeCardBadgeEffectMode(preferences) != HomeCardBadgeEffectMode.OFF
+        }
 
     suspend fun setHomeInfoGlassBadgesVisible(context: Context, value: Boolean) {
-        context.settingsDataStore.edit { preferences ->
-            preferences[KEY_HOME_INFO_GLASS_BADGES_VISIBLE] = value
+        setHomeCardBadgeEffectMode(
+            context,
+            if (value) HomeCardBadgeEffectMode.SOFT_GLASS else HomeCardBadgeEffectMode.OFF
+        )
+    }
+
+    fun getHomeCardBadgeEffectMode(context: Context): Flow<HomeCardBadgeEffectMode> =
+        context.settingsDataStore.data.map { preferences ->
+            resolveHomeCardBadgeEffectMode(preferences)
         }
+
+    suspend fun setHomeCardBadgeEffectMode(context: Context, mode: HomeCardBadgeEffectMode) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_HOME_CARD_BADGE_EFFECT_MODE] = mode.value
+            val enabled = mode != HomeCardBadgeEffectMode.OFF
+            preferences[KEY_HOME_COVER_GLASS_BADGES_VISIBLE] = enabled
+            preferences[KEY_HOME_INFO_GLASS_BADGES_VISIBLE] = enabled
+        }
+    }
+
+    private fun resolveHomeCardBadgeEffectMode(preferences: Preferences): HomeCardBadgeEffectMode {
+        preferences[KEY_HOME_CARD_BADGE_EFFECT_MODE]?.let { raw ->
+            return HomeCardBadgeEffectMode.fromValue(raw)
+        }
+        // Legacy: both old toggles defaulted true when unset; retired path forced OFF in map.
+        // Prefer soft glass when either legacy flag is still true.
+        val cover = preferences[KEY_HOME_COVER_GLASS_BADGES_VISIBLE]
+        val info = preferences[KEY_HOME_INFO_GLASS_BADGES_VISIBLE]
+        return if (cover == false && info == false) {
+            HomeCardBadgeEffectMode.OFF
+        } else {
+            HomeCardBadgeEffectMode.SOFT_GLASS
+        }
+    }
+
+    fun getHomeCardInfoGlassMode(context: Context): Flow<HomeCardInfoGlassMode> =
+        context.settingsDataStore.data.map { preferences ->
+            resolveHomeCardInfoGlassMode(preferences)
+        }
+
+    suspend fun setHomeCardInfoGlassMode(context: Context, mode: HomeCardInfoGlassMode) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_HOME_CARD_INFO_GLASS_MODE] = mode.value
+        }
+    }
+
+    private fun resolveHomeCardInfoGlassMode(preferences: Preferences): HomeCardInfoGlassMode {
+        preferences[KEY_HOME_CARD_INFO_GLASS_MODE]?.let { raw ->
+            return HomeCardInfoGlassMode.fromValue(raw)
+        }
+        // WIP realtime glass defaults off — do not auto-enable from badge mode.
+        return HomeCardInfoGlassMode.OFF
     }
 
     fun getHomeWallpaperUri(context: Context): Flow<String> = context.settingsDataStore.data
         .map { preferences -> preferences[KEY_HOME_WALLPAPER_URI] ?: "" }
 
+    fun getHomeWallpaperSelection(context: Context): Flow<HomeWallpaperSelection> =
+        context.settingsDataStore.data.map { preferences ->
+            HomeWallpaperSelection(
+                uri = preferences[KEY_HOME_WALLPAPER_URI].orEmpty(),
+                mobileTransform = sanitizeWallpaperTransform(WallpaperTransform(
+                    scale = preferences[KEY_HOME_WALLPAPER_SCALE_MOBILE] ?: 1f,
+                    offsetX = preferences[KEY_HOME_WALLPAPER_OFFSET_X_MOBILE] ?: 0f,
+                    offsetY = preferences[KEY_HOME_WALLPAPER_OFFSET_Y_MOBILE] ?: 0f,
+                )),
+                tabletTransform = sanitizeWallpaperTransform(WallpaperTransform(
+                    scale = preferences[KEY_HOME_WALLPAPER_SCALE_TABLET] ?: 1f,
+                    offsetX = preferences[KEY_HOME_WALLPAPER_OFFSET_X_TABLET] ?: 0f,
+                    offsetY = preferences[KEY_HOME_WALLPAPER_OFFSET_Y_TABLET] ?: 0f,
+                )),
+            )
+        }
+
     suspend fun setHomeWallpaperUri(context: Context, uri: String) {
+        setHomeWallpaperSelection(context, HomeWallpaperSelection(uri = uri))
+    }
+
+    suspend fun setHomeWallpaperSelection(context: Context, selection: HomeWallpaperSelection) {
+        val mobile = sanitizeWallpaperTransform(selection.mobileTransform)
+        val tablet = sanitizeWallpaperTransform(selection.tabletTransform)
         context.settingsDataStore.edit { preferences ->
-            preferences[KEY_HOME_WALLPAPER_URI] = uri
+            preferences[KEY_HOME_WALLPAPER_URI] = selection.uri
+            preferences[KEY_HOME_WALLPAPER_SCALE_MOBILE] = mobile.scale
+            preferences[KEY_HOME_WALLPAPER_OFFSET_X_MOBILE] = mobile.offsetX
+            preferences[KEY_HOME_WALLPAPER_OFFSET_Y_MOBILE] = mobile.offsetY
+            preferences[KEY_HOME_WALLPAPER_SCALE_TABLET] = tablet.scale
+            preferences[KEY_HOME_WALLPAPER_OFFSET_X_TABLET] = tablet.offsetX
+            preferences[KEY_HOME_WALLPAPER_OFFSET_Y_TABLET] = tablet.offsetY
         }
     }
 
     fun getHomeWallpaperEffectMode(context: Context): Flow<HomeWallpaperEffectMode> = context.settingsDataStore.data
         .map { preferences ->
             HomeWallpaperEffectMode.fromValue(
-                preferences[KEY_HOME_WALLPAPER_EFFECT_MODE] ?: HomeWallpaperEffectMode.SOFT_BLUR.value
+                preferences[KEY_HOME_WALLPAPER_EFFECT_MODE] ?: HomeWallpaperEffectMode.OFF.value
             )
         }
 
@@ -2491,11 +3842,92 @@ object SettingsManager {
     }
 
     fun getHomeUpBadgesVisible(context: Context): Flow<Boolean> = context.settingsDataStore.data
-        .map { preferences -> preferences[KEY_HOME_UP_BADGES_VISIBLE] ?: true }
+        .map { preferences -> preferences[KEY_HOME_UP_BADGES_VISIBLE] ?: false }
 
     suspend fun setHomeUpBadgesVisible(context: Context, value: Boolean) {
         context.settingsDataStore.edit { preferences ->
             preferences[KEY_HOME_UP_BADGES_VISIBLE] = value
+        }
+    }
+
+    fun getHomeRefreshTipVisible(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_HOME_REFRESH_TIP_VISIBLE] ?: true }
+
+    fun getHomeRefreshUndoVisible(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_HOME_REFRESH_UNDO_VISIBLE] ?: false }
+
+    suspend fun setHomeRefreshUndoVisible(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_HOME_REFRESH_UNDO_VISIBLE] = value
+        }
+    }
+
+    suspend fun setHomeRefreshTipVisible(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_HOME_REFRESH_TIP_VISIBLE] = value
+        }
+    }
+
+    fun getHomeUpAvatarsVisible(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_HOME_UP_AVATARS_VISIBLE] ?: false }
+
+    suspend fun setHomeUpAvatarsVisible(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_HOME_UP_AVATARS_VISIBLE] = value
+        }
+    }
+
+    fun getHomePublishTimeVisible(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_HOME_PUBLISH_TIME_VISIBLE] ?: true }
+
+    suspend fun setHomePublishTimeVisible(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_HOME_PUBLISH_TIME_VISIBLE] = value
+        }
+    }
+
+    fun getFullVideoCardContentVisible(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_FULL_VIDEO_CARD_CONTENT_VISIBLE] ?: false }
+
+    suspend fun setFullVideoCardContentVisible(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_FULL_VIDEO_CARD_CONTENT_VISIBLE] = value
+        }
+    }
+
+    fun getVideoCardLongPressActionEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_VIDEO_CARD_LONG_PRESS_ACTION_ENABLED] ?: false }
+
+    suspend fun setVideoCardLongPressActionEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_VIDEO_CARD_LONG_PRESS_ACTION_ENABLED] = value
+        }
+    }
+
+    fun getHomeCardDynamicTintEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_HOME_CARD_DYNAMIC_TINT_ENABLED] ?: false }
+
+    suspend fun setHomeCardDynamicTintEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            if (preferences[KEY_HOME_CARD_FROSTED_GLASS_ENABLED] == null) {
+                preferences[KEY_HOME_CARD_FROSTED_GLASS_ENABLED] =
+                    preferences[KEY_HOME_CARD_DYNAMIC_TINT_ENABLED] ?: false
+            }
+            preferences[KEY_HOME_CARD_DYNAMIC_TINT_ENABLED] = value
+        }
+    }
+
+    fun getHomeCardFrostedGlassEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences ->
+            resolveHomeCardFrostedGlassEnabled(
+                storedValue = preferences[KEY_HOME_CARD_FROSTED_GLASS_ENABLED],
+                legacyCombinedValue = preferences[KEY_HOME_CARD_DYNAMIC_TINT_ENABLED],
+            )
+        }
+
+    suspend fun setHomeCardFrostedGlassEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_HOME_CARD_FROSTED_GLASS_ENABLED] = value
         }
     }
 
@@ -2523,18 +3955,26 @@ object SettingsManager {
 
     suspend fun setAppIcon(context: Context, iconKey: String) {
         val normalizedKey = normalizeAppIconKey(iconKey)
-        // 1. Write to DataStore (suspends until persisted)
-        context.settingsDataStore.edit { preferences -> 
-            preferences[KEY_APP_ICON] = normalizedKey
-        }
-        
-        // 2. Write to SharedPreferences synchronously using commit()
-        // This is critical because changing the app icon (activity-alias) often kills the process immediately.
-        // apply() is asynchronous and might not finish before the process dies.
-        val success = context.getSharedPreferences("app_icon_cache", Context.MODE_PRIVATE)
-            .edit().putString("current_icon", normalizedKey).commit()
+        val success = editSettingsAndCommitPrefs(
+            context, "app_icon_cache",
+            editSettings = { this[KEY_APP_ICON] = normalizedKey },
+            editPrefs = { putString("current_icon", normalizedKey) },
+        )
             
         com.android.purebilibili.core.util.Logger.d("SettingsManager", "App icon saved: $iconKey -> $normalizedKey, persisted to prefs: $success")
+    }
+
+    fun getAppIconAppearance(context: Context): Flow<AppIconAppearance> =
+        context.settingsDataStore.data.map { preferences ->
+            resolveAppIconAppearance(preferences[KEY_APP_ICON_APPEARANCE] ?: 0)
+        }
+
+    suspend fun setAppIconAppearance(context: Context, appearance: AppIconAppearance) {
+        editSettingsAndCommitPrefs(
+            context, "app_icon_cache",
+            editSettings = { this[KEY_APP_ICON_APPEARANCE] = appearance.storedValue },
+            editPrefs = { putInt("appearance", appearance.storedValue) },
+        )
     }
     
     //  [新增] --- 开屏壁纸 ---
@@ -2611,6 +4051,23 @@ object SettingsManager {
     fun getSplashRandomEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
         .map { preferences -> preferences[KEY_SPLASH_RANDOM_ENABLED] ?: false }
 
+    fun getStartupAnimationStyle(context: Context): Flow<StartupAnimationStyle> =
+        context.settingsDataStore.data.map { StartupAnimationStyle.fromValue(it[KEY_STARTUP_ANIMATION_STYLE]) }
+
+    fun getStartupAnimationStyleSync(context: Context): StartupAnimationStyle =
+        StartupAnimationStyle.fromValue(
+            context.getSharedPreferences(SPLASH_PREFS, Context.MODE_PRIVATE)
+                .getString(SPLASH_PREFS_KEY_ANIMATION_STYLE, null)
+        )
+
+    suspend fun setStartupAnimationStyle(context: Context, value: StartupAnimationStyle) {
+        editSettingsAndCommitPrefs(
+            context, SPLASH_PREFS,
+            editSettings = { this[KEY_STARTUP_ANIMATION_STYLE] = value.value },
+            editPrefs = { putString(SPLASH_PREFS_KEY_ANIMATION_STYLE, value.value) },
+        )
+    }
+
     fun getSplashIconAnimationEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
         .map { preferences -> preferences[KEY_SPLASH_ICON_ANIMATION_ENABLED] ?: true }
 
@@ -2644,13 +4101,11 @@ object SettingsManager {
     }
 
     suspend fun setSplashIconAnimationEnabled(context: Context, value: Boolean) {
-        context.settingsDataStore.edit { preferences ->
-            preferences[KEY_SPLASH_ICON_ANIMATION_ENABLED] = value
-        }
-        context.getSharedPreferences(SPLASH_PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean(SPLASH_PREFS_KEY_ICON_ANIMATION_ENABLED, value)
-            .commit()
+        editSettingsAndCommitPrefs(
+            context, SPLASH_PREFS,
+            editSettings = { this[KEY_SPLASH_ICON_ANIMATION_ENABLED] = value },
+            editPrefs = { putBoolean(SPLASH_PREFS_KEY_ICON_ANIMATION_ENABLED, value) },
+        )
     }
 
     fun isSplashIconAnimationEnabledSync(context: Context): Boolean {
@@ -2696,12 +4151,42 @@ object SettingsManager {
         )
     }
 
+    fun getAppIconAppearanceSync(context: Context): AppIconAppearance {
+        val storedValue = context.getSharedPreferences("app_icon_cache", Context.MODE_PRIVATE)
+            .getInt("appearance", AppIconAppearance.FOLLOW_SYSTEM.storedValue)
+        return resolveAppIconAppearance(storedValue)
+    }
+
     //  [新增] --- 底部栏样式 ---
     fun getBottomBarFloating(context: Context): Flow<Boolean> = context.settingsDataStore.data
-        .map { preferences -> preferences[KEY_BOTTOM_BAR_FLOATING] ?: true }
+        .map { preferences -> preferences[KEY_BOTTOM_BAR_FLOATING] ?: false }
 
     suspend fun setBottomBarFloating(context: Context, value: Boolean) {
         context.settingsDataStore.edit { preferences -> preferences[KEY_BOTTOM_BAR_FLOATING] = value }
+    }
+
+    fun getNavigationIconCrossScaleEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data.map { preferences ->
+            preferences[KEY_NAVIGATION_ICON_CROSS_SCALE_ENABLED] ?: false
+        }
+
+    suspend fun setNavigationIconCrossScaleEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_NAVIGATION_ICON_CROSS_SCALE_ENABLED] = value
+        }
+    }
+
+    private val searchLandingSectionKeys = listOf(
+        booleanPreferencesKey("search_hot_control_visible"),
+        booleanPreferencesKey("search_history_control_visible"),
+        booleanPreferencesKey("search_discover_control_visible"),
+    )
+
+    fun getSearchLandingSectionVisible(context: Context, index: Int): Flow<Boolean> =
+        context.settingsDataStore.data.map { it[searchLandingSectionKeys[index]] ?: true }
+
+    suspend fun setSearchLandingSectionVisible(context: Context, index: Int, visible: Boolean) {
+        context.settingsDataStore.edit { it[searchLandingSectionKeys[index]] = visible }
     }
 
     fun getSearchHotSectionEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
@@ -2711,11 +4196,28 @@ object SettingsManager {
         context.settingsDataStore.edit { preferences -> preferences[KEY_SEARCH_HOT_SECTION_ENABLED] = value }
     }
 
+    internal fun resolveSearchDiscoverSectionEnabled(preferences: Preferences): Boolean =
+        preferences[KEY_SEARCH_DISCOVER_SECTION_ENABLED] ?: true
+
+    internal fun resolveSearchSuggestionsEnabled(preferences: Preferences): Boolean =
+        preferences[KEY_SEARCH_SUGGESTIONS_ENABLED] ?: true
+
+    fun getSearchSuggestionsEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map(::resolveSearchSuggestionsEnabled)
+
+    suspend fun setSearchSuggestionsEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_SEARCH_SUGGESTIONS_ENABLED] = value
+        }
+    }
+
     fun getSearchDiscoverSectionEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
-        .map { preferences -> preferences[KEY_SEARCH_DISCOVER_SECTION_ENABLED] ?: true }
+        .map(::resolveSearchDiscoverSectionEnabled)
 
     suspend fun setSearchDiscoverSectionEnabled(context: Context, value: Boolean) {
-        context.settingsDataStore.edit { preferences -> preferences[KEY_SEARCH_DISCOVER_SECTION_ENABLED] = value }
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_SEARCH_DISCOVER_SECTION_ENABLED] = value
+        }
     }
     
     //  [新增] --- 底栏显示模式 (0=图标+文字, 1=仅图标, 2=仅文字) ---
@@ -2730,8 +4232,23 @@ object SettingsManager {
     fun getTopTabLabelMode(context: Context): Flow<Int> = context.settingsDataStore.data
         .map { preferences -> preferences[KEY_TOP_TAB_LABEL_MODE] ?: TopTabLabelMode.TEXT_ONLY }
 
+    fun getPartitionSideRailOnRight(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_PARTITION_SIDE_RAIL_ON_RIGHT] ?: false }
+
+    suspend fun setPartitionSideRailOnRight(context: Context, onRight: Boolean) {
+        context.settingsDataStore.edit { preferences -> preferences[KEY_PARTITION_SIDE_RAIL_ON_RIGHT] = onRight }
+    }
+
     suspend fun setTopTabLabelMode(context: Context, value: Int) {
         context.settingsDataStore.edit { preferences -> preferences[KEY_TOP_TAB_LABEL_MODE] = value }
+    }
+
+    fun getHideTopTabs(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_HIDE_TOP_TABS] ?: false }
+        .distinctUntilChanged()
+
+    suspend fun setHideTopTabs(context: Context, hide: Boolean) {
+        context.settingsDataStore.edit { preferences -> preferences[KEY_HIDE_TOP_TABS] = hide }
     }
 
     fun getHomeTopRightAction(context: Context): Flow<HomeTopRightAction> = context.settingsDataStore.data
@@ -2772,6 +4289,13 @@ object SettingsManager {
         }
     }
 
+    suspend fun setTopTabConfiguration(context: Context, order: List<String>, visible: Set<String>) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[KEY_TOP_TAB_ORDER] = order.joinToString(",")
+            prefs[KEY_TOP_TAB_VISIBLE_TABS] = visible.joinToString(",")
+        }
+    }
+
     //  [新增] --- 顶部标签可见项配置 ---
     fun getTopTabVisibleTabs(context: Context): Flow<Set<String>> = context.settingsDataStore.data.map { prefs ->
         val tabsString = prefs[KEY_TOP_TAB_VISIBLE_TABS] ?: DEFAULT_TOP_TAB_VISIBLE
@@ -2784,14 +4308,42 @@ object SettingsManager {
         }
     }
 
+    //  搜索结果页分类栏顺序
+    fun getSearchFilterTabOrder(context: Context): Flow<List<String>> =
+        context.settingsDataStore.data.map { prefs ->
+            val orderString = prefs[KEY_SEARCH_FILTER_TAB_ORDER] ?: DEFAULT_SEARCH_FILTER_TAB_ORDER
+            val effectiveOrder = if (orderString == LEGACY_DEFAULT_SEARCH_FILTER_TAB_ORDER) {
+                DEFAULT_SEARCH_FILTER_TAB_ORDER
+            } else orderString
+            effectiveOrder.split(",").filter { it.isNotBlank() }
+        }
+
+    suspend fun setSearchFilterTabOrder(context: Context, order: List<String>) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[KEY_SEARCH_FILTER_TAB_ORDER] = order.joinToString(",")
+        }
+    }
+
     fun getDynamicTabVisibleTabs(context: Context): Flow<Set<String>> = context.settingsDataStore.data.map { prefs ->
         val tabsString = prefs[KEY_DYNAMIC_TAB_VISIBLE_TABS] ?: DEFAULT_DYNAMIC_TAB_VISIBLE
-        tabsString.split(",").filter { it.isNotBlank() }.toSet()
+        tabsString.split(",").filter { it.isNotBlank() }.map { if (it == "up") "all" else it }.toSet()
     }
 
     suspend fun setDynamicTabVisibleTabs(context: Context, tabs: Set<String>) {
         context.settingsDataStore.edit { prefs ->
             prefs[KEY_DYNAMIC_TAB_VISIBLE_TABS] = tabs.joinToString(",")
+        }
+    }
+
+    /** 动态栏位顺序：id 用逗号连接，缺失的 id 按默认顺序排在后面。 */
+    fun getDynamicTabOrder(context: Context): Flow<List<String>> = context.settingsDataStore.data.map { prefs ->
+        val orderString = prefs[KEY_DYNAMIC_TAB_ORDER] ?: DEFAULT_DYNAMIC_TAB_ORDER
+        orderString.split(",").filter { it.isNotBlank() }.map { if (it == "up") "all" else it }.distinct()
+    }
+
+    suspend fun setDynamicTabOrder(context: Context, order: List<String>) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[KEY_DYNAMIC_TAB_ORDER] = order.joinToString(",")
         }
     }
 
@@ -2806,14 +4358,63 @@ object SettingsManager {
         }
     }
 
-    fun getDynamicAllTabHorizontalUserListVisible(context: Context): Flow<Boolean> =
+    /**
+     *  动态详情图文图片展示
+     * - 0: 展开大图（默认，按正文段落整宽展开）
+     * - 1: 缩略图（九宫格，便于更快看到评论）
+     */
+    enum class DynamicDetailImageLayout(val value: Int, val label: String) {
+        EXPANDED(0, "展开大图"),
+        THUMBNAIL(1, "缩略图");
+
+        companion object {
+            fun fromValue(value: Int): DynamicDetailImageLayout =
+                entries.find { it.value == value } ?: EXPANDED
+        }
+    }
+
+    private const val DYNAMIC_DETAIL_IMAGE_LAYOUT_PREFS = "dynamic_detail_image_layout_cache"
+    private const val CACHE_KEY_DYNAMIC_DETAIL_IMAGE_LAYOUT = "layout"
+
+    @Volatile
+    private var dynamicDetailImageLayoutMemoryCache: DynamicDetailImageLayout? = null
+
+    private fun dynamicDetailImageLayoutPrefs(context: Context) =
+        context.getSharedPreferences(DYNAMIC_DETAIL_IMAGE_LAYOUT_PREFS, Context.MODE_PRIVATE)
+
+    private fun cacheDynamicDetailImageLayout(context: Context, layout: DynamicDetailImageLayout) {
+        if (dynamicDetailImageLayoutMemoryCache == layout) return
+        dynamicDetailImageLayoutMemoryCache = layout
+        dynamicDetailImageLayoutPrefs(context)
+            .edit()
+            .putInt(CACHE_KEY_DYNAMIC_DETAIL_IMAGE_LAYOUT, layout.value)
+            .apply()
+    }
+
+    /**
+     * 同步读取当前图片布局，供详情页首帧使用，避免 DataStore 异步到达前闪一下默认展开布局。
+     */
+    fun peekDynamicDetailImageLayout(context: Context): DynamicDetailImageLayout {
+        dynamicDetailImageLayoutMemoryCache?.let { return it }
+        val layout = DynamicDetailImageLayout.fromValue(
+            dynamicDetailImageLayoutPrefs(context)
+                .getInt(CACHE_KEY_DYNAMIC_DETAIL_IMAGE_LAYOUT, DynamicDetailImageLayout.EXPANDED.value)
+        )
+        dynamicDetailImageLayoutMemoryCache = layout
+        return layout
+    }
+
+    fun getDynamicDetailImageLayout(context: Context): Flow<DynamicDetailImageLayout> =
         context.settingsDataStore.data.map { prefs ->
-            prefs[KEY_DYNAMIC_ALL_TAB_HORIZONTAL_USER_LIST_VISIBLE] ?: false
+            DynamicDetailImageLayout.fromValue(prefs[KEY_DYNAMIC_DETAIL_IMAGE_LAYOUT] ?: 0)
+        }.onEach { layout ->
+            cacheDynamicDetailImageLayout(context, layout)
         }
 
-    suspend fun setDynamicAllTabHorizontalUserListVisible(context: Context, visible: Boolean) {
+    suspend fun setDynamicDetailImageLayout(context: Context, layout: DynamicDetailImageLayout) {
+        cacheDynamicDetailImageLayout(context, layout)
         context.settingsDataStore.edit { prefs ->
-            prefs[KEY_DYNAMIC_ALL_TAB_HORIZONTAL_USER_LIST_VISIBLE] = visible
+            prefs[KEY_DYNAMIC_DETAIL_IMAGE_LAYOUT] = layout.value
         }
     }
 
@@ -2832,8 +4433,27 @@ object SettingsManager {
         }
     }
 
-    fun getLiveFavoriteTags(context: Context): Flow<List<LiveFavoriteTagEntry>> = context.settingsDataStore.data.map { prefs ->
-        val raw = prefs[KEY_LIVE_FAVORITE_TAGS].orEmpty()
+    /**
+     * 动态顶栏操作坞（布局切换/发布/折叠开关）是否处于折叠态。
+     * 默认展开；折叠后跨冷启动与版本更新保持。
+     */
+    fun getDynamicTopActionsCollapsed(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data.map { prefs ->
+            prefs[KEY_DYNAMIC_TOP_ACTIONS_COLLAPSED] ?: false
+        }
+
+    suspend fun setDynamicTopActionsCollapsed(context: Context, collapsed: Boolean) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[KEY_DYNAMIC_TOP_ACTIONS_COLLAPSED] = collapsed
+        }
+    }
+
+    private fun liveFavoriteTagsKey(accountMid: Long?) = if ((accountMid ?: 0L) > 0L) {
+        stringPreferencesKey("live_favorite_tags_$accountMid")
+    } else KEY_LIVE_FAVORITE_TAGS
+
+    fun getLiveFavoriteTags(context: Context, accountMid: Long? = null): Flow<List<LiveFavoriteTagEntry>> = context.settingsDataStore.data.map { prefs ->
+        val raw = prefs[liveFavoriteTagsKey(accountMid)].orEmpty()
         if (raw.isBlank()) {
             emptyList()
         } else {
@@ -2841,13 +4461,12 @@ object SettingsManager {
         }
     }
 
-    suspend fun setLiveFavoriteTags(context: Context, tags: List<LiveFavoriteTagEntry>) {
+    suspend fun setLiveFavoriteTags(context: Context, tags: List<LiveFavoriteTagEntry>, accountMid: Long? = null) {
         val normalized = tags
             .filter { it.parentAreaId > 0 && it.areaId >= 0 && it.title.isNotBlank() }
             .distinctBy { it.parentAreaId to it.areaId }
-            .take(12)
         context.settingsDataStore.edit { prefs ->
-            prefs[KEY_LIVE_FAVORITE_TAGS] = if (normalized.isEmpty()) {
+            prefs[liveFavoriteTagsKey(accountMid)] = if (normalized.isEmpty()) {
                 ""
             } else {
                 Json.encodeToString(normalized)
@@ -2873,6 +4492,51 @@ object SettingsManager {
             } else {
                 HomeHeaderBlurMode.ALWAYS_OFF.value
             }
+            if (value) {
+                preferences[KEY_PROGRESSIVE_TOP_BLUR_ENABLED] = false
+            }
+        }
+    }
+
+    fun getProgressiveTopBlurEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences ->
+            preferences[KEY_PROGRESSIVE_TOP_BLUR_ENABLED] ?: false
+        }
+
+    suspend fun setProgressiveTopBlurEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_PROGRESSIVE_TOP_BLUR_ENABLED] = value
+            if (value) {
+                preferences[KEY_HEADER_BLUR_ENABLED] = false
+                preferences[KEY_HOME_HEADER_BLUR_MODE] = HomeHeaderBlurMode.ALWAYS_OFF.value
+            }
+        }
+    }
+
+    fun getProgressiveTopFadeEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences ->
+            preferences[KEY_PROGRESSIVE_TOP_FADE_ENABLED] ?: true
+        }
+
+    suspend fun setProgressiveTopFadeEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_PROGRESSIVE_TOP_FADE_ENABLED] = value
+        }
+    }
+
+    suspend fun setTopBarVisualEffects(
+        context: Context,
+        headerBlurEnabled: Boolean,
+        progressiveTopBlurEnabled: Boolean
+    ) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_HEADER_BLUR_ENABLED] = headerBlurEnabled
+            preferences[KEY_PROGRESSIVE_TOP_BLUR_ENABLED] = progressiveTopBlurEnabled
+            preferences[KEY_HOME_HEADER_BLUR_MODE] = if (headerBlurEnabled) {
+                HomeHeaderBlurMode.FOLLOW_PRESET.value
+            } else {
+                HomeHeaderBlurMode.ALWAYS_OFF.value
+            }
         }
     }
 
@@ -2891,7 +4555,7 @@ object SettingsManager {
         }
     }
     
-    //  首页顶部栏自动收缩：兼容旧布尔开关，同时支持搜索行/标签页独立折叠。
+    // 首页顶栏保存收起范围及仅回顶恢复策略，保留旧模式数值。
     fun getHomeHeaderCollapseMode(context: Context): Flow<HomeHeaderCollapseMode> =
         context.settingsDataStore.data.map { preferences ->
             preferences[KEY_HOME_HEADER_COLLAPSE_MODE]
@@ -2908,6 +4572,30 @@ object SettingsManager {
         }
     }
 
+    fun getShowPgcTimeline(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data.map { preferences ->
+            preferences[KEY_SHOW_PGC_TIMELINE] ?: true
+        }
+
+    suspend fun setShowPgcTimeline(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_SHOW_PGC_TIMELINE] = value
+        }
+    }
+
+    fun getHomeBarHideType(context: Context): Flow<HomeBarHideType> =
+        context.settingsDataStore.data.map { preferences ->
+            HomeBarHideType.fromValue(
+                preferences[KEY_HOME_BAR_HIDE_TYPE] ?: HomeBarHideType.SYNC.value
+            )
+        }
+
+    suspend fun setHomeBarHideType(context: Context, type: HomeBarHideType) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_HOME_BAR_HIDE_TYPE] = type.value
+        }
+    }
+
     fun getHeaderCollapseEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
         .map { preferences ->
             preferences[KEY_HOME_HEADER_COLLAPSE_MODE]
@@ -2917,16 +4605,15 @@ object SettingsManager {
         }
 
     suspend fun setHeaderCollapseEnabled(context: Context, value: Boolean) {
-        context.settingsDataStore.edit { preferences ->
-            preferences[KEY_HEADER_COLLAPSE_ENABLED] = value
-            preferences[KEY_HOME_HEADER_COLLAPSE_MODE] =
-                HomeHeaderCollapseMode.fromLegacyBoolean(value).value
-        }
+        setHomeHeaderCollapseMode(
+            context,
+            resolveHomeHeaderCollapseModeForTopBarHide(value),
+        )
     }
     
     //  [新增] --- 底栏模糊效果 ---
     fun getBottomBarBlurEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
-        .map { preferences -> preferences[KEY_BOTTOM_BAR_BLUR_ENABLED] ?: true }
+        .map { preferences -> preferences[KEY_BOTTOM_BAR_BLUR_ENABLED] ?: false }
 
     suspend fun setBottomBarBlurEnabled(context: Context, value: Boolean) {
         context.settingsDataStore.edit { preferences -> preferences[KEY_BOTTOM_BAR_BLUR_ENABLED] = value }
@@ -2995,23 +4682,28 @@ object SettingsManager {
         }
     }
 
-    fun getBottomBarInteractiveHighlightEnabled(context: Context): Flow<Boolean> =
-        context.settingsDataStore.data.map { preferences ->
-            preferences[KEY_BOTTOM_BAR_INTERACTIVE_HIGHLIGHT_ENABLED] ?: false
-        }
-
-    suspend fun setBottomBarInteractiveHighlightEnabled(context: Context, value: Boolean) {
-        context.settingsDataStore.edit { preferences ->
-            preferences[KEY_BOTTOM_BAR_INTERACTIVE_HIGHLIGHT_ENABLED] = value
-        }
-    }
-
     fun getBottomBarSearchEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
         .map { preferences -> preferences[KEY_BOTTOM_BAR_SEARCH_ENABLED] ?: false }
+
+    fun getKeepHomeTopSearchWithBottomSearch(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { it[KEY_KEEP_HOME_TOP_SEARCH] ?: false }
+
+    suspend fun setKeepHomeTopSearchWithBottomSearch(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { it[KEY_KEEP_HOME_TOP_SEARCH] = value }
+    }
 
     suspend fun setBottomBarSearchEnabled(context: Context, value: Boolean) {
         context.settingsDataStore.edit { preferences ->
             preferences[KEY_BOTTOM_BAR_SEARCH_ENABLED] = value
+        }
+    }
+
+    fun getListScopedSearchEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_LIST_SCOPED_SEARCH_ENABLED] ?: false }
+
+    suspend fun setListScopedSearchEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_LIST_SCOPED_SEARCH_ENABLED] = value
         }
     }
 
@@ -3033,6 +4725,25 @@ object SettingsManager {
         }
     }
 
+    fun getBottomBarScrollCompactEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data.map { it[KEY_BOTTOM_BAR_SCROLL_COMPACT_ENABLED] ?: true }
+
+    suspend fun setBottomBarScrollCompactEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { it[KEY_BOTTOM_BAR_SCROLL_COMPACT_ENABLED] = value }
+    }
+
+    fun getLinkedDockMergeOnScrollEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data
+            .map { preferences ->
+                preferences[KEY_LINKED_DOCK_MERGE_ON_SCROLL_ENABLED] ?: true
+            }
+
+    suspend fun setLinkedDockMergeOnScrollEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_LINKED_DOCK_MERGE_ON_SCROLL_ENABLED] = value
+        }
+    }
+
     fun getBottomBarSearchLayoutMode(context: Context): Flow<BottomBarSearchLayoutMode> =
         context.settingsDataStore.data
             .map { preferences ->
@@ -3051,68 +4762,192 @@ object SettingsManager {
         }
     }
 
+    fun getLiquidGlassScenes(context: Context): Flow<com.android.purebilibili.core.ui.AppLiquidGlassSettings> =
+        context.settingsDataStore.data.map {
+            com.android.purebilibili.core.ui.AppLiquidGlassSettings(it[KEY_LIQUID_GLASS_SCENES_DISABLED] ?: 0)
+        }
+
+    suspend fun setLiquidGlassSceneEnabled(context: Context, scene: com.android.purebilibili.core.ui.AppLiquidGlassScene, enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            val current = com.android.purebilibili.core.ui.AppLiquidGlassSettings(preferences[KEY_LIQUID_GLASS_SCENES_DISABLED] ?: 0)
+            preferences[KEY_LIQUID_GLASS_SCENES_DISABLED] = current.withEnabled(scene, enabled).disabledMask
+        }
+    }
+
     fun getAndroidNativeLiquidGlassEnabled(context: Context): Flow<Boolean> =
         context.settingsDataStore.data
             .map { preferences ->
                 preferences[KEY_ANDROID_NATIVE_LIQUID_GLASS_ENABLED]
-                    ?: preferences[KEY_LEGACY_ANDROID_NATIVE_TOP_TAB_LIQUID_GLASS_ENABLED]
-                    ?: false
+                    ?: true
             }
+
+    fun getLiquidControlsUseThemeColor(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data.map { it[KEY_LIQUID_CONTROLS_USE_THEME_COLOR] ?: false }
+
+    fun getLiquidSwitchThumbMode(context: Context): Flow<com.android.purebilibili.core.ui.LiquidSwitchThumbMode> =
+        context.settingsDataStore.data.map { preferences ->
+            com.android.purebilibili.core.ui.LiquidSwitchThumbMode.entries.firstOrNull {
+                it.name == preferences[KEY_LIQUID_SWITCH_THUMB_MODE]
+            } ?: com.android.purebilibili.core.ui.LiquidSwitchThumbMode.THEME
+        }
+
+    suspend fun setLiquidSwitchThumbMode(context: Context, value: com.android.purebilibili.core.ui.LiquidSwitchThumbMode) {
+        context.settingsDataStore.edit { it[KEY_LIQUID_SWITCH_THUMB_MODE] = value.name }
+    }
+
+    suspend fun setLiquidControlsUseThemeColor(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { it[KEY_LIQUID_CONTROLS_USE_THEME_COLOR] = value }
+    }
 
     suspend fun setAndroidNativeLiquidGlassEnabled(context: Context, value: Boolean) {
         context.settingsDataStore.edit { preferences ->
             preferences[KEY_ANDROID_NATIVE_LIQUID_GLASS_ENABLED] = value
+            if (value) {
+                preferences[KEY_BOTTOM_BAR_BLUR_ENABLED] = false
+                preferences[KEY_HEADER_BLUR_ENABLED] = false
+                preferences[KEY_HOME_HEADER_BLUR_MODE] = HomeHeaderBlurMode.ALWAYS_OFF.value
+            }
         }
     }
+
     
     fun getLiquidGlassStyle(context: Context): Flow<LiquidGlassStyle> = context.settingsDataStore.data
-        .map { FIXED_LIQUID_GLASS_STYLE }
+        .map { preferences ->
+            LiquidGlassStyle.fromValue(
+                preferences[KEY_LIQUID_GLASS_STYLE] ?: LiquidGlassStyle.SUKISU.value
+            )
+        }
 
     suspend fun setLiquidGlassStyle(context: Context, style: LiquidGlassStyle) {
         context.settingsDataStore.edit { preferences ->
-            preferences[KEY_LIQUID_GLASS_STYLE] = FIXED_LIQUID_GLASS_STYLE.value
-            preferences[KEY_LIQUID_GLASS_MODE] = FIXED_LIQUID_GLASS_MODE.value
-            preferences[KEY_LIQUID_GLASS_STRENGTH] = FIXED_LIQUID_GLASS_STRENGTH
-            preferences[KEY_LIQUID_GLASS_PROGRESS] = FIXED_LIQUID_GLASS_PROGRESS
+            val mode = resolveLegacyLiquidGlassMode(style)
+            val strength = resolveDefaultLiquidGlassStrength(mode)
+            preferences[KEY_LIQUID_GLASS_STYLE] = style.value
+            preferences[KEY_LIQUID_GLASS_MODE] = mode.value
+            preferences[KEY_LIQUID_GLASS_STRENGTH] = strength
+            preferences[KEY_LIQUID_GLASS_PROGRESS] = resolveLegacyLiquidGlassProgress(mode, strength)
         }
     }
 
     fun getLiquidGlassMode(context: Context): Flow<LiquidGlassMode> = context.settingsDataStore.data
-        .map { FIXED_LIQUID_GLASS_MODE }
+        .map { preferences ->
+            preferences[KEY_LIQUID_GLASS_MODE]
+                ?.let(LiquidGlassMode::fromValue)
+                ?: resolveLegacyLiquidGlassMode(
+                    LiquidGlassStyle.fromValue(
+                        preferences[KEY_LIQUID_GLASS_STYLE] ?: LiquidGlassStyle.SUKISU.value
+                    )
+                )
+        }
 
     suspend fun setLiquidGlassMode(context: Context, mode: LiquidGlassMode) {
         context.settingsDataStore.edit { preferences ->
-            preferences[KEY_LIQUID_GLASS_MODE] = FIXED_LIQUID_GLASS_MODE.value
-            preferences[KEY_LIQUID_GLASS_STRENGTH] = FIXED_LIQUID_GLASS_STRENGTH
-            preferences[KEY_LIQUID_GLASS_PROGRESS] = FIXED_LIQUID_GLASS_PROGRESS
-            preferences[KEY_LIQUID_GLASS_STYLE] = FIXED_LIQUID_GLASS_STYLE.value
+            val strength = normalizeLiquidGlassStrength(
+                preferences[KEY_LIQUID_GLASS_STRENGTH] ?: resolveDefaultLiquidGlassStrength(mode)
+            )
+            val progress = resolveLegacyLiquidGlassProgress(mode, strength)
+            preferences[KEY_LIQUID_GLASS_MODE] = mode.value
+            preferences[KEY_LIQUID_GLASS_STRENGTH] = strength
+            preferences[KEY_LIQUID_GLASS_PROGRESS] = progress
+            preferences[KEY_LIQUID_GLASS_STYLE] = resolveLegacyLiquidGlassStyleFromProgress(progress).value
         }
     }
 
     fun getLiquidGlassStrength(context: Context): Flow<Float> = context.settingsDataStore.data
-        .map { FIXED_LIQUID_GLASS_STRENGTH }
+        .map { preferences ->
+            val mode = preferences[KEY_LIQUID_GLASS_MODE]
+                ?.let(LiquidGlassMode::fromValue)
+                ?: LiquidGlassMode.BALANCED
+            normalizeLiquidGlassStrength(
+                preferences[KEY_LIQUID_GLASS_STRENGTH]
+                    ?: resolveDefaultLiquidGlassStrength(mode)
+            )
+        }
 
     suspend fun setLiquidGlassStrength(context: Context, strength: Float) {
         context.settingsDataStore.edit { preferences ->
-            preferences[KEY_LIQUID_GLASS_STRENGTH] = FIXED_LIQUID_GLASS_STRENGTH
-            preferences[KEY_LIQUID_GLASS_PROGRESS] = FIXED_LIQUID_GLASS_PROGRESS
-            preferences[KEY_LIQUID_GLASS_MODE] = FIXED_LIQUID_GLASS_MODE.value
-            preferences[KEY_LIQUID_GLASS_STYLE] = FIXED_LIQUID_GLASS_STYLE.value
+            val normalizedStrength = normalizeLiquidGlassStrength(strength)
+            val mode = preferences[KEY_LIQUID_GLASS_MODE]
+                ?.let(LiquidGlassMode::fromValue)
+                ?: LiquidGlassMode.BALANCED
+            val progress = resolveLegacyLiquidGlassProgress(mode, normalizedStrength)
+            preferences[KEY_LIQUID_GLASS_STRENGTH] = normalizedStrength
+            preferences[KEY_LIQUID_GLASS_PROGRESS] = progress
+            preferences[KEY_LIQUID_GLASS_MODE] = mode.value
+            preferences[KEY_LIQUID_GLASS_STYLE] = resolveLegacyLiquidGlassStyleFromProgress(progress).value
         }
     }
 
     fun getLiquidGlassProgress(context: Context): Flow<Float> = context.settingsDataStore.data
-        .map { FIXED_LIQUID_GLASS_PROGRESS }
+        .map { preferences ->
+            resolveStoredLiquidGlassProgress(
+                progress = preferences[KEY_LIQUID_GLASS_PROGRESS],
+                legacyModeValue = preferences[KEY_LIQUID_GLASS_MODE],
+                legacyStrength = preferences[KEY_LIQUID_GLASS_STRENGTH],
+                legacyStyleValue = preferences[KEY_LIQUID_GLASS_STYLE],
+            )
+        }
 
     suspend fun setLiquidGlassProgress(context: Context, progress: Float) {
         context.settingsDataStore.edit { preferences ->
-            preferences[KEY_LIQUID_GLASS_PROGRESS] = FIXED_LIQUID_GLASS_PROGRESS
-            preferences[KEY_LIQUID_GLASS_MODE] = FIXED_LIQUID_GLASS_MODE.value
-            preferences[KEY_LIQUID_GLASS_STRENGTH] = FIXED_LIQUID_GLASS_STRENGTH
-            preferences[KEY_LIQUID_GLASS_STYLE] = FIXED_LIQUID_GLASS_STYLE.value
+            val normalizedProgress = normalizeLiquidGlassProgress(progress)
+            preferences[KEY_LIQUID_GLASS_PROGRESS] = normalizedProgress
+            preferences[KEY_LIQUID_GLASS_MODE] = resolveLiquidGlassModeFromProgress(normalizedProgress).value
+            preferences[KEY_LIQUID_GLASS_STRENGTH] = resolveLiquidGlassStrengthFromProgress(normalizedProgress)
+            preferences[KEY_LIQUID_GLASS_STYLE] = resolveLegacyLiquidGlassStyleFromProgress(normalizedProgress).value
         }
     }
-    
+
+    fun getLiquidGlassPreviewImageUri(context: Context): Flow<String?> =
+        context.settingsDataStore.data.map { preferences ->
+            preferences[KEY_LIQUID_GLASS_PREVIEW_IMAGE_URI]?.takeIf(String::isNotBlank)
+        }
+
+    suspend fun setLiquidGlassPreviewImageUri(context: Context, uri: String?) {
+        context.settingsDataStore.edit { preferences ->
+            val normalizedUri = uri?.trim()?.takeIf(String::isNotEmpty)
+            if (normalizedUri == null) {
+                preferences.remove(KEY_LIQUID_GLASS_PREVIEW_IMAGE_URI)
+            } else {
+                preferences[KEY_LIQUID_GLASS_PREVIEW_IMAGE_URI] = normalizedUri
+            }
+        }
+    }
+
+    fun getLiquidGlassAdvancedSettings(context: Context): Flow<LiquidGlassAdvancedSettings> =
+        context.settingsDataStore.data.map { preferences ->
+            resolveLiquidGlassAdvancedSettings(
+                presetValue = preferences[KEY_LIQUID_GLASS_ADVANCED_PRESET],
+                progressiveBlurRadius = preferences[KEY_LIQUID_GLASS_PROGRESSIVE_BLUR_RADIUS],
+                progressiveBlurExtent = preferences[KEY_LIQUID_GLASS_PROGRESSIVE_BLUR_EXTENT],
+                progressiveBlurCurve = preferences[KEY_LIQUID_GLASS_PROGRESSIVE_BLUR_CURVE],
+                contentReadability = preferences[KEY_LIQUID_GLASS_CONTENT_READABILITY],
+                chromaticAberration = preferences[KEY_LIQUID_GLASS_CHROMATIC_ABERRATION],
+                contentDistortion = preferences[KEY_LIQUID_GLASS_CONTENT_DISTORTION],
+            )
+        }
+
+    suspend fun setLiquidGlassAdvancedSettings(
+        context: Context,
+        settings: LiquidGlassAdvancedSettings,
+    ) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_LIQUID_GLASS_ADVANCED_PRESET] = settings.preset.value
+            preferences[KEY_LIQUID_GLASS_PROGRESSIVE_BLUR_RADIUS] =
+                normalizeLiquidGlassAdvancedValue(settings.progressiveBlurRadius, 0.5f)
+            preferences[KEY_LIQUID_GLASS_PROGRESSIVE_BLUR_EXTENT] =
+                normalizeLiquidGlassAdvancedValue(settings.progressiveBlurExtent, 0.75f)
+            preferences[KEY_LIQUID_GLASS_PROGRESSIVE_BLUR_CURVE] =
+                normalizeLiquidGlassAdvancedValue(settings.progressiveBlurCurve, 0.5f)
+            preferences[KEY_LIQUID_GLASS_CONTENT_READABILITY] =
+                normalizeLiquidGlassAdvancedValue(settings.contentReadability, 0.62f)
+            preferences[KEY_LIQUID_GLASS_CHROMATIC_ABERRATION] =
+                normalizeLiquidGlassAdvancedValue(settings.chromaticAberration, 0.56f)
+            preferences[KEY_LIQUID_GLASS_CONTENT_DISTORTION] =
+                normalizeLiquidGlassAdvancedValue(settings.contentDistortion, 0.45f)
+        }
+    }
+
     //  [修复] --- 模糊强度 (THIN, THICK, APPLE_DOCK) ---
     fun getBlurIntensity(context: Context): Flow<BlurIntensity> = context.settingsDataStore.data
         .map { preferences ->
@@ -3148,6 +4983,7 @@ object SettingsManager {
             "live" -> "LIVE"
             "watchlater", "watch_later" -> "WATCHLATER"
             "settings" -> "SETTINGS"
+            "plugins", "plugin", "plugin_center" -> "PLUGINS"
             else -> id.uppercase()
         }
     }
@@ -3167,6 +5003,9 @@ object SettingsManager {
     fun getBottomBarItemColors(context: Context): Flow<Map<String, Int>> = context.settingsDataStore.data
         .map { preferences -> parseBottomBarItemColors(preferences[KEY_BOTTOM_BAR_ITEM_COLORS] ?: "") }
 
+    fun getBottomBarItemLabels(context: Context): Flow<Map<String, String>> =
+        NavigationSettingsStore.observeBottomBarItemLabels(context)
+
     suspend fun setBlurIntensity(context: Context, intensity: BlurIntensity) {
         context.settingsDataStore.edit { preferences -> 
             preferences[KEY_BLUR_INTENSITY] = intensity.name
@@ -3176,7 +5015,8 @@ object SettingsManager {
     // ==========  弹幕设置 ==========
     
     private const val DANMAKU_DEFAULTS_VERSION = 5
-    private const val HOME_VISUAL_DEFAULTS_VERSION = 1
+    // v4: restore navigation icon cross-scale as the default without resetting other visual choices.
+    private const val HOME_VISUAL_DEFAULTS_VERSION = 4
     private const val DEFAULT_DANMAKU_OPACITY = DANMAKU_DEFAULT_OPACITY
     private const val DEFAULT_DANMAKU_FONT_SCALE = 1.0f
     private const val DEFAULT_DANMAKU_SPEED = 1.0f
@@ -3186,11 +5026,11 @@ object SettingsManager {
     private const val DEFAULT_DANMAKU_LINE_HEIGHT = 1.6f
     private const val DEFAULT_DANMAKU_SCROLL_DURATION_SECONDS = 7.0f
     private const val DEFAULT_DANMAKU_STATIC_DURATION_SECONDS = 4.0f
-    private const val DEFAULT_DANMAKU_DUPLICATE_MERGE_WINDOW_MS = 500
+    private const val DEFAULT_DANMAKU_DUPLICATE_MERGE_WINDOW_MS = 15_000
     private const val DEFAULT_DANMAKU_DUPLICATE_MERGE_COUNT_THRESHOLD = 2
 
     private fun normalizeDanmakuFontWeight(value: Int?): Int {
-        return (value ?: DEFAULT_DANMAKU_FONT_WEIGHT).coerceIn(0, 8)
+        return (value ?: DEFAULT_DANMAKU_FONT_WEIGHT).coerceIn(1, 9)
     }
 
     private fun normalizeDanmakuStrokeWidth(value: Float?): Float {
@@ -3219,7 +5059,7 @@ object SettingsManager {
 
     private fun normalizeDanmakuDuplicateMergeWindowMs(value: Int?): Int {
         val raw = value ?: DEFAULT_DANMAKU_DUPLICATE_MERGE_WINDOW_MS
-        return raw.coerceIn(100, 3000)
+        return raw.coerceIn(1_000, 15_000)
     }
 
     private fun normalizeDanmakuDuplicateMergeCountThreshold(value: Int?): Int {
@@ -3230,7 +5070,13 @@ object SettingsManager {
     private fun buildScopedDanmakuKeyName(
         scope: DanmakuSettingsScope,
         suffix: String
-    ): String = "danmaku_${scope.keyPrefix}_$suffix"
+    ): String {
+        // Keep the existing fullscreen values authoritative across playback modes.
+        val shared = suffix == "enabled" ||
+            suffix == "line_height" || suffix == "area"
+        val prefix = if (shared) DanmakuSettingsScope.LANDSCAPE.keyPrefix else scope.keyPrefix
+        return "danmaku_${prefix}_$suffix"
+    }
     
     private val KEY_DANMAKU_ENABLED = booleanPreferencesKey("danmaku_enabled")
     private val KEY_DANMAKU_OPACITY = floatPreferencesKey("danmaku_opacity")
@@ -3257,6 +5103,7 @@ object SettingsManager {
     private val KEY_DANMAKU_BLOCK_ATTENTION_COMMANDS =
         booleanPreferencesKey("danmaku_block_attention_commands")
     private val KEY_DANMAKU_SMART_OCCLUSION = booleanPreferencesKey("danmaku_smart_occlusion")
+    private val KEY_DANMAKU_WEIGHT_FILTER_LEVEL = intPreferencesKey("danmaku_weight_filter_level")
     private val KEY_DANMAKU_FULLSCREEN_PANEL_WIDTH_MODE =
         intPreferencesKey("danmaku_fullscreen_panel_width_mode")
     private val KEY_DANMAKU_BLOCK_RULES = stringPreferencesKey("danmaku_block_rules")
@@ -3293,6 +5140,53 @@ object SettingsManager {
         floatPreferencesKey(buildScopedDanmakuKeyName(scope, "line_height"))
     private fun keyDanmakuScrollDurationSeconds(scope: DanmakuSettingsScope) =
         floatPreferencesKey(buildScopedDanmakuKeyName(scope, "scroll_duration_seconds"))
+    private fun keyDanmakuLegacyPortraitEnabled() =
+        booleanPreferencesKey("danmaku_portrait_enabled")
+    private fun keyDanmakuLegacyPortraitLineHeight() =
+        floatPreferencesKey("danmaku_portrait_line_height")
+    private fun keyDanmakuLegacyPortraitArea() =
+        floatPreferencesKey("danmaku_portrait_area")
+
+    private fun <T> readSharedDanmakuPreference(
+        preferences: Preferences,
+        scopeKey: Preferences.Key<T>,
+        legacyPortraitKey: Preferences.Key<T>,
+        legacyKey: Preferences.Key<T>,
+        defaultValue: T
+    ): T {
+        return preferences[scopeKey]
+            ?: preferences[legacyPortraitKey]
+            ?: preferences[legacyKey]
+            ?: defaultValue
+    }
+
+    private fun oppositeDanmakuScope(scope: DanmakuSettingsScope): DanmakuSettingsScope =
+        if (scope == DanmakuSettingsScope.PORTRAIT) DanmakuSettingsScope.LANDSCAPE
+        else DanmakuSettingsScope.PORTRAIT
+
+    private fun readDanmakuFontScale(preferences: Preferences, scope: DanmakuSettingsScope): Float =
+        normalizeDanmakuFontScale(
+            preferences[keyDanmakuFontScale(scope)]
+                ?: preferences[keyDanmakuFontScale(oppositeDanmakuScope(scope))]
+                ?: preferences[KEY_DANMAKU_FONT_SCALE]
+                ?: DEFAULT_DANMAKU_FONT_SCALE
+        )
+
+    internal fun updateDanmakuFontScalePreferences(
+        preferences: MutablePreferences,
+        value: Float,
+        scope: DanmakuSettingsScope,
+    ) {
+        // Old installs may only have a shared/fullscreen value. Freeze the other
+        // orientation's effective value before changing this one, in the same edit.
+        val oppositeScope = oppositeDanmakuScope(scope)
+        val oppositeKey = keyDanmakuFontScale(oppositeScope)
+        if (preferences[oppositeKey] == null) {
+            preferences[oppositeKey] = readDanmakuFontScale(preferences, oppositeScope)
+        }
+        preferences[keyDanmakuFontScale(scope)] = normalizeDanmakuFontScale(value)
+    }
+
     private fun keyDanmakuStaticDurationSeconds(scope: DanmakuSettingsScope) =
         floatPreferencesKey(buildScopedDanmakuKeyName(scope, "static_duration_seconds"))
     private fun keyDanmakuScrollFixedVelocity(scope: DanmakuSettingsScope) =
@@ -3342,9 +5236,10 @@ object SettingsManager {
             defaultValue = ""
         )
         return DanmakuSettings(
-            enabled = readScopedDanmakuPreference(
+            enabled = readSharedDanmakuPreference(
                 preferences = preferences,
                 scopeKey = keyDanmakuEnabled(scope),
+                legacyPortraitKey = keyDanmakuLegacyPortraitEnabled(),
                 legacyKey = KEY_DANMAKU_ENABLED,
                 defaultValue = true
             ),
@@ -3356,14 +5251,7 @@ object SettingsManager {
                     defaultValue = DEFAULT_DANMAKU_OPACITY
                 )
             ),
-            fontScale = normalizeDanmakuFontScale(
-                readScopedDanmakuPreference(
-                    preferences = preferences,
-                    scopeKey = keyDanmakuFontScale(scope),
-                    legacyKey = KEY_DANMAKU_FONT_SCALE,
-                    defaultValue = DEFAULT_DANMAKU_FONT_SCALE
-                )
-            ),
+            fontScale = readDanmakuFontScale(preferences, scope),
             speed = readScopedDanmakuPreference(
                 preferences = preferences,
                 scopeKey = keyDanmakuSpeed(scope),
@@ -3371,9 +5259,10 @@ object SettingsManager {
                 defaultValue = DEFAULT_DANMAKU_SPEED
             ),
             displayArea = normalizeDanmakuDisplayArea(
-                readScopedDanmakuPreference(
+                readSharedDanmakuPreference(
                     preferences = preferences,
                     scopeKey = keyDanmakuArea(scope),
+                    legacyPortraitKey = keyDanmakuLegacyPortraitArea(),
                     legacyKey = KEY_DANMAKU_AREA,
                     defaultValue = DEFAULT_DANMAKU_AREA
                 )
@@ -3395,9 +5284,10 @@ object SettingsManager {
                 )
             ),
             lineHeight = normalizeDanmakuLineHeight(
-                readScopedDanmakuPreference(
+                readSharedDanmakuPreference(
                     preferences = preferences,
                     scopeKey = keyDanmakuLineHeight(scope),
+                    legacyPortraitKey = keyDanmakuLegacyPortraitLineHeight(),
                     legacyKey = KEY_DANMAKU_LINE_HEIGHT,
                     defaultValue = DEFAULT_DANMAKU_LINE_HEIGHT
                 )
@@ -3488,6 +5378,7 @@ object SettingsManager {
                 legacyKey = KEY_DANMAKU_ALLOW_SPECIAL,
                 defaultValue = true
             ),
+            weightFilterLevel = (preferences[KEY_DANMAKU_WEIGHT_FILTER_LEVEL] ?: 0).coerceIn(0, 11),
             hideInteractiveCommands = preferences[KEY_DANMAKU_BLOCK_ATTENTION_COMMANDS] ?: false,
             blockAttentionCommands = preferences[KEY_DANMAKU_BLOCK_ATTENTION_COMMANDS] ?: false,
             smartOcclusion = readScopedDanmakuPreference(
@@ -3496,14 +5387,12 @@ object SettingsManager {
                 legacyKey = KEY_DANMAKU_SMART_OCCLUSION,
                 defaultValue = false
             ),
-            portraitDisplayAreaMode = if (scope == DanmakuSettingsScope.PORTRAIT) {
-                PortraitDanmakuDisplayAreaMode.fromValue(
-                    preferences[keyDanmakuPortraitDisplayAreaMode()]
-                        ?: PortraitDanmakuDisplayAreaMode.VIDEO_VIEWPORT.value
-                )
-            } else {
-                PortraitDanmakuDisplayAreaMode.VIDEO_VIEWPORT
-            },
+            // Profiles distinguish inline/fullscreen; this option is still portrait-only
+            // at the renderer, so preserve it for portrait fullscreen's shared profile.
+            portraitDisplayAreaMode = PortraitDanmakuDisplayAreaMode.fromValue(
+                preferences[keyDanmakuPortraitDisplayAreaMode()]
+                    ?: PortraitDanmakuDisplayAreaMode.SCREEN_TOP.value
+            ),
             fullscreenPanelWidthMode = normalizeDanmakuFullscreenPanelWidthMode(
                 DanmakuPanelWidthMode.fromValue(
                     preferences[KEY_DANMAKU_FULLSCREEN_PANEL_WIDTH_MODE]
@@ -3530,9 +5419,10 @@ object SettingsManager {
         scope: DanmakuSettingsScope = DanmakuSettingsScope.PORTRAIT
     ): Flow<Boolean> = context.settingsDataStore.data
         .map { preferences ->
-            readScopedDanmakuPreference(
+            readSharedDanmakuPreference(
                 preferences = preferences,
                 scopeKey = keyDanmakuEnabled(scope),
+                legacyPortraitKey = keyDanmakuLegacyPortraitEnabled(),
                 legacyKey = KEY_DANMAKU_ENABLED,
                 defaultValue = true
             )
@@ -3580,14 +5470,7 @@ object SettingsManager {
         scope: DanmakuSettingsScope = DanmakuSettingsScope.PORTRAIT
     ): Flow<Float> = context.settingsDataStore.data
         .map { preferences ->
-            normalizeDanmakuFontScale(
-                readScopedDanmakuPreference(
-                    preferences = preferences,
-                    scopeKey = keyDanmakuFontScale(scope),
-                    legacyKey = KEY_DANMAKU_FONT_SCALE,
-                    defaultValue = DEFAULT_DANMAKU_FONT_SCALE
-                )
-            )
+            readDanmakuFontScale(preferences, scope)
         }
 
     suspend fun setDanmakuFontScale(
@@ -3596,7 +5479,7 @@ object SettingsManager {
         scope: DanmakuSettingsScope = DanmakuSettingsScope.PORTRAIT
     ) {
         context.settingsDataStore.edit { preferences ->
-            preferences[keyDanmakuFontScale(scope)] = normalizeDanmakuFontScale(value)
+            updateDanmakuFontScalePreferences(preferences, value, scope)
         }
     }
     
@@ -3624,16 +5507,17 @@ object SettingsManager {
         }
     }
     
-    // --- 弹幕显示区域 (0.25, 0.5, 0.75, 1.0, 默认 0.5) ---
+    // --- 弹幕显示区域 (1/8 至全屏，每档增加 1/8，默认 0.5) ---
     fun getDanmakuArea(
         context: Context,
         scope: DanmakuSettingsScope = DanmakuSettingsScope.PORTRAIT
     ): Flow<Float> = context.settingsDataStore.data
         .map { preferences ->
             normalizeDanmakuDisplayArea(
-                readScopedDanmakuPreference(
+                readSharedDanmakuPreference(
                     preferences = preferences,
                     scopeKey = keyDanmakuArea(scope),
+                    legacyPortraitKey = keyDanmakuLegacyPortraitArea(),
                     legacyKey = KEY_DANMAKU_AREA,
                     defaultValue = DEFAULT_DANMAKU_AREA
                 )
@@ -3715,9 +5599,10 @@ object SettingsManager {
     ): Flow<Float> = context.settingsDataStore.data
         .map { preferences ->
             normalizeDanmakuLineHeight(
-                readScopedDanmakuPreference(
+                readSharedDanmakuPreference(
                     preferences = preferences,
                     scopeKey = keyDanmakuLineHeight(scope),
+                    legacyPortraitKey = keyDanmakuLegacyPortraitLineHeight(),
                     legacyKey = KEY_DANMAKU_LINE_HEIGHT,
                     defaultValue = DEFAULT_DANMAKU_LINE_HEIGHT
                 )
@@ -3876,6 +5761,18 @@ object SettingsManager {
     ) {
         context.settingsDataStore.edit { preferences ->
             preferences[keyDanmakuAllowScroll(scope)] = value
+        }
+    }
+
+    // --- 弹幕智能云屏蔽等级 (0=关闭, 1~10) ---
+    fun getDanmakuWeightFilterLevel(context: Context): Flow<Int> =
+        context.settingsDataStore.data.map { preferences ->
+            (preferences[KEY_DANMAKU_WEIGHT_FILTER_LEVEL] ?: 0).coerceIn(0, 11)
+        }
+
+    suspend fun setDanmakuWeightFilterLevel(context: Context, value: Int) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_DANMAKU_WEIGHT_FILTER_LEVEL] = value.coerceIn(0, 11)
         }
     }
 
@@ -4065,7 +5962,13 @@ object SettingsManager {
         value: String,
         scope: DanmakuSettingsScope = DanmakuSettingsScope.PORTRAIT
     ) {
-        val normalized = parseDanmakuBlockRules(value).joinToString(separator = "\n")
+        val trailingNewlines = value.takeLastWhile { it == '\n' || it == '\r' }
+        val parsed = parseDanmakuBlockRules(value)
+        val normalized = if (parsed.isEmpty()) {
+            if (value.isBlank()) "" else value
+        } else {
+            parsed.joinToString(separator = "\n") + trailingNewlines
+        }
         context.settingsDataStore.edit { preferences ->
             preferences[keyDanmakuBlockRules(scope)] = normalized
         }
@@ -4210,18 +6113,33 @@ object SettingsManager {
 
     /**
      * 启动时一次性迁移首页视觉默认值（仅在版本未迁移时覆盖）。
-     * 目标：默认开启底栏悬浮、液态玻璃、顶部模糊。
+     * 目标：默认开启底栏悬浮、导航图标交叉缩放、顶/底液态玻璃、顶部模糊，
+     * 并覆盖底栏项目，确保“推荐”（HOME）恢复为第一项。版本标记写入后不再重复覆盖。
      */
     suspend fun ensureHomeVisualDefaults(context: Context) {
         context.settingsDataStore.edit { preferences ->
             val currentVersion = preferences[KEY_HOME_VISUAL_DEFAULTS_VERSION] ?: 0
             if (currentVersion < HOME_VISUAL_DEFAULTS_VERSION) {
-                preferences[KEY_BOTTOM_BAR_FLOATING] = true
-                preferences[KEY_LIQUID_GLASS_ENABLED] = true
-                preferences[KEY_BOTTOM_BAR_LIQUID_GLASS_ENABLED] = true
-                preferences[KEY_HEADER_BLUR_ENABLED] = true
+                if (currentVersion < 3) {
+                    preferences[KEY_BOTTOM_BAR_FLOATING] = true
+                    preferences[KEY_LIQUID_GLASS_ENABLED] = true
+                    preferences[KEY_BOTTOM_BAR_LIQUID_GLASS_ENABLED] = true
+                    preferences[KEY_TOP_BAR_LIQUID_GLASS_ENABLED] = true
+                    preferences[KEY_HOME_SEARCH_LIQUID_GLASS_ENABLED] = true
+                    preferences[KEY_HEADER_BLUR_ENABLED] = true
+                    preferences[KEY_BOTTOM_BAR_ORDER] = DEFAULT_BOTTOM_BAR_ORDER
+                    preferences[KEY_BOTTOM_BAR_VISIBLE_TABS] = DEFAULT_BOTTOM_BAR_VISIBLE_TABS
+                }
+                preferences[KEY_NAVIGATION_ICON_CROSS_SCALE_ENABLED] = true
                 preferences[KEY_HOME_VISUAL_DEFAULTS_VERSION] = HOME_VISUAL_DEFAULTS_VERSION
             }
+        }
+    }
+
+    /** Marks the bundled first-install profile as having supplied the current visual defaults. */
+    suspend fun markHomeVisualDefaultsCurrent(context: Context) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_HOME_VISUAL_DEFAULTS_VERSION] = HOME_VISUAL_DEFAULTS_VERSION
         }
     }
 
@@ -4229,7 +6147,6 @@ object SettingsManager {
     
     private val KEY_FEED_API_TYPE = intPreferencesKey("feed_api_type")
     private val KEY_INCREMENTAL_TIMELINE_REFRESH = booleanPreferencesKey("incremental_timeline_refresh")
-    private val KEY_HOME_REFRESH_COUNT = intPreferencesKey("home_refresh_count")
     
     /**
      *  推荐流 API 类型
@@ -4237,8 +6154,9 @@ object SettingsManager {
      * - MOBILE: 移动端 API (x/v2/feed/index)，使用 appkey+sign 签名，需要 access_token
      */
     enum class FeedApiType(val value: Int, val label: String, val description: String) {
-        WEB(0, "网页端 (Web)", "使用 Web 推荐算法"),
-        MOBILE(1, "移动端 (App)", "使用手机端推荐算法，需登录");
+        WEB(0, "网页端", "使用 B 站网页端的推荐内容"),
+        MOBILE(1, "手机端", "需移动端登录凭证；按授权来源使用手机端或平板兼容推荐，不可用时提示并使用网页端"),
+        MERGED(2, "合并推荐", "合并网页端与当前登录授权支持的移动端推荐；缺少移动端凭证时仅使用网页端");
         
         companion object {
             fun fromValue(value: Int): FeedApiType = entries.find { it.value == value } ?: WEB
@@ -4277,28 +6195,6 @@ object SettingsManager {
         }
     }
 
-    fun getHomeRefreshCount(context: Context): Flow<Int> = context.settingsDataStore.data
-        .map { preferences ->
-            normalizeHomeRefreshCount(preferences[KEY_HOME_REFRESH_COUNT] ?: DEFAULT_HOME_REFRESH_COUNT)
-        }
-
-    suspend fun setHomeRefreshCount(context: Context, count: Int) {
-        val normalized = normalizeHomeRefreshCount(count)
-        context.settingsDataStore.edit { preferences ->
-            preferences[KEY_HOME_REFRESH_COUNT] = normalized
-        }
-        context.getSharedPreferences("feed_api", Context.MODE_PRIVATE)
-            .edit()
-            .putInt("home_refresh_count", normalized)
-            .apply()
-    }
-
-    fun getHomeRefreshCountSync(context: Context): Int {
-        val value = context.getSharedPreferences("feed_api", Context.MODE_PRIVATE)
-            .getInt("home_refresh_count", DEFAULT_HOME_REFRESH_COUNT)
-        return normalizeHomeRefreshCount(value)
-    }
-    
     // ==========  实验性功能 ==========
     
     private val KEY_AUTO_1080P = booleanPreferencesKey("exp_auto_1080p")
@@ -4343,6 +6239,8 @@ object SettingsManager {
     private val KEY_PORTRAIT_FULLSCREEN_ENABLED = booleanPreferencesKey("portrait_fullscreen_enabled")
     private val KEY_AUTO_PORTRAIT_FULLSCREEN = booleanPreferencesKey("auto_portrait_fullscreen")
     private val KEY_LAUNCH_TO_PORTRAIT_FEED_ON_STARTUP = booleanPreferencesKey("launch_to_portrait_feed_on_startup")
+    private val KEY_PORTRAIT_ONLY_VERTICAL_RECOMMENDATIONS =
+        booleanPreferencesKey("portrait_only_vertical_recommendations")
     private const val PORTRAIT_STARTUP_CACHE_PREFS = "portrait_startup_cache"
     private const val CACHE_KEY_LAUNCH_TO_PORTRAIT_FEED = "enabled"
     private val KEY_VERTICAL_VIDEO_RATIO = floatPreferencesKey("vertical_video_ratio")
@@ -4356,6 +6254,56 @@ object SettingsManager {
 
     suspend fun setTripleJumpEnabled(context: Context, value: Boolean) {
         context.settingsDataStore.edit { preferences -> preferences[KEY_TRIPLE_JUMP_ENABLED] = value }
+    }
+
+    // --- 订阅文章阅读字号 (0=小 1=标准 2=大) ---
+    private val KEY_SUBSCRIPTION_ARTICLE_FONT_SCALE = intPreferencesKey("subscription_article_font_scale")
+
+    private val KEY_SUBSCRIPTION_ARTICLE_WALLPAPER_ENABLED =
+        booleanPreferencesKey("subscription_article_wallpaper_enabled")
+
+    fun getSubscriptionArticleWallpaperEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_SUBSCRIPTION_ARTICLE_WALLPAPER_ENABLED] ?: false }
+
+    suspend fun setSubscriptionArticleWallpaperEnabled(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_SUBSCRIPTION_ARTICLE_WALLPAPER_ENABLED] = enabled
+        }
+    }
+
+    // --- RSS 阅读独立壁纸与回顾板块 ---
+    private val KEY_SUBSCRIPTION_ARTICLE_WALLPAPER_URI =
+        stringPreferencesKey("subscription_article_wallpaper_uri")
+    private val KEY_SUBSCRIPTION_RECAP_ENABLED =
+        booleanPreferencesKey("subscription_recap_enabled")
+
+    /** 阅读页独立壁纸 URI；空表示跟随首页壁纸。 */
+    fun getSubscriptionArticleWallpaperUri(context: Context): Flow<String> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_SUBSCRIPTION_ARTICLE_WALLPAPER_URI] ?: "" }
+
+    suspend fun setSubscriptionArticleWallpaperUri(context: Context, uri: String) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_SUBSCRIPTION_ARTICLE_WALLPAPER_URI] = uri
+        }
+    }
+
+    /** 历史页「我的回顾」开关，默认关闭。 */
+    fun getSubscriptionRecapEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_SUBSCRIPTION_RECAP_ENABLED] ?: false }
+
+    suspend fun setSubscriptionRecapEnabled(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_SUBSCRIPTION_RECAP_ENABLED] = enabled
+        }
+    }
+
+    fun getSubscriptionArticleFontScale(context: Context): Flow<Int> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_SUBSCRIPTION_ARTICLE_FONT_SCALE] ?: 1 }
+
+    suspend fun setSubscriptionArticleFontScale(context: Context, value: Int) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_SUBSCRIPTION_ARTICLE_FONT_SCALE] = value.coerceIn(0, 2)
+        }
     }
 
     fun getPortraitFullscreenEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
@@ -4373,32 +6321,48 @@ object SettingsManager {
         context.settingsDataStore.edit { preferences -> preferences[KEY_AUTO_PORTRAIT_FULLSCREEN] = value }
     }
 
+    /** Whether the portrait pager should exclude landscape recommendations (default disabled). */
+    fun getPortraitOnlyVerticalRecommendations(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data.map { preferences ->
+            preferences[KEY_PORTRAIT_ONLY_VERTICAL_RECOMMENDATIONS] ?: false
+        }
+
+    suspend fun setPortraitOnlyVerticalRecommendations(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_PORTRAIT_ONLY_VERTICAL_RECOMMENDATIONS] = value
+        }
+    }
+
     fun getLaunchToPortraitFeedOnStartup(context: Context): Flow<Boolean> = context.settingsDataStore.data
         .map { preferences -> preferences[KEY_LAUNCH_TO_PORTRAIT_FEED_ON_STARTUP] ?: false }
 
     suspend fun setLaunchToPortraitFeedOnStartup(context: Context, value: Boolean) {
-        context.settingsDataStore.edit { preferences ->
-            preferences[KEY_LAUNCH_TO_PORTRAIT_FEED_ON_STARTUP] = value
-        }
-        context.getSharedPreferences(PORTRAIT_STARTUP_CACHE_PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean(CACHE_KEY_LAUNCH_TO_PORTRAIT_FEED, value)
-            .apply()
+        editSettingsAndCommitPrefs(
+            context = context,
+            name = PORTRAIT_STARTUP_CACHE_PREFS,
+            editSettings = { this[KEY_LAUNCH_TO_PORTRAIT_FEED_ON_STARTUP] = value },
+            editPrefs = { putBoolean(CACHE_KEY_LAUNCH_TO_PORTRAIT_FEED, value) },
+        )
     }
 
-    fun isLaunchToPortraitFeedOnStartupSync(context: Context): Boolean {
+    /**
+     * 冷启动快速路径。返回 null 表示缓存缺失，调用方必须挂起读取 DataStore 后再决定
+     * 初始导航，不能把 null 当成默认 false；自动备份只恢复 DataStore、不恢复这个缓存。
+     */
+    fun getCachedLaunchToPortraitFeedOnStartup(context: Context): Boolean? {
         val prefs = context.getSharedPreferences(PORTRAIT_STARTUP_CACHE_PREFS, Context.MODE_PRIVATE)
-        if (prefs.contains(CACHE_KEY_LAUNCH_TO_PORTRAIT_FEED)) {
-            return prefs.getBoolean(CACHE_KEY_LAUNCH_TO_PORTRAIT_FEED, false)
-        }
-        return try {
-            kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
-                context.settingsDataStore.data.first()[KEY_LAUNCH_TO_PORTRAIT_FEED_ON_STARTUP] ?: false
-            }.also { value ->
-                prefs.edit().putBoolean(CACHE_KEY_LAUNCH_TO_PORTRAIT_FEED, value).apply()
-            }
-        } catch (_: Exception) {
-            false
+        return if (prefs.contains(CACHE_KEY_LAUNCH_TO_PORTRAIT_FEED)) {
+            prefs.getBoolean(CACHE_KEY_LAUNCH_TO_PORTRAIT_FEED, false)
+        } else null
+    }
+
+    suspend fun resolveLaunchToPortraitFeedOnStartup(context: Context): Boolean {
+        getCachedLaunchToPortraitFeedOnStartup(context)?.let { return it }
+        return withContext(Dispatchers.IO) {
+            val value = context.settingsDataStore.data.first()[KEY_LAUNCH_TO_PORTRAIT_FEED_ON_STARTUP] ?: false
+            context.getSharedPreferences(PORTRAIT_STARTUP_CACHE_PREFS, Context.MODE_PRIVATE)
+                .edit().putBoolean(CACHE_KEY_LAUNCH_TO_PORTRAIT_FEED, value).apply()
+            value
         }
     }
     
@@ -4433,6 +6397,16 @@ object SettingsManager {
         context.getSharedPreferences("auto_rotate_cache", Context.MODE_PRIVATE)
             .edit().putBoolean("enabled", value).apply()
     }
+
+    // --- 横屏保持 (自动横竖屏进入横屏后不随倾斜回竖屏，仅手动退出，默认关闭) ---
+    private val KEY_LANDSCAPE_HOLD_ENABLED = booleanPreferencesKey("landscape_hold_enabled")
+
+    fun getLandscapeHoldEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_LANDSCAPE_HOLD_ENABLED] ?: false }
+
+    suspend fun setLandscapeHoldEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences -> preferences[KEY_LANDSCAPE_HOLD_ENABLED] = value }
+    }
     
     fun isAutoRotateEnabledSync(context: Context): Boolean {
         val prefs = context.getSharedPreferences("auto_rotate_cache", Context.MODE_PRIVATE)
@@ -4449,6 +6423,7 @@ object SettingsManager {
     private val KEY_VIDEO_SECOND_CODEC = stringPreferencesKey("video_second_codec_preference")
     private val KEY_AUDIO_QUALITY = intPreferencesKey("audio_quality_preference")
     private val KEY_SUBSCRIBED_COLLECTION_IDS = stringPreferencesKey("subscribed_collection_ids")
+    private val KEY_KNOWN_COLLECTION_SUBSCRIPTION_IDS = stringPreferencesKey("known_collection_subscription_ids")
     private val KEY_COLLECTION_SORT_PREFERENCES = stringPreferencesKey("collection_sort_preferences")
     
     // --- WiFi 默认画质 (默认 80 = 1080P) ---
@@ -4456,11 +6431,11 @@ object SettingsManager {
         .map { preferences -> preferences[KEY_WIFI_QUALITY] ?: 80 }
 
     suspend fun setWifiQuality(context: Context, value: Int) {
-        context.settingsDataStore.edit { preferences -> preferences[KEY_WIFI_QUALITY] = value }
-        //  同步到 SharedPreferences，供 NetworkUtils 同步读取
-        // 使用 commit() 确保立即写入
-        val success = context.getSharedPreferences("quality_settings", Context.MODE_PRIVATE)
-            .edit().putInt("wifi_quality", value).commit()
+        val success = editSettingsAndCommitPrefs(
+            context, "quality_settings",
+            editSettings = { this[KEY_WIFI_QUALITY] = value },
+            editPrefs = { putInt("wifi_quality", value) },
+        )
         com.android.purebilibili.core.util.Logger.d("SettingsManager", " WiFi 画质已设置: $value (写入成功: $success)")
     }
     
@@ -4469,11 +6444,11 @@ object SettingsManager {
         .map { preferences -> preferences[KEY_MOBILE_QUALITY] ?: 64 }
 
     suspend fun setMobileQuality(context: Context, value: Int) {
-        context.settingsDataStore.edit { preferences -> preferences[KEY_MOBILE_QUALITY] = value }
-        //  同步到 SharedPreferences，供 NetworkUtils 同步读取
-        // 使用 commit() 确保立即写入
-        val success = context.getSharedPreferences("quality_settings", Context.MODE_PRIVATE)
-            .edit().putInt("mobile_quality", value).commit()
+        val success = editSettingsAndCommitPrefs(
+            context, "quality_settings",
+            editSettings = { this[KEY_MOBILE_QUALITY] = value },
+            editPrefs = { putInt("mobile_quality", value) },
+        )
         com.android.purebilibili.core.util.Logger.d("SettingsManager", " 流量画质已设置: $value (写入成功: $success)")
     }
     
@@ -4500,6 +6475,17 @@ object SettingsManager {
             .distinctUntilChanged()
     }
 
+    /** 缓存缺失为未知；已订阅集合也可作为旧版本的肯定记录。 */
+    fun getCollectionSubscriptionState(context: Context, collectionId: Long): Flow<Boolean?> =
+        context.settingsDataStore.data.map { preferences ->
+            val id = collectionId.toString()
+            when {
+                id in decodeCollectionSubscriptionIds(preferences[KEY_SUBSCRIBED_COLLECTION_IDS]) -> true
+                id in decodeCollectionSubscriptionIds(preferences[KEY_KNOWN_COLLECTION_SUBSCRIPTION_IDS]) -> false
+                else -> null
+            }
+        }.distinctUntilChanged()
+
     suspend fun toggleCollectionSubscription(context: Context, collectionId: Long) {
         if (collectionId <= 0L) return
         context.settingsDataStore.edit { preferences ->
@@ -4513,6 +6499,9 @@ object SettingsManager {
     suspend fun setCollectionSubscription(context: Context, collectionId: Long, subscribed: Boolean) {
         if (collectionId <= 0L) return
         context.settingsDataStore.edit { preferences ->
+            preferences[KEY_KNOWN_COLLECTION_SUBSCRIPTION_IDS] = encodeCollectionSubscriptionIds(
+                decodeCollectionSubscriptionIds(preferences[KEY_KNOWN_COLLECTION_SUBSCRIPTION_IDS]) + collectionId.toString()
+            )
             val current = decodeCollectionSubscriptionIds(preferences[KEY_SUBSCRIBED_COLLECTION_IDS])
             preferences[KEY_SUBSCRIBED_COLLECTION_IDS] = encodeCollectionSubscriptionIds(
                 setCollectionSubscription(current, collectionId, subscribed)
@@ -4559,10 +6548,11 @@ object SettingsManager {
         .map { preferences -> preferences[KEY_AUTO_HIGHEST_QUALITY] ?: false }  // 默认关闭
     
     suspend fun setAutoHighestQuality(context: Context, value: Boolean) {
-        context.settingsDataStore.edit { preferences -> preferences[KEY_AUTO_HIGHEST_QUALITY] = value }
-        //  同步到 SharedPreferences，供 NetworkUtils 同步读取
-        context.getSharedPreferences("quality_settings", Context.MODE_PRIVATE)
-            .edit().putBoolean("auto_highest_quality", value).commit()
+        editSettingsAndCommitPrefs(
+            context, "quality_settings",
+            editSettings = { this[KEY_AUTO_HIGHEST_QUALITY] = value },
+            editPrefs = { putBoolean("auto_highest_quality", value) },
+        )
         com.android.purebilibili.core.util.Logger.d("SettingsManager", "🚀 自动最高画质: $value")
     }
     
@@ -4576,13 +6566,11 @@ object SettingsManager {
         .map { preferences -> preferences[KEY_BILI_DIRECTED_TRAFFIC] ?: false }
 
     suspend fun setBiliDirectedTrafficEnabled(context: Context, value: Boolean) {
-        context.settingsDataStore.edit { preferences ->
-            preferences[KEY_BILI_DIRECTED_TRAFFIC] = value
-        }
-        context.getSharedPreferences("quality_settings", Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean("bili_directed_traffic", value)
-            .commit()
+        editSettingsAndCommitPrefs(
+            context, "quality_settings",
+            editSettings = { this[KEY_BILI_DIRECTED_TRAFFIC] = value },
+            editPrefs = { putBoolean("bili_directed_traffic", value) },
+        )
         com.android.purebilibili.core.util.Logger.d("SettingsManager", "📶 B站定向流量支持: $value")
     }
 
@@ -4634,30 +6622,26 @@ object SettingsManager {
 
     suspend fun setAudioQuality(context: Context, value: Int) {
         com.android.purebilibili.core.util.Logger.d("SettingsManager", "📻 setAudioQuality called with: $value")
-        context.settingsDataStore.edit { preferences -> 
-            preferences[KEY_AUDIO_QUALITY] = value 
-            com.android.purebilibili.core.util.Logger.d("SettingsManager", "📻 setAudioQuality DataStore written: $value")
-        }
-        // Sync to SharedPreferences for synchronous access - Use commit() to ensure immediate write
-        val result = context.getSharedPreferences("quality_settings", Context.MODE_PRIVATE)
-            .edit().putInt("audio_quality", value).commit()
+        val result = editSettingsAndCommitPrefs(
+            context, "quality_settings",
+            editSettings = {
+                this[KEY_AUDIO_QUALITY] = value
+                com.android.purebilibili.core.util.Logger.d("SettingsManager", "📻 setAudioQuality DataStore written: $value")
+            },
+            editPrefs = { putInt("audio_quality", value) },
+        )
         com.android.purebilibili.core.util.Logger.d("SettingsManager", "📻 setAudioQuality SharedPrefs committed: $value, success=$result")
     }
 
-    fun getAudioQualitySync(context: Context): Int {
-        return context.getSharedPreferences("quality_settings", Context.MODE_PRIVATE)
-            .getInt("audio_quality", -1)
-    }
-
-    // --- 评论默认排序 (1=回复,2=最新,3=最热,4=点赞) ---
+    // --- 评论默认排序 (2=最新,3=最热) ---
     fun getCommentDefaultSortMode(context: Context): Flow<Int> = context.settingsDataStore.data
         .map { preferences ->
             val value = preferences[KEY_COMMENT_DEFAULT_SORT_MODE] ?: 3
-            if (value in 1..4) value else 3
+            if (value == 2 || value == 3) value else 3
         }
 
     suspend fun setCommentDefaultSortMode(context: Context, value: Int) {
-        val normalized = if (value in 1..4) value else 3
+        val normalized = if (value == 2 || value == 3) value else 3
         context.settingsDataStore.edit { preferences ->
             preferences[KEY_COMMENT_DEFAULT_SORT_MODE] = normalized
         }
@@ -4670,7 +6654,7 @@ object SettingsManager {
     fun getCommentDefaultSortModeSync(context: Context): Int {
         val value = context.getSharedPreferences("comment_settings", Context.MODE_PRIVATE)
             .getInt("default_sort_mode", 3)
-        return if (value in 1..4) value else 3
+        return if (value == 2 || value == 3) value else 3
     }
 
     fun getCommentFraudDetectionEnabled(context: Context): Flow<Boolean> =
@@ -4680,6 +6664,49 @@ object SettingsManager {
     suspend fun setCommentFraudDetectionEnabled(context: Context, enabled: Boolean) {
         context.settingsDataStore.edit { preferences ->
             preferences[KEY_COMMENT_FRAUD_DETECTION_ENABLED] = enabled
+        }
+    }
+
+    fun getAutoCacheClearInterval(context: Context): Flow<AutoCacheClearInterval> =
+        context.settingsDataStore.data.map { preferences ->
+            val days = preferences[KEY_AUTO_CACHE_CLEAR_INTERVAL] ?: AutoCacheClearInterval.NEVER.days
+            AutoCacheClearInterval.entries.firstOrNull { it.days == days } ?: AutoCacheClearInterval.NEVER
+        }
+
+    suspend fun setAutoCacheClearInterval(context: Context, interval: AutoCacheClearInterval) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_AUTO_CACHE_CLEAR_INTERVAL] = interval.days
+        }
+    }
+
+    fun getAutoCacheClearThresholdGb(context: Context): Flow<Int> =
+        context.settingsDataStore.data.map { preferences ->
+            (preferences[KEY_AUTO_CACHE_CLEAR_THRESHOLD_GB]
+                ?: DEFAULT_AUTO_CACHE_CLEAR_THRESHOLD_GB).coerceIn(1, 20)
+        }
+
+    suspend fun setAutoCacheClearThresholdGb(context: Context, thresholdGb: Int) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_AUTO_CACHE_CLEAR_THRESHOLD_GB] = thresholdGb.coerceIn(1, 20)
+        }
+    }
+
+    suspend fun getLastAutoCacheClearAt(context: Context): Long =
+        context.settingsDataStore.data.first()[KEY_LAST_AUTO_CACHE_CLEAR_AT] ?: 0L
+
+    suspend fun setLastAutoCacheClearAt(context: Context, timestamp: Long) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_LAST_AUTO_CACHE_CLEAR_AT] = timestamp.coerceAtLeast(0L)
+        }
+    }
+
+    fun getCommentAvatarPushEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data
+            .map { preferences -> preferences[KEY_COMMENT_AVATAR_PUSH_ENABLED] ?: false }
+
+    suspend fun setCommentAvatarPushEnabled(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_COMMENT_AVATAR_PUSH_ENABLED] = enabled
         }
     }
 
@@ -4693,6 +6720,54 @@ object SettingsManager {
         }
     }
 
+    fun getDetailedCommentTimeEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data
+            .map { preferences -> preferences[KEY_DETAILED_COMMENT_TIME_ENABLED] ?: false }
+
+    /** 评论楼中楼预览是否显示；入口在评论右上角菜单，默认显示。 */
+    fun getCommentReplyPreviewVisible(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data
+            .map { preferences -> preferences[KEY_COMMENT_REPLY_PREVIEW_VISIBLE] ?: true }
+
+    suspend fun setCommentReplyPreviewVisible(context: Context, visible: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_COMMENT_REPLY_PREVIEW_VISIBLE] = visible
+        }
+    }
+
+    /**
+     * 评论右上角菜单的落盘入口：弹层关闭会取消其 rememberCoroutineScope，
+     * 挂起写盘必须在调用方作用域之外完成，否则开关可能一次都写不进去。
+     */
+    fun setCommentReplyPreviewVisibleDetached(context: Context, visible: Boolean) {
+        commentPreferenceWriteScope.launch {
+            setCommentReplyPreviewVisible(context.applicationContext, visible)
+        }
+    }
+
+    suspend fun setDetailedCommentTimeEnabled(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_DETAILED_COMMENT_TIME_ENABLED] = enabled
+        }
+    }
+
+    /** 评论长按菜单的落盘入口：与回复按钮开关同因，写入不依赖弹层作用域。 */
+    fun setDetailedCommentTimeEnabledDetached(context: Context, enabled: Boolean) {
+        commentPreferenceWriteScope.launch {
+            setDetailedCommentTimeEnabled(context.applicationContext, enabled)
+        }
+    }
+
+    fun getSubReplyLoadedCountEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data
+            .map { preferences -> preferences[KEY_SUB_REPLY_LOADED_COUNT_ENABLED] ?: false }
+
+    suspend fun setSubReplyLoadedCountEnabled(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_SUB_REPLY_LOADED_COUNT_ENABLED] = enabled
+        }
+    }
+
     fun getImagePreviewLongPressSaveEnabled(context: Context): Flow<Boolean> =
         context.settingsDataStore.data
             .map { preferences -> preferences[KEY_IMAGE_PREVIEW_LONG_PRESS_SAVE_ENABLED] ?: true }
@@ -4700,6 +6775,16 @@ object SettingsManager {
     suspend fun setImagePreviewLongPressSaveEnabled(context: Context, enabled: Boolean) {
         context.settingsDataStore.edit { preferences ->
             preferences[KEY_IMAGE_PREVIEW_LONG_PRESS_SAVE_ENABLED] = enabled
+        }
+    }
+
+    fun getImagePreview3dPageEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data
+            .map { preferences -> preferences[KEY_IMAGE_PREVIEW_3D_PAGE_ENABLED] ?: false }
+
+    suspend fun setImagePreview3dPageEnabled(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_IMAGE_PREVIEW_3D_PAGE_ENABLED] = enabled
         }
     }
     
@@ -4713,9 +6798,13 @@ object SettingsManager {
         .map { preferences -> preferences[KEY_SPONSOR_BLOCK_ENABLED] ?: false }  // 默认关闭
 
     suspend fun setSponsorBlockEnabled(context: Context, value: Boolean) {
+        com.android.purebilibili.core.plugin.PluginManager.setEnabled(
+            com.android.purebilibili.core.plugin.BuiltinPluginIds.SPONSOR_BLOCK, value
+        )
+    }
+
+    internal suspend fun persistSponsorBlockEnabled(context: Context, value: Boolean) {
         context.settingsDataStore.edit { preferences -> preferences[KEY_SPONSOR_BLOCK_ENABLED] = value }
-        //  [修复] 同步到PluginStore，使插件系统能正确识别空降助手状态
-        com.android.purebilibili.core.plugin.PluginManager.setEnabled("sponsor_block", value)
     }
     
     // --- 自动跳过（true=自动跳过, false=显示提示按钮）---
@@ -4729,6 +6818,8 @@ object SettingsManager {
     // ==========  崩溃追踪 (Crashlytics) ==========
     
     private val KEY_CRASH_TRACKING_ENABLED = booleanPreferencesKey("crash_tracking_enabled")
+    private val KEY_ENHANCED_DIAGNOSTIC_LOGGING_ENABLED =
+        booleanPreferencesKey("enhanced_diagnostic_logging_enabled")
     // KEY_CRASH_TRACKING_CONSENT_SHOWN 已在顶部定义
     
     // --- 崩溃追踪开关 ---
@@ -4740,6 +6831,23 @@ object SettingsManager {
         //  同步到 SharedPreferences，供 Application 同步读取
         context.getSharedPreferences("crash_tracking", Context.MODE_PRIVATE)
             .edit().putBoolean("enabled", value).apply()
+    }
+
+    // --- 增强诊断日志（默认关闭，用户主动开启）---
+    fun getEnhancedDiagnosticLoggingEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data.map { preferences ->
+            preferences[KEY_ENHANCED_DIAGNOSTIC_LOGGING_ENABLED] ?: false
+        }
+
+    suspend fun setEnhancedDiagnosticLoggingEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_ENHANCED_DIAGNOSTIC_LOGGING_ENABLED] = value
+        }
+        // Application 冷启动阶段需要同步读取，避免错过启动期诊断信息。
+        context.getSharedPreferences(ENHANCED_DIAGNOSTIC_LOG_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(ENHANCED_DIAGNOSTIC_LOG_PREF_KEY, value)
+            .apply()
     }
     
     // --- 崩溃追踪首次提示是否已显示 ---
@@ -4767,11 +6875,37 @@ object SettingsManager {
     }
 
     // ==========  应用更新 ==========
+    private val KEY_APP_UPDATE_CHANNEL = intPreferencesKey("app_update_channel")
+
+    /**
+     *  更新检测渠道
+     * - STABLE: 正式版渠道，仅检测稳定版本
+     * - BETA: 测试版渠道，同时检测预发布（Beta / RC）版本
+     */
+    enum class AppUpdateChannel(val value: Int, val label: String, val description: String) {
+        STABLE(0, "正式版", "仅检测稳定版本"),
+        BETA(1, "测试版", "同时检测测试版与预发布版本");
+
+        companion object {
+            fun fromValue(value: Int): AppUpdateChannel = entries.find { it.value == value } ?: STABLE
+        }
+    }
+
     fun getAutoCheckAppUpdate(context: Context): Flow<Boolean> = context.settingsDataStore.data
         .map { preferences -> preferences[KEY_AUTO_CHECK_APP_UPDATE] ?: true } // 默认开启
 
     suspend fun setAutoCheckAppUpdate(context: Context, value: Boolean) {
         context.settingsDataStore.edit { preferences -> preferences[KEY_AUTO_CHECK_APP_UPDATE] = value }
+    }
+
+    // --- 更新检测渠道 (默认正式版) ---
+    fun getAppUpdateChannel(context: Context): Flow<AppUpdateChannel> = context.settingsDataStore.data
+        .map { preferences ->
+            AppUpdateChannel.fromValue(preferences[KEY_APP_UPDATE_CHANNEL] ?: AppUpdateChannel.STABLE.value)
+        }
+
+    suspend fun setAppUpdateChannel(context: Context, channel: AppUpdateChannel) {
+        context.settingsDataStore.edit { preferences -> preferences[KEY_APP_UPDATE_CHANNEL] = channel.value }
     }
     
     // ==========  隐私无痕模式 ==========
@@ -4791,6 +6925,22 @@ object SettingsManager {
             .edit().putBoolean("enabled", value).apply()
     }
     
+    // Search-only recording preference. Global privacy still overrides this choice.
+    private val KEY_SEARCH_HISTORY_RECORDING_ENABLED = booleanPreferencesKey("search_history_recording_enabled")
+
+    fun getSearchHistoryRecordingEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { it[KEY_SEARCH_HISTORY_RECORDING_ENABLED] ?: true }
+
+    suspend fun setSearchHistoryRecordingEnabled(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { it[KEY_SEARCH_HISTORY_RECORDING_ENABLED] = enabled }
+        context.getSharedPreferences("privacy_mode", Context.MODE_PRIVATE)
+            .edit().putBoolean("search_history_recording_enabled", enabled).apply()
+    }
+
+    fun isSearchHistoryRecordingEnabledSync(context: Context): Boolean =
+        context.getSharedPreferences("privacy_mode", Context.MODE_PRIVATE)
+            .getBoolean("search_history_recording_enabled", true)
+
     //  同步读取隐私模式状态（用于非协程环境）
     fun isPrivacyModeEnabledSync(context: Context): Boolean {
         return context.getSharedPreferences("privacy_mode", Context.MODE_PRIVATE)
@@ -4841,6 +6991,42 @@ object SettingsManager {
     }
     
     // --- 小窗模式设置 ---
+    internal fun mapPlaybackPreferencesSettings(preferences: Preferences): PlaybackPreferencesSettings =
+        PlaybackPreferencesSettings(
+            miniPlayerMode = MiniPlayerMode.fromValue(preferences[KEY_MINI_PLAYER_MODE] ?: MiniPlayerMode.OFF.value),
+            stopPlaybackOnExit = preferences[KEY_STOP_PLAYBACK_ON_EXIT] ?: false,
+            backgroundPlaybackEnabled = preferences[KEY_BACKGROUND_PLAYBACK_ENABLED] ?: true,
+            audioFocusEnabled = preferences[KEY_AUDIO_FOCUS_ENABLED] ?: true,
+            audioModeAutoPipEnabled = preferences[KEY_AUDIO_MODE_AUTO_PIP_ENABLED] ?: false,
+            audioNowPlayingBarEnabled = preferences[KEY_AUDIO_NOW_PLAYING_BAR_ENABLED] ?: true,
+            audioNowPlayingBarImmersiveEnabled = preferences[KEY_AUDIO_NOW_PLAYING_BAR_IMMERSIVE_ENABLED] ?: true,
+            audioNowPlayingBarOpensAudioMode = preferences[KEY_AUDIO_NOW_PLAYING_BAR_OPENS_AUDIO_MODE] ?: false,
+            musicLyricsUiStyle = MusicLyricsUiStyle.fromValue(preferences[KEY_MUSIC_LYRICS_UI_STYLE] ?: MusicLyricsUiStyle.CLASSIC.value),
+            loudnessNormalizationEnabled = preferences[KEY_LOUDNESS_NORMALIZATION_ENABLED] ?: false,
+            audioSpectrumEnabled = preferences[KEY_AUDIO_SPECTRUM_ENABLED] ?: false,
+            startupAutoPlayEnabled = preferences[KEY_STARTUP_AUTO_PLAY_ENABLED] ?: false,
+            wifiQuality = preferences[KEY_WIFI_QUALITY] ?: 80,
+            mobileQuality = preferences[KEY_MOBILE_QUALITY] ?: 64,
+            autoHighestQualityEnabled = preferences[KEY_AUTO_HIGHEST_QUALITY] ?: false,
+            directedTrafficEnabled = preferences[KEY_BILI_DIRECTED_TRAFFIC] ?: false,
+            videoCodecPreference = preferences[KEY_VIDEO_CODEC] ?: "hev1",
+            videoSecondCodecPreference = preferences[KEY_VIDEO_SECOND_CODEC] ?: "avc1",
+            dataSaverMode = DataSaverMode.fromValue(preferences[KEY_DATA_SAVER_MODE] ?: DataSaverMode.MOBILE_ONLY.value),
+            defaultAudioQuality = preferences[com.android.purebilibili.core.store.player.defaultAudioQualityPreferenceKey] ?: com.android.purebilibili.core.store.player.DEFAULT_AUDIO_QUALITY_FOLLOW_LAST,
+        )
+
+    internal fun getPlaybackPreferencesSettings(context: Context): Flow<PlaybackPreferencesSettings> =
+        context.settingsDataStore.data
+            .map(::mapPlaybackPreferencesSettings)
+            .distinctUntilChanged()
+            .onEach { settings ->
+                // 保留独立开关读取路径的缓存同步行为，供播放服务同步查询。
+                context.getSharedPreferences("mini_player", Context.MODE_PRIVATE)
+                    .edit()
+                    .putBoolean("audio_now_playing_bar_enabled", settings.audioNowPlayingBarEnabled)
+                    .apply()
+            }
+
     fun getMiniPlayerMode(context: Context): Flow<MiniPlayerMode> = context.settingsDataStore.data
         .map { preferences -> 
             MiniPlayerMode.fromValue(preferences[KEY_MINI_PLAYER_MODE] ?: MiniPlayerMode.OFF.value)
@@ -4916,6 +7102,67 @@ object SettingsManager {
             .getBoolean("audio_focus_enabled", true)
     }
 
+    /** 响度均衡（播放端 AGC 增益跟随），切换后需重建播放会话生效。 */
+    fun getLoudnessNormalizationEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data.map { preferences ->
+            preferences[KEY_LOUDNESS_NORMALIZATION_ENABLED] ?: false
+        }
+
+    suspend fun setLoudnessNormalizationEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_LOUDNESS_NORMALIZATION_ENABLED] = value
+        }
+        // 同步到 SharedPreferences，供 MiniPlayerManager 同步读取（此前缺少这一步，
+        // 导致 Sync 读取恒为 false、响度均衡从未真正注入音频链路）
+        context.getSharedPreferences("mini_player", Context.MODE_PRIVATE)
+            .edit().putBoolean("loudness_normalization_enabled", value).apply()
+    }
+
+    fun getLoudnessNormalizationEnabledSync(context: Context): Boolean {
+        return context.getSharedPreferences("mini_player", Context.MODE_PRIVATE)
+            .getBoolean("loudness_normalization_enabled", false)
+    }
+
+    /**
+     * 「听视频」封面律动。数据取自音频输出链路的 PCM（无录音权限），
+     * 默认关闭；公共 AudioSink 按缓冲读取开关，已有 PCM 播放会话内即可生效。
+     */
+    fun getAudioSpectrumEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data.map { preferences ->
+            preferences[KEY_AUDIO_SPECTRUM_ENABLED] ?: false
+        }
+
+    suspend fun setAudioSpectrumEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_AUDIO_SPECTRUM_ENABLED] = value
+        }
+        // 同步到 SharedPreferences，供 MiniPlayerManager 同步读取
+        context.getSharedPreferences("mini_player", Context.MODE_PRIVATE)
+            .edit().putBoolean("audio_spectrum_enabled", value).apply()
+    }
+
+    fun getAudioSpectrumEnabledSync(context: Context): Boolean {
+        return context.getSharedPreferences("mini_player", Context.MODE_PRIVATE)
+            .getBoolean("audio_spectrum_enabled", false)
+    }
+
+    /** 冷启动后进入播放场景时自动续播上一次会话。 */
+    fun getStartupAutoPlayEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data.map { preferences ->
+            preferences[KEY_STARTUP_AUTO_PLAY_ENABLED] ?: false
+        }
+
+    suspend fun setStartupAutoPlayEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_STARTUP_AUTO_PLAY_ENABLED] = value
+        }
+    }
+
+    fun getStartupAutoPlayEnabledSync(context: Context): Boolean {
+        return context.getSharedPreferences("mini_player", Context.MODE_PRIVATE)
+            .getBoolean("startup_auto_play_enabled", false)
+    }
+
     fun getAudioModeAutoPipEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
         .map { preferences -> preferences[KEY_AUDIO_MODE_AUTO_PIP_ENABLED] ?: false }
 
@@ -4930,6 +7177,98 @@ object SettingsManager {
     fun getAudioModeAutoPipEnabledSync(context: Context): Boolean {
         return context.getSharedPreferences("mini_player", Context.MODE_PRIVATE)
             .getBoolean("audio_mode_auto_pip_enabled", false)
+    }
+
+    fun getAudioNowPlayingBarEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_AUDIO_NOW_PLAYING_BAR_ENABLED] ?: true }
+        .onEach { value ->
+            context.getSharedPreferences("mini_player", Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean("audio_now_playing_bar_enabled", value)
+                .apply()
+        }
+
+    suspend fun setAudioNowPlayingBarEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_AUDIO_NOW_PLAYING_BAR_ENABLED] = value
+        }
+        context.getSharedPreferences("mini_player", Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean("audio_now_playing_bar_enabled", value)
+            .apply()
+    }
+
+    fun getAudioNowPlayingBarEnabledSync(context: Context): Boolean {
+        return context.getSharedPreferences("mini_player", Context.MODE_PRIVATE)
+            .getBoolean("audio_now_playing_bar_enabled", true)
+    }
+
+    fun getAudioNowPlayingBarDeleteButton(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data.map { it[KEY_AUDIO_NOW_PLAYING_BAR_DELETE_BUTTON] ?: true }
+
+    suspend fun setAudioNowPlayingBarDeleteButton(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { it[KEY_AUDIO_NOW_PLAYING_BAR_DELETE_BUTTON] = value }
+    }
+
+    fun getAudioNowPlayingBarOpensAudioMode(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data.map { preferences ->
+            preferences[KEY_AUDIO_NOW_PLAYING_BAR_OPENS_AUDIO_MODE] ?: false
+        }
+
+    suspend fun setAudioNowPlayingBarOpensAudioMode(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_AUDIO_NOW_PLAYING_BAR_OPENS_AUDIO_MODE] = value
+        }
+    }
+
+    /**
+     * 听视频标题横条自动沉浸：开启后进入听视频页且播放中静置 5 秒，
+     * 底部标题横条自动隐藏，点按底部把柄恢复。默认开启。
+     */
+    fun getAudioNowPlayingBarImmersiveEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data.map { preferences ->
+            preferences[KEY_AUDIO_NOW_PLAYING_BAR_IMMERSIVE_ENABLED] ?: true
+        }
+
+    suspend fun setAudioNowPlayingBarImmersiveEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_AUDIO_NOW_PLAYING_BAR_IMMERSIVE_ENABLED] = value
+        }
+    }
+
+    /**
+     * 听视频歌词界面风格。
+     * - CLASSIC: 现有全屏歌词列
+     * - IMMERSIVE: 沉浸式大字歌词（Halcyon 风格）
+     */
+    enum class MusicLyricsUiStyle(val value: Int, val label: String) {
+        CLASSIC(0, "经典"),
+        IMMERSIVE(1, "沉浸");
+
+        fun next(): MusicLyricsUiStyle = when (this) {
+            CLASSIC -> IMMERSIVE
+            IMMERSIVE -> CLASSIC
+        }
+
+        companion object {
+            fun fromValue(value: Int): MusicLyricsUiStyle = when (value) {
+                1 -> IMMERSIVE
+                else -> CLASSIC
+            }
+        }
+    }
+
+    fun getMusicLyricsUiStyle(context: Context): Flow<MusicLyricsUiStyle> =
+        context.settingsDataStore.data.map { preferences ->
+            MusicLyricsUiStyle.fromValue(
+                preferences[KEY_MUSIC_LYRICS_UI_STYLE] ?: MusicLyricsUiStyle.CLASSIC.value
+            )
+        }
+
+    suspend fun setMusicLyricsUiStyle(context: Context, style: MusicLyricsUiStyle) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_MUSIC_LYRICS_UI_STYLE] = style.value
+        }
     }
 
     internal fun shouldEnableAudioModeAutoPipToggle(mode: MiniPlayerMode): Boolean {
@@ -4964,7 +7303,7 @@ object SettingsManager {
     }
 
     fun getVideoNoteDefaultCollapsed(context: Context): Flow<Boolean> = context.settingsDataStore.data
-        .map { preferences -> preferences[KEY_VIDEO_NOTE_DEFAULT_COLLAPSED] ?: false }
+        .map { preferences -> preferences[KEY_VIDEO_NOTE_DEFAULT_COLLAPSED] ?: true }
 
     suspend fun setVideoNoteDefaultCollapsed(context: Context, enabled: Boolean) {
         context.settingsDataStore.edit { preferences ->
@@ -4978,30 +7317,62 @@ object SettingsManager {
 
     fun getVideoNoteDefaultCollapsedSync(context: Context): Boolean {
         return context.getSharedPreferences(VIDEO_NOTE_CACHE_PREFS, Context.MODE_PRIVATE)
-            .getBoolean(CACHE_KEY_VIDEO_NOTE_DEFAULT_COLLAPSED, false)
+            .getBoolean(CACHE_KEY_VIDEO_NOTE_DEFAULT_COLLAPSED, true)
     }
 
     fun getVideoInfoDefaultExpanded(context: Context): Flow<Boolean> = context.settingsDataStore.data
-        .map { preferences -> preferences[KEY_VIDEO_INFO_DEFAULT_EXPANDED] ?: true }
+        .map { preferences -> preferences[KEY_VIDEO_INFO_DEFAULT_EXPANDED] ?: false }
 
     suspend fun setVideoInfoDefaultExpanded(context: Context, enabled: Boolean) {
         context.settingsDataStore.edit { preferences ->
             preferences[KEY_VIDEO_INFO_DEFAULT_EXPANDED] = enabled
         }
     }
-    
+
+    /** UP 主视频声明(如"虚构演绎,请勿过度解读")在详情页是否显示,默认开。 */
+    fun getVideoArgueMsgShown(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_VIDEO_ARGUE_MSG_SHOWN] ?: true }
+
+    suspend fun setVideoArgueMsgShown(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_VIDEO_ARGUE_MSG_SHOWN] = enabled
+        }
+    }
+
+    fun getVideoTagSizePreset(context: Context): Flow<AppTagChipSize> = context.settingsDataStore.data
+        .map { preferences ->
+            AppTagChipSize.fromValue(preferences[KEY_VIDEO_TAG_SIZE_PRESET] ?: AppTagChipSize.STANDARD.value)
+        }
+
+    suspend fun setVideoTagSizePreset(context: Context, size: AppTagChipSize) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_VIDEO_TAG_SIZE_PRESET] = size.value
+        }
+    }
+
+    fun getVideoDetailChromeScrollHideEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data.map { preferences ->
+            preferences[KEY_VIDEO_DETAIL_CHROME_SCROLL_HIDE_ENABLED] ?: false
+        }
+
+    suspend fun setVideoDetailChromeScrollHideEnabled(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_VIDEO_DETAIL_CHROME_SCROLL_HIDE_ENABLED] = enabled
+        }
+    }
+
     // ==========  底栏显示模式 ==========
     
     private val KEY_BOTTOM_BAR_VISIBILITY_MODE = intPreferencesKey("bottom_bar_visibility_mode")
     
     /**
      *  底栏显示模式
-     * - SCROLL_HIDE: 上滑隐藏，下滑显示
+     * - SCROLL_HIDE: 向下浏览时隐藏，向上返回时显示
      * - ALWAYS_VISIBLE: 始终显示（默认）
      * - ALWAYS_HIDDEN: 永久隐藏
      */
     enum class BottomBarVisibilityMode(val value: Int, val label: String, val description: String) {
-        SCROLL_HIDE(0, "上滑隐藏", "上滑时隐藏底栏，下滑时显示"),
+        SCROLL_HIDE(0, "向下浏览时隐藏", "浏览更下方内容时隐藏，向上返回时显示"),
         ALWAYS_VISIBLE(1, "始终显示", "底栏始终可见"),
         ALWAYS_HIDDEN(2, "永久隐藏", "完全隐藏底栏");
         
@@ -5042,16 +7413,13 @@ object SettingsManager {
      * 传入 null 重置为默认路径
      */
     suspend fun setDownloadPath(context: Context, path: String?) {
-        context.settingsDataStore.edit { preferences -> 
-            if (path != null) {
-                preferences[KEY_DOWNLOAD_PATH] = path
-            } else {
-                preferences.remove(KEY_DOWNLOAD_PATH)
-            }
-        }
-        // [修复] 同步写入 SharedPreferences，供 DownloadManager 初始化时同步读取
-        context.getSharedPreferences("download_prefs", Context.MODE_PRIVATE)
-            .edit().putString("path", path).commit() // commit 确保立即写入
+        editSettingsAndCommitPrefs(
+            context, "download_prefs",
+            editSettings = {
+                if (path != null) this[KEY_DOWNLOAD_PATH] = path else remove(KEY_DOWNLOAD_PATH)
+            },
+            editPrefs = { putString("path", path) },
+        )
     }
 
     fun getDownloadExportTreeUri(context: Context): Flow<String?> = context.settingsDataStore.data
@@ -5060,15 +7428,13 @@ object SettingsManager {
         }
 
     suspend fun setDownloadExportTreeUri(context: Context, uri: String?) {
-        context.settingsDataStore.edit { preferences ->
-            if (uri != null) {
-                preferences[KEY_DOWNLOAD_EXPORT_TREE_URI] = uri
-            } else {
-                preferences.remove(KEY_DOWNLOAD_EXPORT_TREE_URI)
-            }
-        }
-        context.getSharedPreferences("download_prefs", Context.MODE_PRIVATE)
-            .edit().putString("tree_uri", uri).commit()
+        editSettingsAndCommitPrefs(
+            context, "download_prefs",
+            editSettings = {
+                if (uri != null) this[KEY_DOWNLOAD_EXPORT_TREE_URI] = uri else remove(KEY_DOWNLOAD_EXPORT_TREE_URI)
+            },
+            editPrefs = { putString("tree_uri", uri) },
+        )
     }
     
     /**
@@ -5091,15 +7457,13 @@ object SettingsManager {
         }
 
     suspend fun setImageSaveTreeUri(context: Context, uri: String?) {
-        context.settingsDataStore.edit { preferences ->
-            if (uri != null) {
-                preferences[KEY_IMAGE_SAVE_TREE_URI] = uri
-            } else {
-                preferences.remove(KEY_IMAGE_SAVE_TREE_URI)
-            }
-        }
-        context.getSharedPreferences("image_save_prefs", Context.MODE_PRIVATE)
-            .edit().putString("tree_uri", uri).commit()
+        editSettingsAndCommitPrefs(
+            context, "image_save_prefs",
+            editSettings = {
+                if (uri != null) this[KEY_IMAGE_SAVE_TREE_URI] = uri else remove(KEY_IMAGE_SAVE_TREE_URI)
+            },
+            editPrefs = { putString("tree_uri", uri) },
+        )
     }
 
     fun getImageSaveTreeUriSync(context: Context): String? {
@@ -5164,20 +7528,7 @@ object SettingsManager {
      * 根据模式和当前网络状态判断
      */
     fun isDataSaverActive(context: Context): Boolean {
-        val mode = getDataSaverModeSync(context)
-        return when (mode) {
-            DataSaverMode.OFF -> false
-            DataSaverMode.ALWAYS -> true
-            DataSaverMode.MOBILE_ONLY -> {
-                // 检测当前网络是否为移动数据
-                val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) 
-                    as android.net.ConnectivityManager
-                val network = connectivityManager.activeNetwork
-                val capabilities = connectivityManager.getNetworkCapabilities(network)
-                // 如果是蜂窝网络，则启用省流量
-                capabilities?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) == true
-            }
-        }
+        return DataSaverState.get(context).active.value
     }
     
     //  [新增] --- 底栏顺序配置 ---
@@ -5190,6 +7541,13 @@ object SettingsManager {
     suspend fun setBottomBarOrder(context: Context, order: List<String>) {
         context.settingsDataStore.edit { prefs ->
             prefs[KEY_BOTTOM_BAR_ORDER] = order.joinToString(",")
+        }
+    }
+
+    suspend fun setBottomBarConfiguration(context: Context, order: List<String>, visible: Set<String>) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[KEY_BOTTOM_BAR_ORDER] = order.joinToString(",")
+            prefs[KEY_BOTTOM_BAR_VISIBLE_TABS] = visible.joinToString(",")
         }
     }
     
@@ -5240,6 +7598,12 @@ object SettingsManager {
             prefs[KEY_BOTTOM_BAR_ITEM_COLORS] = colorMap.entries.joinToString(",") { "${it.key}:${it.value}" }
         }
     }
+
+    suspend fun setBottomBarItemLabel(context: Context, itemId: String, label: String) =
+        NavigationSettingsStore.setBottomBarItemLabel(context, itemId, label)
+
+    suspend fun clearBottomBarItemLabels(context: Context) =
+        NavigationSettingsStore.clearBottomBarItemLabels(context)
     
     // ==========  彩蛋设置 ==========
     
@@ -5266,17 +7630,21 @@ object SettingsManager {
     
     private val KEY_SWIPE_HIDE_PLAYER = booleanPreferencesKey("swipe_hide_player")
     private val KEY_PORTRAIT_PLAYER_COLLAPSE_MODE = intPreferencesKey("portrait_player_collapse_mode")
+    /** Auto-pause when the detail player is swipe-collapsed; default on. */
+    private val KEY_PAUSE_ON_PLAYER_COLLAPSE = booleanPreferencesKey("pause_on_player_collapse")
     private val KEY_PORTRAIT_SWIPE_TO_FULLSCREEN = booleanPreferencesKey("portrait_swipe_to_fullscreen")
     private val KEY_CENTER_SWIPE_TO_FULLSCREEN = booleanPreferencesKey("center_swipe_to_fullscreen")
-    private val KEY_INLINE_SWIPE_SEEK_SECONDS = intPreferencesKey("inline_swipe_seek_seconds")
     private val KEY_FULLSCREEN_SWIPE_SEEK_ENABLED = booleanPreferencesKey("fullscreen_swipe_seek_enabled")
-    private val KEY_FULLSCREEN_SWIPE_SEEK_SECONDS = intPreferencesKey("fullscreen_swipe_seek_seconds")
     private val KEY_FULLSCREEN_GESTURE_REVERSE = booleanPreferencesKey("fullscreen_gesture_reverse")
     private val KEY_HIDE_VIDEO_PAGE_STATUS_BAR = booleanPreferencesKey("hide_video_page_status_bar")
+    private val KEY_PORTRAIT_LETTERBOX_AMBIENT_HAZE =
+        booleanPreferencesKey("portrait_letterbox_ambient_haze")
     private val KEY_TABLET_COMMENT_PANEL_WIDTH_PRESET =
         intPreferencesKey("tablet_comment_panel_width_preset")
+    private val KEY_TABLET_SECONDARY_DEFAULT_TAB = intPreferencesKey("tablet_secondary_default_tab")
     private val KEY_AUTO_ENTER_FULLSCREEN = booleanPreferencesKey("auto_enter_fullscreen")
     private val KEY_AUTO_EXIT_FULLSCREEN = booleanPreferencesKey("auto_exit_fullscreen")
+    private val KEY_AUTO_EXIT_FULLSCREEN_MODE = intPreferencesKey("auto_exit_fullscreen_mode")
     private val KEY_SHOW_FULLSCREEN_LOCK_BUTTON = booleanPreferencesKey("show_fullscreen_lock_button")
     private val KEY_SHOW_FULLSCREEN_SCREENSHOT_BUTTON = booleanPreferencesKey("show_fullscreen_screenshot_button")
     private val KEY_APP_GESTURE_SCREENSHOT_ENABLED =
@@ -5288,13 +7656,18 @@ object SettingsManager {
     private val KEY_SHOW_FULLSCREEN_BATTERY_LEVEL = booleanPreferencesKey("show_fullscreen_battery_level")
     private val KEY_SHOW_FULLSCREEN_TIME = booleanPreferencesKey("show_fullscreen_time")
     private val KEY_SHOW_FULLSCREEN_ACTION_ITEMS = booleanPreferencesKey("show_fullscreen_action_items")
+    private val KEY_SHOW_CARD_ONLINE_COUNT = booleanPreferencesKey("show_card_online_count")
     private val KEY_SHOW_ONLINE_COUNT = booleanPreferencesKey("show_online_count")
+    private val KEY_SHOW_VIDEO_DETAIL_COMMENT_COUNT =
+        booleanPreferencesKey("show_video_detail_comment_count")
+    private val KEY_SHOW_PROFILE_EDIT_BUTTON = booleanPreferencesKey("show_profile_edit_button")
     private val KEY_COMMENT_COLLAPSED_REPLY_PREVIEW_LIMIT =
         intPreferencesKey("comment_collapsed_reply_preview_limit")
     private val KEY_PLAYER_DIAGNOSTIC_LOGGING_ENABLED =
         booleanPreferencesKey("player_diagnostic_logging_enabled")
     private val KEY_DASH_SEGMENT_REQUESTS_ENABLED =
         booleanPreferencesKey("dash_segment_requests_enabled")
+    private val KEY_PLAYBACK_CDN_PREFERENCE = stringPreferencesKey("playback_cdn_preference")
     private val KEY_QUALITY_SWITCH_FAILURE_DIALOG_ENABLED =
         booleanPreferencesKey("quality_switch_failure_dialog_enabled")
     private val KEY_QUALITY_SWITCH_FAILURE_DIALOG_ONCE_ENABLED =
@@ -5302,15 +7675,16 @@ object SettingsManager {
     private val KEY_QUALITY_SWITCH_FAILURE_DIALOG_SHOWN =
         booleanPreferencesKey("quality_switch_failure_dialog_shown")
     private val KEY_SUBTITLE_AUTO_PREFERENCE = intPreferencesKey("subtitle_auto_preference")
+    private val KEY_CHAPTER_DISPLAY_MODE = intPreferencesKey("chapter_display_mode")
     private val KEY_BOTTOM_PROGRESS_BEHAVIOR = intPreferencesKey("bottom_progress_behavior")
+    private val KEY_PROGRESS_PEAK_DANMAKU_ENABLED =
+        booleanPreferencesKey("progress_peak_danmaku_enabled")
+    private val KEY_DANMAKU_HOT_BAR_ENABLED =
+        booleanPreferencesKey("danmaku_hot_bar_enabled")
     private val KEY_HORIZONTAL_ADAPTATION = booleanPreferencesKey("horizontal_adaptation_enabled")
     private val KEY_FULLSCREEN_MODE = intPreferencesKey("fullscreen_mode")
     private val KEY_FULLSCREEN_ASPECT_RATIO = intPreferencesKey("fullscreen_aspect_ratio")
-    private val INLINE_SWIPE_SEEK_OPTIONS = listOf(5, 10, 15, 30, 60)
-    private val FULLSCREEN_SWIPE_SEEK_OPTIONS = listOf(10, 15, 20, 30)
     const val DEFAULT_COMMENT_COLLAPSED_REPLY_PREVIEW_LIMIT = 3
-    private const val COMMENT_PREVIEW_CACHE_PREFS = "comment_preview_cache"
-    private const val CACHE_KEY_COMMENT_COLLAPSED_REPLY_PREVIEW_LIMIT = "comment_collapsed_reply_preview_limit"
 
     fun normalizeCommentCollapsedReplyPreviewLimit(value: Int): Int = value.coerceIn(1, 10)
 
@@ -5349,6 +7723,18 @@ object SettingsManager {
         }
     }
 
+    // --- 播放器缩小后自动暂停（默认开启） ---
+    fun getPauseOnPlayerCollapseEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data.map { preferences ->
+            preferences[KEY_PAUSE_ON_PLAYER_COLLAPSE] ?: true
+        }
+
+    suspend fun setPauseOnPlayerCollapseEnabled(context: Context, value: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_PAUSE_ON_PLAYER_COLLAPSE] = value
+        }
+    }
+
     // --- 上滑隐藏播放器开关 ---
     fun getSwipeHidePlayerEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
         .map { preferences ->
@@ -5382,23 +7768,6 @@ object SettingsManager {
         context.settingsDataStore.edit { preferences -> preferences[KEY_CENTER_SWIPE_TO_FULLSCREEN] = value }
     }
 
-    // --- 非全屏左右滑动调进度范围（秒，默认 30） ---
-    fun getInlineSwipeSeekSeconds(context: Context): Flow<Int> = context.settingsDataStore.data
-        .map { preferences ->
-            val raw = preferences[KEY_INLINE_SWIPE_SEEK_SECONDS] ?: 30
-            normalizeInlineSwipeSeekSeconds(raw)
-        }
-
-    suspend fun setInlineSwipeSeekSeconds(context: Context, seconds: Int) {
-        context.settingsDataStore.edit { preferences ->
-            preferences[KEY_INLINE_SWIPE_SEEK_SECONDS] = normalizeInlineSwipeSeekSeconds(seconds)
-        }
-    }
-
-    private fun normalizeInlineSwipeSeekSeconds(seconds: Int): Int {
-        return INLINE_SWIPE_SEEK_OPTIONS.minByOrNull { option -> abs(option - seconds) } ?: 30
-    }
-
     // --- 横屏左右滑动精细调进度开关（默认开启） ---
     fun getFullscreenSwipeSeekEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
         .map { preferences -> preferences[KEY_FULLSCREEN_SWIPE_SEEK_ENABLED] ?: true }
@@ -5409,25 +7778,8 @@ object SettingsManager {
         }
     }
 
-    // --- 横屏左右滑动调进度范围（秒，默认 15） ---
-    fun getFullscreenSwipeSeekSeconds(context: Context): Flow<Int> = context.settingsDataStore.data
-        .map { preferences ->
-            val raw = preferences[KEY_FULLSCREEN_SWIPE_SEEK_SECONDS] ?: 15
-            normalizeFullscreenSwipeSeekSeconds(raw)
-        }
-
-    suspend fun setFullscreenSwipeSeekSeconds(context: Context, seconds: Int) {
-        context.settingsDataStore.edit { preferences ->
-            preferences[KEY_FULLSCREEN_SWIPE_SEEK_SECONDS] = normalizeFullscreenSwipeSeekSeconds(seconds)
-        }
-    }
-
-    private fun normalizeFullscreenSwipeSeekSeconds(seconds: Int): Int {
-        return FULLSCREEN_SWIPE_SEEK_OPTIONS.minByOrNull { option -> abs(option - seconds) } ?: 15
-    }
-
-    private fun isTabletConfiguration(context: Context): Boolean {
-        return context.resources.configuration.smallestScreenWidthDp >= 600
+    private fun isLargeScreenOrFoldableConfiguration(context: Context): Boolean {
+        return context.isLargeScreenOrFoldableConfiguration()
     }
 
     fun getFullscreenGestureReverse(context: Context): Flow<Boolean> = context.settingsDataStore.data
@@ -5437,6 +7789,31 @@ object SettingsManager {
         context.settingsDataStore.edit { preferences ->
             preferences[KEY_FULLSCREEN_GESTURE_REVERSE] = enabled
         }
+    }
+
+    private val KEY_VIDEO_AMBIENT_ENABLED = booleanPreferencesKey("video_ambient_enabled")
+    private val KEY_VIDEO_AMBIENT_STRENGTH = intPreferencesKey("video_ambient_strength")
+    private val KEY_VIDEO_AMBIENT_SAVING = booleanPreferencesKey("video_ambient_saving")
+
+    internal fun getVideoAmbientSettings(context: Context): Flow<com.android.purebilibili.feature.video.ambient.AmbientSettings> =
+        context.settingsDataStore.data.map { preferences ->
+            com.android.purebilibili.feature.video.ambient.AmbientSettings(
+                enabled = preferences[KEY_VIDEO_AMBIENT_ENABLED] ?: false,
+                strength = (preferences[KEY_VIDEO_AMBIENT_STRENGTH] ?: 1).coerceIn(0, 2),
+                powerSaving = preferences[KEY_VIDEO_AMBIENT_SAVING] ?: false,
+            )
+        }
+
+    internal suspend fun setVideoAmbientEnabled(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { it[KEY_VIDEO_AMBIENT_ENABLED] = enabled }
+    }
+
+    internal suspend fun setVideoAmbientStrength(context: Context, strength: Int) {
+        context.settingsDataStore.edit { it[KEY_VIDEO_AMBIENT_STRENGTH] = strength.coerceIn(0, 2) }
+    }
+
+    internal suspend fun setVideoAmbientPowerSaving(context: Context, saving: Boolean) {
+        context.settingsDataStore.edit { it[KEY_VIDEO_AMBIENT_SAVING] = saving }
     }
 
     fun getHideVideoPageStatusBar(context: Context): Flow<Boolean> = context.settingsDataStore.data
@@ -5463,6 +7840,21 @@ object SettingsManager {
             .getBoolean(CACHE_KEY_HIDE_VIDEO_PAGE_STATUS_BAR, false)
     }
 
+    fun getPortraitLetterboxAmbientHaze(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data
+            .map { preferences -> preferences[KEY_PORTRAIT_LETTERBOX_AMBIENT_HAZE] ?: true }
+
+    suspend fun setPortraitLetterboxAmbientHaze(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_PORTRAIT_LETTERBOX_AMBIENT_HAZE] = enabled
+        }
+    }
+
+    fun getPortraitLetterboxAmbientHazeSync(context: Context): Boolean {
+        // 无独立 cache；冷启动先用默认 true，DataStore 回填后以 Flow 为准。
+        return true
+    }
+
     fun getTabletCommentPanelWidthPreset(context: Context): Flow<TabletCommentPanelWidthPreset> =
         context.settingsDataStore.data
             .map { preferences ->
@@ -5481,6 +7873,23 @@ object SettingsManager {
         }
     }
 
+    fun getTabletSecondaryDefaultTab(context: Context): Flow<TabletSecondaryDefaultTab> =
+        context.settingsDataStore.data
+            .map { preferences ->
+                TabletSecondaryDefaultTab.fromValue(
+                    preferences[KEY_TABLET_SECONDARY_DEFAULT_TAB] ?: TabletSecondaryDefaultTab.RELATED.value
+                )
+            }
+
+    suspend fun setTabletSecondaryDefaultTab(
+        context: Context,
+        tab: TabletSecondaryDefaultTab,
+    ) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_TABLET_SECONDARY_DEFAULT_TAB] = tab.value
+        }
+    }
+
     fun getAutoEnterFullscreen(context: Context): Flow<Boolean> = context.settingsDataStore.data
         .map { preferences -> preferences[KEY_AUTO_ENTER_FULLSCREEN] ?: false }
 
@@ -5491,11 +7900,32 @@ object SettingsManager {
     }
 
     fun getAutoExitFullscreen(context: Context): Flow<Boolean> = context.settingsDataStore.data
-        .map { preferences -> preferences[KEY_AUTO_EXIT_FULLSCREEN] ?: true }
+        .map { preferences ->
+            resolveAutoExitFullscreenMode(
+                modeValue = preferences[KEY_AUTO_EXIT_FULLSCREEN_MODE],
+                legacyEnabled = preferences[KEY_AUTO_EXIT_FULLSCREEN],
+            ) != AutoExitFullscreenMode.OFF
+        }
+
+    fun getAutoExitFullscreenMode(context: Context): Flow<AutoExitFullscreenMode> =
+        context.settingsDataStore.data.map { preferences ->
+            resolveAutoExitFullscreenMode(
+                modeValue = preferences[KEY_AUTO_EXIT_FULLSCREEN_MODE],
+                legacyEnabled = preferences[KEY_AUTO_EXIT_FULLSCREEN],
+            )
+        }
 
     suspend fun setAutoExitFullscreen(context: Context, enabled: Boolean) {
+        setAutoExitFullscreenMode(
+            context,
+            AutoExitFullscreenMode.fromLegacyEnabled(enabled),
+        )
+    }
+
+    suspend fun setAutoExitFullscreenMode(context: Context, mode: AutoExitFullscreenMode) {
         context.settingsDataStore.edit { preferences ->
-            preferences[KEY_AUTO_EXIT_FULLSCREEN] = enabled
+            preferences[KEY_AUTO_EXIT_FULLSCREEN_MODE] = mode.value
+            preferences[KEY_AUTO_EXIT_FULLSCREEN] = mode != AutoExitFullscreenMode.OFF
         }
     }
 
@@ -5581,11 +8011,33 @@ object SettingsManager {
         }
     }
 
+    // Legacy value seeds card visibility until either independent switch is edited.
+    fun getShowCardOnlineCount(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_SHOW_CARD_ONLINE_COUNT] ?: preferences[KEY_SHOW_ONLINE_COUNT] ?: false }
+
+    suspend fun setShowCardOnlineCount(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_SHOW_CARD_ONLINE_COUNT] = enabled
+        }
+    }
+
     fun getShowOnlineCount(context: Context): Flow<Boolean> = context.settingsDataStore.data
         .map { preferences -> preferences[KEY_SHOW_ONLINE_COUNT] ?: false }
 
+    fun getShowVideoDetailCommentCount(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_SHOW_VIDEO_DETAIL_COMMENT_COUNT] ?: true }
+
+    suspend fun setShowVideoDetailCommentCount(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_SHOW_VIDEO_DETAIL_COMMENT_COUNT] = enabled
+        }
+    }
+
     suspend fun setShowOnlineCount(context: Context, enabled: Boolean) {
         context.settingsDataStore.edit { preferences ->
+            if (preferences[KEY_SHOW_CARD_ONLINE_COUNT] == null) {
+                preferences[KEY_SHOW_CARD_ONLINE_COUNT] = preferences[KEY_SHOW_ONLINE_COUNT] ?: false
+            }
             preferences[KEY_SHOW_ONLINE_COUNT] = enabled
         }
         context.getSharedPreferences("video_overlay_cache", Context.MODE_PRIVATE)
@@ -5597,6 +8049,15 @@ object SettingsManager {
     fun getShowOnlineCountSync(context: Context): Boolean {
         return context.getSharedPreferences("video_overlay_cache", Context.MODE_PRIVATE)
             .getBoolean("show_online_count", false)
+    }
+
+    fun getShowProfileEditButton(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_SHOW_PROFILE_EDIT_BUTTON] ?: true }
+
+    suspend fun setShowProfileEditButton(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_SHOW_PROFILE_EDIT_BUTTON] = enabled
+        }
     }
 
     fun getCommentCollapsedReplyPreviewLimit(context: Context): Flow<Int> = context.settingsDataStore.data
@@ -5612,20 +8073,6 @@ object SettingsManager {
         context.settingsDataStore.edit { preferences ->
             preferences[KEY_COMMENT_COLLAPSED_REPLY_PREVIEW_LIMIT] = normalized
         }
-        context.getSharedPreferences(COMMENT_PREVIEW_CACHE_PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putInt(CACHE_KEY_COMMENT_COLLAPSED_REPLY_PREVIEW_LIMIT, normalized)
-            .apply()
-    }
-
-    fun getCommentCollapsedReplyPreviewLimitSync(context: Context): Int {
-        return normalizeCommentCollapsedReplyPreviewLimit(
-            context.getSharedPreferences(COMMENT_PREVIEW_CACHE_PREFS, Context.MODE_PRIVATE)
-                .getInt(
-                    CACHE_KEY_COMMENT_COLLAPSED_REPLY_PREVIEW_LIMIT,
-                    DEFAULT_COMMENT_COLLAPSED_REPLY_PREVIEW_LIMIT
-                )
-        )
     }
 
     fun getPlayerDiagnosticLoggingEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
@@ -5643,7 +8090,8 @@ object SettingsManager {
 
     fun getDashSegmentRequestsEnabled(context: Context): Flow<Boolean> =
         context.settingsDataStore.data.map { preferences ->
-            preferences[KEY_DASH_SEGMENT_REQUESTS_ENABLED] ?: true
+            preferences[KEY_DASH_SEGMENT_REQUESTS_ENABLED]
+                ?: DEFAULT_DASH_SEGMENT_REQUESTS_ENABLED
         }
 
     suspend fun setDashSegmentRequestsEnabled(context: Context, enabled: Boolean) {
@@ -5651,6 +8099,17 @@ object SettingsManager {
             preferences[KEY_DASH_SEGMENT_REQUESTS_ENABLED] = enabled
         }
         PlayerSettingsCache.setDashSegmentRequestsEnabled(context, enabled)
+    }
+
+    fun getPlaybackCdnPreference(context: Context): Flow<String> =
+        context.settingsDataStore.data.map { preferences ->
+            preferences[KEY_PLAYBACK_CDN_PREFERENCE] ?: "base_url"
+        }
+
+    suspend fun setPlaybackCdnPreference(context: Context, preference: String) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_PLAYBACK_CDN_PREFERENCE] = preference
+        }
     }
 
     fun getQualitySwitchFailureDialogEnabled(context: Context): Flow<Boolean> =
@@ -5703,6 +8162,19 @@ object SettingsManager {
         }
     }
 
+    fun getChapterDisplayMode(context: Context): Flow<ChapterDisplayMode> =
+        context.settingsDataStore.data.map { preferences ->
+            ChapterDisplayMode.fromValue(
+                preferences[KEY_CHAPTER_DISPLAY_MODE] ?: ChapterDisplayMode.WITH_CONTROLS.value
+            )
+        }
+
+    suspend fun setChapterDisplayMode(context: Context, mode: ChapterDisplayMode) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_CHAPTER_DISPLAY_MODE] = mode.value
+        }
+    }
+
     fun getBottomProgressBehavior(context: Context): Flow<BottomProgressBehavior> =
         context.settingsDataStore.data.map { preferences ->
             BottomProgressBehavior.fromValue(
@@ -5717,9 +8189,32 @@ object SettingsManager {
         }
     }
 
+    /** 进度条上的 PBP 弹幕峰值曲线，默认关闭。 */
+    fun getProgressPeakDanmakuEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data.map { preferences ->
+            preferences[KEY_PROGRESS_PEAK_DANMAKU_ENABLED] ?: false
+        }
+
+    fun getDanmakuHotBarEnabled(context: Context): Flow<Boolean> =
+        context.settingsDataStore.data.map { preferences ->
+            preferences[KEY_DANMAKU_HOT_BAR_ENABLED] ?: true
+        }
+
+    suspend fun setDanmakuHotBarEnabled(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_DANMAKU_HOT_BAR_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setProgressPeakDanmakuEnabled(context: Context, enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_PROGRESS_PEAK_DANMAKU_ENABLED] = enabled
+        }
+    }
+
     fun getHorizontalAdaptationEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
         .map { preferences ->
-            preferences[KEY_HORIZONTAL_ADAPTATION] ?: isTabletConfiguration(context)
+            preferences[KEY_HORIZONTAL_ADAPTATION] ?: isLargeScreenOrFoldableConfiguration(context)
         }
 
     suspend fun setHorizontalAdaptationEnabled(context: Context, enabled: Boolean) {
@@ -5746,6 +8241,12 @@ object SettingsManager {
             )
         }
 
+    suspend fun savePlayerFullscreenAspectRatio(context: Context, ratio: FullscreenAspectRatio): Boolean {
+        if (!ContentDisplayPreferences.rememberPlayerAdjustments(context).first()) return false
+        setFullscreenAspectRatio(context, ratio)
+        return true
+    }
+
     suspend fun setFullscreenAspectRatio(context: Context, ratio: FullscreenAspectRatio) {
         context.settingsDataStore.edit { preferences ->
             preferences[KEY_FULLSCREEN_ASPECT_RATIO] = ratio.value
@@ -5763,33 +8264,77 @@ object SettingsManager {
     // ========== 📱 平板导航模式 ==========
     
     private val KEY_TABLET_NAVIGATION_MODE = booleanPreferencesKey("tablet_use_sidebar")
+    private val KEY_SIDEBAR_EXPANDED = booleanPreferencesKey("sidebar_expanded")
+    private val KEY_SIDEBAR_ACCOUNT_SWITCHER_ENABLED =
+        booleanPreferencesKey("sidebar_account_switcher_enabled")
     private val KEY_PREDICTIVE_BACK_ENABLED = booleanPreferencesKey("predictive_back_enabled")
     private val KEY_PREDICTIVE_BACK_ANIMATION_STYLE = stringPreferencesKey("predictive_back_animation_style")
     private val KEY_PREDICTIVE_BACK_EXIT_DIRECTION = stringPreferencesKey("predictive_back_exit_direction")
+    private val KEY_MIUIX_TRANSITION_BLUR_ENABLED =
+        booleanPreferencesKey("miuix_transition_blur_enabled")
     
     /**
      *  平板导航模式
-     * - false: 使用底栏（默认，与手机一致）
+     * - false: 使用底栏
      * - true: 使用侧边栏
+     *
+     * 未写入偏好时：平板/大屏设备默认开启侧边栏（与横屏适配的设备预设一致）；
+     * 手机仍默认底栏。手机上即使为 true 也不会生效，因侧栏仍受 WindowSizeClass 门禁约束。
      */
     fun getTabletUseSidebar(context: Context): Flow<Boolean> = context.settingsDataStore.data
-        .map { preferences -> preferences[KEY_TABLET_NAVIGATION_MODE] ?: false }  // 默认使用底栏
+        .map { preferences ->
+            preferences[KEY_TABLET_NAVIGATION_MODE]
+                ?: defaultTabletUseSidebar(isLargeScreenOrFoldableConfiguration(context))
+        }
 
-    internal fun mapAppNavigationSettingsFromPreferences(preferences: Preferences): AppNavigationSettings {
+    fun getSidebarAccountSwitcherEnabled(context: Context): Flow<Boolean> = context.settingsDataStore.data
+        .map { preferences -> preferences[KEY_SIDEBAR_ACCOUNT_SWITCHER_ENABLED] ?: true }
+
+    internal fun mapAppNavigationSettingsFromPreferences(
+        preferences: Preferences,
+        defaultTabletUseSidebar: Boolean = false
+    ): AppNavigationSettings {
         val orderString = preferences[KEY_BOTTOM_BAR_ORDER] ?: DEFAULT_BOTTOM_BAR_ORDER
         val tabsString = preferences[KEY_BOTTOM_BAR_VISIBLE_TABS] ?: DEFAULT_BOTTOM_BAR_VISIBLE_TABS
         val order = orderString.split(",").filter { it.isNotBlank() }
         val visible = tabsString.split(",").filter { it.isNotBlank() }
+        val savedVisibility = BottomBarVisibilityMode.fromValue(
+            preferences[KEY_BOTTOM_BAR_VISIBILITY_MODE] ?: BottomBarVisibilityMode.ALWAYS_VISIBLE.value
+        )
+        // 用户选择的整栏显隐策略优先；Dock 收缩不能将下滑隐藏改成始终显示。
         return AppNavigationSettings(
-            bottomBarVisibilityMode = BottomBarVisibilityMode.fromValue(
-                preferences[KEY_BOTTOM_BAR_VISIBILITY_MODE] ?: BottomBarVisibilityMode.ALWAYS_VISIBLE.value
-            ),
+            liquidIndicatorDynamicLengthEnabled =
+                preferences[com.android.purebilibili.core.store.navigation.liquidIndicatorDynamicLengthPreferencesKey] ?: true,
+            liquidIndicatorWobbleEnabled =
+                preferences[com.android.purebilibili.core.store.navigation.liquidIndicatorWobblePreferencesKey] ?: true,
+            bottomBarVisibilityMode = savedVisibility,
+            savedBottomBarVisibilityMode = savedVisibility,
+            bottomBarOrder = order,
+            bottomBarVisibleTabs = visible.toSet(),
             orderedVisibleTabIds = resolveOrderedVisibleBottomTabs(order, visible),
             bottomBarItemColors = parseBottomBarItemColors(preferences[KEY_BOTTOM_BAR_ITEM_COLORS] ?: ""),
-            tabletUseSidebar = preferences[KEY_TABLET_NAVIGATION_MODE] ?: false,
+            bottomBarItemLabels = parseBottomBarItemLabels(
+                preferences[bottomBarItemLabelsPreferencesKey].orEmpty()
+            ),
+            tabletUseSidebar = preferences[KEY_TABLET_NAVIGATION_MODE] ?: defaultTabletUseSidebar,
+            sidebarExpanded = preferences[KEY_SIDEBAR_EXPANDED] ?: true,
+            sidebarAccountSwitcherEnabled =
+                preferences[KEY_SIDEBAR_ACCOUNT_SWITCHER_ENABLED] ?: true,
             predictiveBackEnabled = preferences[KEY_PREDICTIVE_BACK_ENABLED] ?: true,
-            predictiveBackAnimationStyle = preferences[KEY_PREDICTIVE_BACK_ANIMATION_STYLE] ?: "scale",
-            predictiveBackExitDirection = preferences[KEY_PREDICTIVE_BACK_EXIT_DIRECTION] ?: "auto",
+            predictiveBackAnimationStyle = preferences[KEY_PREDICTIVE_BACK_ANIMATION_STYLE] ?: "miuix",
+            predictiveBackExitDirection =
+                preferences[KEY_PREDICTIVE_BACK_EXIT_DIRECTION] ?: "always_right",
+            miuixTransitionBlurEnabled = preferences[KEY_MIUIX_TRANSITION_BLUR_ENABLED] ?: true,
+            miuixPredictiveBackMaxProgressPercent =
+                (preferences[miuixPredictiveBackMaxProgressPercentPreferencesKey] ?: 100)
+                    .coerceIn(0, 100),
+            videoTransitionMode = VideoTransitionMode.fromStorageValue(
+                preferences[KEY_VIDEO_TRANSITION_MODE]
+            ),
+            settingsContainerMorphEnabled =
+                preferences[booleanPreferencesKey("settings_container_morph_enabled")] ?: true,
+            settingsContainerRealtimeBlurEnabled =
+                preferences[booleanPreferencesKey("settings_container_realtime_blur_enabled")] ?: false,
         )
     }
 
@@ -5811,8 +8356,24 @@ object SettingsManager {
         NavigationSettingsStore.setTabletUseSidebar(context, useSidebar)
     }
 
+    suspend fun setSidebarExpanded(context: Context, expanded: Boolean) {
+        NavigationSettingsStore.setSidebarExpanded(context, expanded)
+    }
+
+    suspend fun setSidebarAccountSwitcherEnabled(context: Context, enabled: Boolean) {
+        NavigationSettingsStore.setSidebarAccountSwitcherEnabled(context, enabled)
+    }
+
     suspend fun setPredictiveBackEnabled(context: Context, enabled: Boolean) {
         NavigationSettingsStore.setPredictiveBackEnabled(context, enabled)
+    }
+
+    suspend fun setLiquidIndicatorDynamicLengthEnabled(context: Context, enabled: Boolean) {
+        NavigationSettingsStore.setLiquidIndicatorDynamicLengthEnabled(context, enabled)
+    }
+
+    suspend fun setLiquidIndicatorWobbleEnabled(context: Context, enabled: Boolean) {
+        NavigationSettingsStore.setLiquidIndicatorWobbleEnabled(context, enabled)
     }
 
     suspend fun setPredictiveBackAnimationStyle(context: Context, style: String) {
@@ -5821,6 +8382,35 @@ object SettingsManager {
 
     suspend fun setPredictiveBackExitDirection(context: Context, direction: String) {
         NavigationSettingsStore.setPredictiveBackExitDirection(context, direction)
+    }
+
+    suspend fun setMiuixTransitionBlurEnabled(context: Context, enabled: Boolean) {
+        NavigationSettingsStore.setMiuixTransitionBlurEnabled(context, enabled)
+    }
+
+    suspend fun setMiuixPredictiveBackMaxProgressPercent(context: Context, percent: Int) {
+        NavigationSettingsStore.setMiuixPredictiveBackMaxProgressPercent(context, percent)
+    }
+
+    fun getSettingsContainerRealtimeBlurEnabled(context: Context): Flow<Boolean> =
+        NavigationSettingsStore.getSettingsContainerRealtimeBlurEnabled(context)
+
+    suspend fun setSettingsContainerRealtimeBlurEnabled(context: Context, enabled: Boolean) {
+        NavigationSettingsStore.setSettingsContainerRealtimeBlurEnabled(context, enabled)
+    }
+
+    fun getSettingsContainerMorphEnabled(context: Context): Flow<Boolean> =
+        NavigationSettingsStore.getSettingsContainerMorphEnabled(context)
+
+    suspend fun setSettingsContainerMorphEnabled(context: Context, enabled: Boolean) {
+        NavigationSettingsStore.setSettingsContainerMorphEnabled(context, enabled)
+    }
+
+    fun getFullScreenSwipeBackEnabled(context: Context): Flow<Boolean> =
+        NavigationSettingsStore.getFullScreenSwipeBackEnabled(context)
+
+    suspend fun setFullScreenSwipeBackEnabled(context: Context, enabled: Boolean) {
+        NavigationSettingsStore.setFullScreenSwipeBackEnabled(context, enabled)
     }
     
     // ========== [问题12] 视频操作按钮可见性 ==========
@@ -5882,6 +8472,35 @@ object SettingsManager {
     suspend fun setDynamicLayoutDirection(context: Context, direction: DynamicLayoutDirection) {
         context.settingsDataStore.edit { preferences -> 
             preferences[KEY_DYNAMIC_PAGE_LAYOUT_DIRECTION] = direction.value 
+        }
+    }
+
+    // ========== [新增] 动态 Feed 布局模式（对齐 BiliPai dynamicsWaterfallFlow） ==========
+
+    private val KEY_DYNAMIC_FEED_LAYOUT_MODE = intPreferencesKey("dynamic_feed_layout_mode")
+
+    /**
+     *  动态 Feed 布局模式
+     * - 0: 瀑布流（默认，多列自适应）
+     * - 1: 列表（单列居中）
+     */
+    enum class DynamicFeedLayoutMode(val value: Int, val label: String) {
+        WATERFALL(0, "瀑布流"),
+        LIST(1, "列表");
+
+        companion object {
+            fun fromValue(value: Int): DynamicFeedLayoutMode = entries.find { it.value == value } ?: WATERFALL
+        }
+    }
+
+    fun getDynamicFeedLayoutMode(context: Context): Flow<DynamicFeedLayoutMode> = context.settingsDataStore.data
+        .map { preferences ->
+            DynamicFeedLayoutMode.fromValue(preferences[KEY_DYNAMIC_FEED_LAYOUT_MODE] ?: 0)
+        }
+
+    suspend fun setDynamicFeedLayoutMode(context: Context, mode: DynamicFeedLayoutMode) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_DYNAMIC_FEED_LAYOUT_MODE] = mode.value
         }
     }
 
@@ -5992,13 +8611,19 @@ object SettingsManager {
 
     private val shareableSettingDefinitions: List<ShareablePreferenceDefinition> by lazy {
         listOf(
-            IntShareablePreferenceDefinition(KEY_UI_PRESET, SettingsShareSection.APPEARANCE),
+            StringShareablePreferenceDefinition(KEY_THEME_SELECTION, SettingsShareSection.APPEARANCE),
             IntShareablePreferenceDefinition(KEY_THEME_MODE, SettingsShareSection.APPEARANCE),
+            BooleanShareablePreferenceDefinition(KEY_DARK_SCHEDULE_ENABLED, SettingsShareSection.APPEARANCE),
+            IntShareablePreferenceDefinition(KEY_DARK_SCHEDULE_START, SettingsShareSection.APPEARANCE),
+            IntShareablePreferenceDefinition(KEY_DARK_SCHEDULE_END, SettingsShareSection.APPEARANCE),
             IntShareablePreferenceDefinition(KEY_DARK_THEME_STYLE, SettingsShareSection.APPEARANCE),
             IntShareablePreferenceDefinition(KEY_APP_LANGUAGE, SettingsShareSection.APPEARANCE),
             BooleanShareablePreferenceDefinition(KEY_DYNAMIC_COLOR, SettingsShareSection.APPEARANCE),
             StringShareablePreferenceDefinition(KEY_MD3_COLOR_SOURCE, SettingsShareSection.APPEARANCE),
             StringShareablePreferenceDefinition(KEY_MD3_CUSTOM_COLOR_HEX, SettingsShareSection.APPEARANCE),
+            *wallpaperPalettePreferenceKeys.values.map {
+                StringShareablePreferenceDefinition(it, SettingsShareSection.APPEARANCE)
+            }.toTypedArray(),
             BooleanShareablePreferenceDefinition(KEY_THEME_ROLE_OVERRIDES_ENABLED, SettingsShareSection.APPEARANCE),
             StringShareablePreferenceDefinition(KEY_THEME_LIGHT_BACKGROUND, SettingsShareSection.APPEARANCE),
             StringShareablePreferenceDefinition(KEY_THEME_LIGHT_PRIMARY_TEXT, SettingsShareSection.APPEARANCE),
@@ -6008,30 +8633,104 @@ object SettingsManager {
             StringShareablePreferenceDefinition(KEY_THEME_DARK_PRIMARY_TEXT, SettingsShareSection.APPEARANCE),
             StringShareablePreferenceDefinition(KEY_THEME_DARK_SECONDARY_TEXT, SettingsShareSection.APPEARANCE),
             StringShareablePreferenceDefinition(KEY_THEME_DARK_CONTROL_ACCENT, SettingsShareSection.APPEARANCE),
+            StringShareablePreferenceDefinition(KEY_SEED_PALETTE_STYLE, SettingsShareSection.APPEARANCE),
             StringShareablePreferenceDefinition(KEY_THEME_COLOR_STYLE, SettingsShareSection.APPEARANCE),
             StringShareablePreferenceDefinition(KEY_THEME_COLOR_SPEC, SettingsShareSection.APPEARANCE),
+            StringShareablePreferenceDefinition(KEY_THEME_COLOR_CONTRAST, SettingsShareSection.APPEARANCE),
+            StringShareablePreferenceDefinition(
+                KEY_SINGLE_CHOICE_PRESENTATION,
+                SettingsShareSection.APPEARANCE,
+            ),
             IntShareablePreferenceDefinition(KEY_THEME_COLOR_INDEX, SettingsShareSection.APPEARANCE),
             StringShareablePreferenceDefinition(KEY_APP_ICON, SettingsShareSection.APPEARANCE),
+            IntShareablePreferenceDefinition(KEY_APP_ICON_APPEARANCE, SettingsShareSection.APPEARANCE),
+            StringShareablePreferenceDefinition(KEY_APP_ICON_STYLE, SettingsShareSection.APPEARANCE),
+            StringShareablePreferenceDefinition(KEY_APP_LIST_ITEM_STYLE, SettingsShareSection.APPEARANCE),
             BooleanShareablePreferenceDefinition(KEY_BOTTOM_BAR_FLOATING, SettingsShareSection.APPEARANCE),
+            BooleanShareablePreferenceDefinition(
+                KEY_NAVIGATION_ICON_CROSS_SCALE_ENABLED,
+                SettingsShareSection.APPEARANCE,
+            ),
             IntShareablePreferenceDefinition(KEY_BOTTOM_BAR_LABEL_MODE, SettingsShareSection.APPEARANCE),
             IntShareablePreferenceDefinition(KEY_TOP_TAB_LABEL_MODE, SettingsShareSection.APPEARANCE),
+            BooleanShareablePreferenceDefinition(KEY_PARTITION_SIDE_RAIL_ON_RIGHT, SettingsShareSection.APPEARANCE),
+            BooleanShareablePreferenceDefinition(KEY_HIDE_TOP_TABS, SettingsShareSection.APPEARANCE),
             IntShareablePreferenceDefinition(KEY_HOME_TOP_RIGHT_ACTION, SettingsShareSection.APPEARANCE),
             StringShareablePreferenceDefinition(KEY_TOP_TAB_ORDER, SettingsShareSection.APPEARANCE),
             StringShareablePreferenceDefinition(KEY_TOP_TAB_VISIBLE_TABS, SettingsShareSection.APPEARANCE),
             StringShareablePreferenceDefinition(KEY_DYNAMIC_TAB_VISIBLE_TABS, SettingsShareSection.APPEARANCE),
             BooleanShareablePreferenceDefinition(KEY_HEADER_BLUR_ENABLED, SettingsShareSection.APPEARANCE),
             BooleanShareablePreferenceDefinition(KEY_BOTTOM_BAR_BLUR_ENABLED, SettingsShareSection.APPEARANCE),
+            BooleanShareablePreferenceDefinition(
+                KEY_TOP_BAR_LIQUID_GLASS_ENABLED,
+                SettingsShareSection.APPEARANCE,
+            ),
+            BooleanShareablePreferenceDefinition(
+                KEY_HOME_SEARCH_LIQUID_GLASS_ENABLED,
+                SettingsShareSection.APPEARANCE,
+            ),
             BooleanShareablePreferenceDefinition(KEY_BOTTOM_BAR_LIQUID_GLASS_ENABLED, SettingsShareSection.APPEARANCE),
+            BooleanShareablePreferenceDefinition(KEY_LIQUID_CONTROLS_USE_THEME_COLOR, SettingsShareSection.APPEARANCE),
             IntShareablePreferenceDefinition(KEY_BOTTOM_BAR_SEARCH_LAYOUT_MODE, SettingsShareSection.APPEARANCE),
             BooleanShareablePreferenceDefinition(
                 KEY_ANDROID_NATIVE_LIQUID_GLASS_ENABLED,
                 SettingsShareSection.APPEARANCE
             ),
+            IntShareablePreferenceDefinition(KEY_LIQUID_GLASS_SCENES_DISABLED, SettingsShareSection.APPEARANCE),
             BooleanShareablePreferenceDefinition(KEY_LIQUID_GLASS_ENABLED, SettingsShareSection.APPEARANCE),
             IntShareablePreferenceDefinition(KEY_LIQUID_GLASS_STYLE, SettingsShareSection.APPEARANCE),
+            IntShareablePreferenceDefinition(KEY_LIQUID_GLASS_MODE, SettingsShareSection.APPEARANCE),
+            FloatShareablePreferenceDefinition(
+                KEY_LIQUID_GLASS_STRENGTH,
+                SettingsShareSection.APPEARANCE,
+            ),
+            FloatShareablePreferenceDefinition(
+                KEY_LIQUID_GLASS_PROGRESS,
+                SettingsShareSection.APPEARANCE,
+            ),
+            IntShareablePreferenceDefinition(
+                KEY_LIQUID_GLASS_ADVANCED_PRESET,
+                SettingsShareSection.APPEARANCE,
+            ),
+            FloatShareablePreferenceDefinition(
+                KEY_LIQUID_GLASS_PROGRESSIVE_BLUR_RADIUS,
+                SettingsShareSection.APPEARANCE,
+            ),
+            FloatShareablePreferenceDefinition(
+                KEY_LIQUID_GLASS_PROGRESSIVE_BLUR_EXTENT,
+                SettingsShareSection.APPEARANCE,
+            ),
+            FloatShareablePreferenceDefinition(
+                KEY_LIQUID_GLASS_PROGRESSIVE_BLUR_CURVE,
+                SettingsShareSection.APPEARANCE,
+            ),
+            IntShareablePreferenceDefinition(
+                liquidGlassReadabilityModePreferencesKey,
+                SettingsShareSection.APPEARANCE,
+            ),
+            IntShareablePreferenceDefinition(glassPopupPalettePreferencesKey, SettingsShareSection.APPEARANCE),
+            FloatShareablePreferenceDefinition(
+                KEY_LIQUID_GLASS_CONTENT_READABILITY,
+                SettingsShareSection.APPEARANCE,
+            ),
+            FloatShareablePreferenceDefinition(
+                KEY_LIQUID_GLASS_CHROMATIC_ABERRATION,
+                SettingsShareSection.APPEARANCE,
+            ),
+            FloatShareablePreferenceDefinition(
+                KEY_LIQUID_GLASS_CONTENT_DISTORTION,
+                SettingsShareSection.APPEARANCE,
+            ),
             StringShareablePreferenceDefinition(KEY_BLUR_INTENSITY, SettingsShareSection.APPEARANCE),
             IntShareablePreferenceDefinition(KEY_DISPLAY_MODE, SettingsShareSection.APPEARANCE),
             IntShareablePreferenceDefinition(KEY_GRID_COLUMN_COUNT, SettingsShareSection.APPEARANCE),
+            IntShareablePreferenceDefinition(KEY_GRID_COLUMN_COUNT_COMPACT, SettingsShareSection.APPEARANCE),
+            BooleanShareablePreferenceDefinition(KEY_GRID_COLUMN_CUSTOMIZATION_ENABLED, SettingsShareSection.APPEARANCE),
+            BooleanShareablePreferenceDefinition(KEY_GRID_COLUMNS_SHARED_ACROSS_PAGES, SettingsShareSection.APPEARANCE),
+            BooleanShareablePreferenceDefinition(
+                KEY_PINCH_TO_CHANGE_GRID_COLUMNS_ENABLED,
+                SettingsShareSection.APPEARANCE
+            ),
             IntShareablePreferenceDefinition(
                 KEY_HOME_FEED_CARD_WIDTH_PRESET,
                 SettingsShareSection.APPEARANCE
@@ -6040,45 +8739,124 @@ object SettingsManager {
             BooleanShareablePreferenceDefinition(KEY_HOME_HERO_CAROUSEL_ENABLED, SettingsShareSection.APPEARANCE),
             BooleanShareablePreferenceDefinition(KEY_HOME_HERO_CAROUSEL_AUTOPLAY_ENABLED, SettingsShareSection.APPEARANCE),
             BooleanShareablePreferenceDefinition(KEY_CARD_ANIMATION_ENABLED, SettingsShareSection.APPEARANCE),
+            BooleanShareablePreferenceDefinition(SkeletonSettingsStore.breathingKey, SettingsShareSection.APPEARANCE),
+            BooleanShareablePreferenceDefinition(KEY_MAID_LOTTIE_ANIMATION_ENABLED, SettingsShareSection.APPEARANCE),
             BooleanShareablePreferenceDefinition(KEY_UI_ENTRANCE_ANIMATION_ENABLED, SettingsShareSection.APPEARANCE),
+            BooleanShareablePreferenceDefinition(KEY_GLOBAL_DRAG_FEEDBACK_ENABLED, SettingsShareSection.APPEARANCE),
+            BooleanShareablePreferenceDefinition(
+                com.android.purebilibili.core.store.navigation.liquidIndicatorDynamicLengthPreferencesKey,
+                SettingsShareSection.APPEARANCE,
+            ),
+            BooleanShareablePreferenceDefinition(
+                com.android.purebilibili.core.store.navigation.liquidIndicatorWobblePreferencesKey,
+                SettingsShareSection.APPEARANCE,
+            ),
             BooleanShareablePreferenceDefinition(KEY_CARD_TRANSITION_ENABLED, SettingsShareSection.APPEARANCE),
-            IntShareablePreferenceDefinition(KEY_VIDEO_SHARED_TRANSITION_SPEED, SettingsShareSection.APPEARANCE),
-            IntShareablePreferenceDefinition(
-                KEY_VIDEO_SHARED_TRANSITION_CUSTOM_DURATION_MILLIS,
+            StringShareablePreferenceDefinition(KEY_VIDEO_TRANSITION_MODE, SettingsShareSection.APPEARANCE),
+            BooleanShareablePreferenceDefinition(KEY_LIVE_SURFACE_CARD_TRANSITION_ENABLED, SettingsShareSection.APPEARANCE),
+
+            BooleanShareablePreferenceDefinition(
+                booleanPreferencesKey("settings_container_realtime_blur_enabled"),
+                SettingsShareSection.APPEARANCE,
+            ),
+
+            BooleanShareablePreferenceDefinition(
+                KEY_VIDEO_TRANSITION_REALTIME_BLUR_ENABLED,
                 SettingsShareSection.APPEARANCE
             ),
+            BooleanShareablePreferenceDefinition(
+                KEY_MIUIX_TRANSITION_BLUR_ENABLED,
+                SettingsShareSection.APPEARANCE,
+            ),
+            IntShareablePreferenceDefinition(
+                miuixPredictiveBackMaxProgressPercentPreferencesKey,
+                SettingsShareSection.APPEARANCE,
+            ),
+
+
             BooleanShareablePreferenceDefinition(KEY_COMPACT_VIDEO_STATS_ON_COVER, SettingsShareSection.APPEARANCE),
             StringShareablePreferenceDefinition(KEY_HOME_WALLPAPER_URI, SettingsShareSection.APPEARANCE),
+            FloatShareablePreferenceDefinition(KEY_HOME_WALLPAPER_SCALE_MOBILE, SettingsShareSection.APPEARANCE),
+            FloatShareablePreferenceDefinition(KEY_HOME_WALLPAPER_OFFSET_X_MOBILE, SettingsShareSection.APPEARANCE),
+            FloatShareablePreferenceDefinition(KEY_HOME_WALLPAPER_OFFSET_Y_MOBILE, SettingsShareSection.APPEARANCE),
+            FloatShareablePreferenceDefinition(KEY_HOME_WALLPAPER_SCALE_TABLET, SettingsShareSection.APPEARANCE),
+            FloatShareablePreferenceDefinition(KEY_HOME_WALLPAPER_OFFSET_X_TABLET, SettingsShareSection.APPEARANCE),
+            FloatShareablePreferenceDefinition(KEY_HOME_WALLPAPER_OFFSET_Y_TABLET, SettingsShareSection.APPEARANCE),
             IntShareablePreferenceDefinition(KEY_HOME_WALLPAPER_EFFECT_MODE, SettingsShareSection.APPEARANCE),
+            IntShareablePreferenceDefinition(KEY_HOME_WALLPAPER_EFFECT_SCOPE, SettingsShareSection.APPEARANCE),
             BooleanShareablePreferenceDefinition(KEY_HOME_UP_BADGES_VISIBLE, SettingsShareSection.APPEARANCE),
+            BooleanShareablePreferenceDefinition(ContentDisplayPreferences.rememberPlayerAdjustmentsKey, SettingsShareSection.PLAYBACK),
+            IntShareablePreferenceDefinition(ContentDisplayPreferences.rotationSensitivityKey, SettingsShareSection.PLAYBACK),
+            IntShareablePreferenceDefinition(ContentDisplayPreferences.playerControlsTimeoutKey, SettingsShareSection.PLAYBACK),
+            BooleanShareablePreferenceDefinition(ContentDisplayPreferences.dynamicVisibilityCheckKey, SettingsShareSection.NAVIGATION),
+            IntShareablePreferenceDefinition(ContentDisplayPreferences.listQualityKey, SettingsShareSection.APPEARANCE),
+            IntShareablePreferenceDefinition(ContentDisplayPreferences.previewQualityKey, SettingsShareSection.APPEARANCE),
+            IntShareablePreferenceDefinition(ContentDisplayPreferences.darkDimKey, SettingsShareSection.APPEARANCE),
+            IntShareablePreferenceDefinition(ContentDisplayPreferences.springKey, SettingsShareSection.APPEARANCE),
+            BooleanShareablePreferenceDefinition(ContentDisplayPreferences.keepRecommendKey, SettingsShareSection.NAVIGATION),
+            BooleanShareablePreferenceDefinition(KEY_HOME_REFRESH_TIP_VISIBLE, SettingsShareSection.APPEARANCE),
+            BooleanShareablePreferenceDefinition(KEY_HOME_REFRESH_UNDO_VISIBLE, SettingsShareSection.APPEARANCE),
+            BooleanShareablePreferenceDefinition(KEY_HOME_UP_AVATARS_VISIBLE, SettingsShareSection.APPEARANCE),
+            BooleanShareablePreferenceDefinition(KEY_HOME_PUBLISH_TIME_VISIBLE, SettingsShareSection.APPEARANCE),
+            BooleanShareablePreferenceDefinition(KEY_FULL_VIDEO_CARD_CONTENT_VISIBLE, SettingsShareSection.APPEARANCE),
+            BooleanShareablePreferenceDefinition(KEY_VIDEO_CARD_LONG_PRESS_ACTION_ENABLED, SettingsShareSection.APPEARANCE),
             BooleanShareablePreferenceDefinition(KEY_HOME_VIDEO_DURATION_BADGES_VISIBLE, SettingsShareSection.APPEARANCE),
             IntShareablePreferenceDefinition(KEY_HOME_DURATION_STYLE, SettingsShareSection.APPEARANCE),
+            BooleanShareablePreferenceDefinition(KEY_SHOW_PROFILE_EDIT_BUTTON, SettingsShareSection.APPEARANCE),
 
+            IntShareablePreferenceDefinition(KEY_LIVE_WIFI_QUALITY, SettingsShareSection.PLAYBACK),
+            IntShareablePreferenceDefinition(KEY_LIVE_MOBILE_QUALITY, SettingsShareSection.PLAYBACK),
+            StringShareablePreferenceDefinition(KEY_LIVE_CDN_HOST, SettingsShareSection.PLAYBACK),
+            BooleanShareablePreferenceDefinition(KEY_LIVE_SUPER_CHAT_ENABLED, SettingsShareSection.PLAYBACK),
+            BooleanShareablePreferenceDefinition(KEY_LIVE_AUTO_MINI_PLAYER_ENABLED, SettingsShareSection.PLAYBACK),
+            BooleanShareablePreferenceDefinition(KEY_NEXT_WATCH_HINT_ENABLED, SettingsShareSection.PLAYBACK),
             BooleanShareablePreferenceDefinition(KEY_AUTO_PLAY, SettingsShareSection.PLAYBACK),
+            BooleanShareablePreferenceDefinition(KEY_RESILIENT_VIDEO_BUFFER, SettingsShareSection.PLAYBACK),
             IntShareablePreferenceDefinition(KEY_PLAYBACK_COMPLETION_BEHAVIOR, SettingsShareSection.PLAYBACK),
             BooleanShareablePreferenceDefinition(KEY_HW_DECODE, SettingsShareSection.PLAYBACK),
             BooleanShareablePreferenceDefinition(KEY_BG_PLAY, SettingsShareSection.PLAYBACK),
             FloatShareablePreferenceDefinition(KEY_DEFAULT_PLAYBACK_SPEED, SettingsShareSection.PLAYBACK),
+            StringShareablePreferenceDefinition(playbackSpeedOptionsPreferenceKey, SettingsShareSection.PLAYBACK),
             BooleanShareablePreferenceDefinition(KEY_REMEMBER_LAST_PLAYBACK_SPEED, SettingsShareSection.PLAYBACK),
             IntShareablePreferenceDefinition(KEY_COMMENT_DEFAULT_SORT_MODE, SettingsShareSection.PLAYBACK),
             BooleanShareablePreferenceDefinition(KEY_COMMENT_FRAUD_DETECTION_ENABLED, SettingsShareSection.PLAYBACK),
+            BooleanShareablePreferenceDefinition(KEY_COMMENT_AVATAR_PUSH_ENABLED, SettingsShareSection.PLAYBACK),
             BooleanShareablePreferenceDefinition(KEY_COMMENT_MEMBER_DECORATIONS_ENABLED, SettingsShareSection.PLAYBACK),
+            BooleanShareablePreferenceDefinition(KEY_DETAILED_COMMENT_TIME_ENABLED, SettingsShareSection.PLAYBACK),
             BooleanShareablePreferenceDefinition(KEY_IMAGE_PREVIEW_LONG_PRESS_SAVE_ENABLED, SettingsShareSection.PLAYBACK),
+            BooleanShareablePreferenceDefinition(KEY_IMAGE_PREVIEW_3D_PAGE_ENABLED, SettingsShareSection.PLAYBACK),
             BooleanShareablePreferenceDefinition(KEY_STOP_PLAYBACK_ON_EXIT, SettingsShareSection.PLAYBACK),
             BooleanShareablePreferenceDefinition(KEY_BACKGROUND_PLAYBACK_ENABLED, SettingsShareSection.PLAYBACK),
             BooleanShareablePreferenceDefinition(KEY_AUDIO_FOCUS_ENABLED, SettingsShareSection.PLAYBACK),
+            BooleanShareablePreferenceDefinition(KEY_AUDIO_NOW_PLAYING_BAR_DELETE_BUTTON, SettingsShareSection.PLAYBACK),
+            BooleanShareablePreferenceDefinition(
+                KEY_AUDIO_NOW_PLAYING_BAR_OPENS_AUDIO_MODE,
+                SettingsShareSection.PLAYBACK,
+            ),
+            IntShareablePreferenceDefinition(KEY_MUSIC_LYRICS_UI_STYLE, SettingsShareSection.PLAYBACK),
             BooleanShareablePreferenceDefinition(KEY_VIDEO_AI_SUMMARY_ENTRY_ENABLED, SettingsShareSection.PLAYBACK),
             BooleanShareablePreferenceDefinition(KEY_VIDEO_NOTE_ENABLED, SettingsShareSection.PLAYBACK),
             BooleanShareablePreferenceDefinition(KEY_VIDEO_NOTE_DEFAULT_COLLAPSED, SettingsShareSection.PLAYBACK),
             BooleanShareablePreferenceDefinition(KEY_VIDEO_INFO_DEFAULT_EXPANDED, SettingsShareSection.PLAYBACK),
+            BooleanShareablePreferenceDefinition(KEY_VIDEO_ARGUE_MSG_SHOWN, SettingsShareSection.PLAYBACK),
+            IntShareablePreferenceDefinition(KEY_VIDEO_TAG_SIZE_PRESET, SettingsShareSection.PLAYBACK),
+            BooleanShareablePreferenceDefinition(
+                KEY_VIDEO_DETAIL_CHROME_SCROLL_HIDE_ENABLED,
+                SettingsShareSection.PLAYBACK,
+            ),
             BooleanShareablePreferenceDefinition(KEY_CLICK_TO_PLAY, SettingsShareSection.PLAYBACK),
             BooleanShareablePreferenceDefinition(KEY_RESUME_PLAYBACK_PROMPT_ENABLED, SettingsShareSection.PLAYBACK),
+            BooleanShareablePreferenceDefinition(
+                KEY_SPACE_PLAYED_VIDEO_LOCATE_PROMPT_ENABLED,
+                SettingsShareSection.PLAYBACK
+            ),
             BooleanShareablePreferenceDefinition(KEY_AUTO_ROTATE_ENABLED, SettingsShareSection.PLAYBACK),
             IntShareablePreferenceDefinition(KEY_WIFI_QUALITY, SettingsShareSection.PLAYBACK),
             IntShareablePreferenceDefinition(KEY_MOBILE_QUALITY, SettingsShareSection.PLAYBACK),
             StringShareablePreferenceDefinition(KEY_VIDEO_CODEC, SettingsShareSection.PLAYBACK),
             StringShareablePreferenceDefinition(KEY_VIDEO_SECOND_CODEC, SettingsShareSection.PLAYBACK),
             IntShareablePreferenceDefinition(KEY_AUDIO_QUALITY, SettingsShareSection.PLAYBACK),
+            IntShareablePreferenceDefinition(defaultAudioQualityPreferenceKey, SettingsShareSection.PLAYBACK),
             BooleanShareablePreferenceDefinition(KEY_AUTO_HIGHEST_QUALITY, SettingsShareSection.PLAYBACK),
             BooleanShareablePreferenceDefinition(KEY_SPONSOR_BLOCK_ENABLED, SettingsShareSection.PLAYBACK),
             BooleanShareablePreferenceDefinition(KEY_SPONSOR_BLOCK_AUTO_SKIP, SettingsShareSection.PLAYBACK),
@@ -6089,35 +8867,59 @@ object SettingsManager {
             IntShareablePreferenceDefinition(KEY_FULLSCREEN_MODE, SettingsShareSection.PLAYBACK),
             IntShareablePreferenceDefinition(KEY_FULLSCREEN_ASPECT_RATIO, SettingsShareSection.PLAYBACK),
             IntShareablePreferenceDefinition(KEY_SUBTITLE_AUTO_PREFERENCE, SettingsShareSection.PLAYBACK),
+            IntShareablePreferenceDefinition(KEY_CHAPTER_DISPLAY_MODE, SettingsShareSection.PLAYBACK),
             IntShareablePreferenceDefinition(KEY_BOTTOM_PROGRESS_BEHAVIOR, SettingsShareSection.PLAYBACK),
+            BooleanShareablePreferenceDefinition(
+                KEY_PROGRESS_PEAK_DANMAKU_ENABLED,
+                SettingsShareSection.PLAYBACK,
+            ),
             BooleanShareablePreferenceDefinition(KEY_HORIZONTAL_ADAPTATION, SettingsShareSection.PLAYBACK),
             BooleanShareablePreferenceDefinition(KEY_HIDE_VIDEO_PAGE_STATUS_BAR, SettingsShareSection.PLAYBACK),
             IntShareablePreferenceDefinition(KEY_TABLET_COMMENT_PANEL_WIDTH_PRESET, SettingsShareSection.PLAYBACK),
+            IntShareablePreferenceDefinition(KEY_TABLET_SECONDARY_DEFAULT_TAB, SettingsShareSection.PLAYBACK),
+            BooleanShareablePreferenceDefinition(KEY_SHOW_CARD_ONLINE_COUNT, SettingsShareSection.APPEARANCE),
             BooleanShareablePreferenceDefinition(KEY_SHOW_ONLINE_COUNT, SettingsShareSection.PLAYBACK),
+            BooleanShareablePreferenceDefinition(
+                KEY_SHOW_VIDEO_DETAIL_COMMENT_COUNT,
+                SettingsShareSection.PLAYBACK,
+            ),
             IntShareablePreferenceDefinition(KEY_COMMENT_COLLAPSED_REPLY_PREVIEW_LIMIT, SettingsShareSection.PLAYBACK),
 
             BooleanShareablePreferenceDefinition(KEY_HAPTIC_FEEDBACK_ENABLED, SettingsShareSection.GESTURE),
+            IntShareablePreferenceDefinition(KEY_HAPTIC_SCENES_DISABLED, SettingsShareSection.GESTURE),
+            BooleanShareablePreferenceDefinition(
+                KEY_GLOBAL_TEXT_TAP_COPY_ENABLED,
+                SettingsShareSection.GESTURE,
+            ),
             FloatShareablePreferenceDefinition(KEY_GESTURE_SENSITIVITY, SettingsShareSection.GESTURE),
             BooleanShareablePreferenceDefinition(KEY_SLIDE_VOLUME_BRIGHTNESS_ENABLED, SettingsShareSection.GESTURE),
             BooleanShareablePreferenceDefinition(KEY_SET_SYSTEM_BRIGHTNESS, SettingsShareSection.GESTURE),
             BooleanShareablePreferenceDefinition(KEY_DOUBLE_TAP_SEEK_ENABLED, SettingsShareSection.GESTURE),
             IntShareablePreferenceDefinition(KEY_SEEK_FORWARD_SECONDS, SettingsShareSection.GESTURE),
             IntShareablePreferenceDefinition(KEY_SEEK_BACKWARD_SECONDS, SettingsShareSection.GESTURE),
-            FloatShareablePreferenceDefinition(KEY_LONG_PRESS_SPEED, SettingsShareSection.GESTURE),
+            FloatShareablePreferenceDefinition(longPressSpeedPreferenceKey, SettingsShareSection.GESTURE),
             BooleanShareablePreferenceDefinition(KEY_LONG_PRESS_SPEED_LOCK_ENABLED, SettingsShareSection.GESTURE),
+            BooleanShareablePreferenceDefinition(KEY_LONG_PRESS_SPEED_HINT_HIDDEN, SettingsShareSection.GESTURE),
             FloatShareablePreferenceDefinition(
                 KEY_SUBTITLE_VERTICAL_OFFSET_FRACTION,
+                SettingsShareSection.GESTURE
+            ),
+            FloatShareablePreferenceDefinition(
+                KEY_SUBTITLE_PORTRAIT_VERTICAL_OFFSET_FRACTION,
+                SettingsShareSection.GESTURE
+            ),
+            BooleanShareablePreferenceDefinition(
+                KEY_SUBTITLE_POSITION_LOCKED,
                 SettingsShareSection.GESTURE
             ),
             BooleanShareablePreferenceDefinition(KEY_PIP_NO_DANMAKU, SettingsShareSection.GESTURE),
             BooleanShareablePreferenceDefinition(KEY_DOUBLE_TAP_LIKE, SettingsShareSection.GESTURE),
             BooleanShareablePreferenceDefinition(KEY_SWIPE_HIDE_PLAYER, SettingsShareSection.GESTURE),
             IntShareablePreferenceDefinition(KEY_PORTRAIT_PLAYER_COLLAPSE_MODE, SettingsShareSection.GESTURE),
+            BooleanShareablePreferenceDefinition(KEY_PAUSE_ON_PLAYER_COLLAPSE, SettingsShareSection.GESTURE),
             BooleanShareablePreferenceDefinition(KEY_PORTRAIT_SWIPE_TO_FULLSCREEN, SettingsShareSection.GESTURE),
             BooleanShareablePreferenceDefinition(KEY_CENTER_SWIPE_TO_FULLSCREEN, SettingsShareSection.GESTURE),
-            IntShareablePreferenceDefinition(KEY_INLINE_SWIPE_SEEK_SECONDS, SettingsShareSection.GESTURE),
             BooleanShareablePreferenceDefinition(KEY_FULLSCREEN_SWIPE_SEEK_ENABLED, SettingsShareSection.GESTURE),
-            IntShareablePreferenceDefinition(KEY_FULLSCREEN_SWIPE_SEEK_SECONDS, SettingsShareSection.GESTURE),
             BooleanShareablePreferenceDefinition(KEY_FULLSCREEN_GESTURE_REVERSE, SettingsShareSection.GESTURE),
             BooleanShareablePreferenceDefinition(KEY_AUTO_ENTER_FULLSCREEN, SettingsShareSection.GESTURE),
             BooleanShareablePreferenceDefinition(KEY_AUTO_EXIT_FULLSCREEN, SettingsShareSection.GESTURE),
@@ -6178,7 +8980,14 @@ object SettingsManager {
                 SettingsShareSection.NAVIGATION
             ),
             BooleanShareablePreferenceDefinition(KEY_HEADER_COLLAPSE_ENABLED, SettingsShareSection.NAVIGATION),
+            BooleanShareablePreferenceDefinition(KEY_BOTTOM_BAR_SCROLL_COMPACT_ENABLED, SettingsShareSection.NAVIGATION),
+            BooleanShareablePreferenceDefinition(KEY_SHOW_PGC_TIMELINE, SettingsShareSection.NAVIGATION),
             BooleanShareablePreferenceDefinition(KEY_TABLET_NAVIGATION_MODE, SettingsShareSection.NAVIGATION),
+            BooleanShareablePreferenceDefinition(KEY_SIDEBAR_EXPANDED, SettingsShareSection.NAVIGATION),
+            BooleanShareablePreferenceDefinition(
+                KEY_SIDEBAR_ACCOUNT_SWITCHER_ENABLED,
+                SettingsShareSection.NAVIGATION
+            ),
             IntShareablePreferenceDefinition(KEY_DYNAMIC_PAGE_LAYOUT_DIRECTION, SettingsShareSection.NAVIGATION),
             IntShareablePreferenceDefinition(KEY_FEED_API_TYPE, SettingsShareSection.NAVIGATION),
             BooleanShareablePreferenceDefinition(KEY_INCREMENTAL_TIMELINE_REFRESH, SettingsShareSection.NAVIGATION),
@@ -6186,20 +8995,51 @@ object SettingsManager {
                 KEY_DYNAMIC_IMAGE_PREVIEW_TEXT_VISIBLE,
                 SettingsShareSection.NAVIGATION
             ),
+            BooleanShareablePreferenceDefinition(dynamicUpListVisiblePreferencesKey, SettingsShareSection.NAVIGATION),
             BooleanShareablePreferenceDefinition(
-                KEY_DYNAMIC_ALL_TAB_HORIZONTAL_USER_LIST_VISIBLE,
+                dynamicCommentPreviewVisiblePreferencesKey,
                 SettingsShareSection.NAVIGATION
             ),
             BooleanShareablePreferenceDefinition(
                 KEY_DYNAMIC_TOP_BAR_COLLAPSE_ON_SCROLL,
                 SettingsShareSection.NAVIGATION
             ),
-            IntShareablePreferenceDefinition(KEY_HOME_REFRESH_COUNT, SettingsShareSection.NAVIGATION)
         )
     }
 
     fun getShareableSettingsEntryDefinitions(): List<SettingsShareEntryDefinition> {
         return shareableSettingDefinitions.map { it.entryDefinition }
+    }
+
+    private val liquidGlassShareableStorageKeys: Set<String> by lazy {
+        setOf(
+            KEY_ANDROID_NATIVE_LIQUID_GLASS_ENABLED.name,
+            KEY_LIQUID_GLASS_SCENES_DISABLED.name,
+            KEY_LIQUID_CONTROLS_USE_THEME_COLOR.name,
+            KEY_LIQUID_GLASS_ENABLED.name,
+            KEY_TOP_BAR_LIQUID_GLASS_ENABLED.name,
+            KEY_HOME_SEARCH_LIQUID_GLASS_ENABLED.name,
+            KEY_BOTTOM_BAR_LIQUID_GLASS_ENABLED.name,
+            KEY_LIQUID_GLASS_STYLE.name,
+            KEY_LIQUID_GLASS_MODE.name,
+            KEY_LIQUID_GLASS_STRENGTH.name,
+            KEY_LIQUID_GLASS_PROGRESS.name,
+            KEY_LIQUID_GLASS_ADVANCED_PRESET.name,
+            KEY_LIQUID_GLASS_PROGRESSIVE_BLUR_RADIUS.name,
+            KEY_LIQUID_GLASS_PROGRESSIVE_BLUR_EXTENT.name,
+            KEY_LIQUID_GLASS_PROGRESSIVE_BLUR_CURVE.name,
+            liquidGlassReadabilityModePreferencesKey.name,
+            glassPopupPalettePreferencesKey.name,
+            KEY_LIQUID_GLASS_CONTENT_READABILITY.name,
+            KEY_LIQUID_GLASS_CHROMATIC_ABERRATION.name,
+            KEY_LIQUID_GLASS_CONTENT_DISTORTION.name,
+        )
+    }
+
+    fun getLiquidGlassShareableSettingsEntryDefinitions(): List<SettingsShareEntryDefinition> {
+        return getShareableSettingsEntryDefinitions().filter { definition ->
+            definition.storageKey in liquidGlassShareableStorageKeys
+        }
     }
 
     suspend fun exportShareableSettingsSnapshot(context: Context): Map<String, JsonElement> {
@@ -6213,6 +9053,82 @@ object SettingsManager {
         }
     }
 
+    suspend fun exportLiquidGlassShareableSettingsSnapshot(
+        context: Context,
+    ): Map<String, JsonElement> {
+        val preferences = context.settingsDataStore.data.first()
+        val legacyEnabled = preferences[KEY_LIQUID_GLASS_ENABLED] ?: false
+        val topBarEnabled = preferences[KEY_TOP_BAR_LIQUID_GLASS_ENABLED] ?: false
+        val homeSearchEnabled = preferences[KEY_HOME_SEARCH_LIQUID_GLASS_ENABLED]
+            ?: topBarEnabled
+        val bottomBarEnabled = preferences[KEY_BOTTOM_BAR_LIQUID_GLASS_ENABLED]
+            ?: legacyEnabled
+        val progress = resolveStoredLiquidGlassProgress(
+            progress = preferences[KEY_LIQUID_GLASS_PROGRESS],
+            legacyModeValue = preferences[KEY_LIQUID_GLASS_MODE],
+            legacyStrength = preferences[KEY_LIQUID_GLASS_STRENGTH],
+            legacyStyleValue = preferences[KEY_LIQUID_GLASS_STYLE],
+        )
+        val advancedSettings = resolveLiquidGlassAdvancedSettings(
+            presetValue = preferences[KEY_LIQUID_GLASS_ADVANCED_PRESET],
+            progressiveBlurRadius = preferences[KEY_LIQUID_GLASS_PROGRESSIVE_BLUR_RADIUS],
+            progressiveBlurExtent = preferences[KEY_LIQUID_GLASS_PROGRESSIVE_BLUR_EXTENT],
+            progressiveBlurCurve = preferences[KEY_LIQUID_GLASS_PROGRESSIVE_BLUR_CURVE],
+            contentReadability = preferences[KEY_LIQUID_GLASS_CONTENT_READABILITY],
+            chromaticAberration = preferences[KEY_LIQUID_GLASS_CHROMATIC_ABERRATION],
+            contentDistortion = preferences[KEY_LIQUID_GLASS_CONTENT_DISTORTION],
+        )
+        return linkedMapOf(
+            KEY_LIQUID_CONTROLS_USE_THEME_COLOR.name to JsonPrimitive(
+                preferences[KEY_LIQUID_CONTROLS_USE_THEME_COLOR] ?: false
+            ),
+            KEY_LIQUID_GLASS_SCENES_DISABLED.name to JsonPrimitive(preferences[KEY_LIQUID_GLASS_SCENES_DISABLED] ?: 0),
+            KEY_ANDROID_NATIVE_LIQUID_GLASS_ENABLED.name to JsonPrimitive(
+                preferences[KEY_ANDROID_NATIVE_LIQUID_GLASS_ENABLED] ?: true
+            ),
+            KEY_LIQUID_GLASS_ENABLED.name to JsonPrimitive(bottomBarEnabled),
+            KEY_TOP_BAR_LIQUID_GLASS_ENABLED.name to JsonPrimitive(topBarEnabled),
+            KEY_HOME_SEARCH_LIQUID_GLASS_ENABLED.name to JsonPrimitive(homeSearchEnabled),
+            KEY_BOTTOM_BAR_LIQUID_GLASS_ENABLED.name to JsonPrimitive(bottomBarEnabled),
+            KEY_LIQUID_GLASS_STYLE.name to JsonPrimitive(
+                resolveLegacyLiquidGlassStyleFromProgress(progress).value
+            ),
+            KEY_LIQUID_GLASS_MODE.name to JsonPrimitive(
+                resolveLiquidGlassModeFromProgress(progress).value
+            ),
+            KEY_LIQUID_GLASS_STRENGTH.name to JsonPrimitive(
+                resolveLiquidGlassStrengthFromProgress(progress)
+            ),
+            KEY_LIQUID_GLASS_PROGRESS.name to JsonPrimitive(progress),
+            KEY_LIQUID_GLASS_ADVANCED_PRESET.name to JsonPrimitive(
+                advancedSettings.preset.value
+            ),
+            KEY_LIQUID_GLASS_PROGRESSIVE_BLUR_RADIUS.name to JsonPrimitive(
+                advancedSettings.progressiveBlurRadius
+            ),
+            KEY_LIQUID_GLASS_PROGRESSIVE_BLUR_EXTENT.name to JsonPrimitive(
+                advancedSettings.progressiveBlurExtent
+            ),
+            KEY_LIQUID_GLASS_PROGRESSIVE_BLUR_CURVE.name to JsonPrimitive(
+                advancedSettings.progressiveBlurCurve
+            ),
+            glassPopupPalettePreferencesKey.name to JsonPrimitive(preferences[glassPopupPalettePreferencesKey] ?: 0),
+            liquidGlassReadabilityModePreferencesKey.name to JsonPrimitive(
+                preferences[liquidGlassReadabilityModePreferencesKey]
+                    ?: LiquidGlassReadabilityMode.STABLE.value
+            ),
+            KEY_LIQUID_GLASS_CONTENT_READABILITY.name to JsonPrimitive(
+                advancedSettings.contentReadability
+            ),
+            KEY_LIQUID_GLASS_CHROMATIC_ABERRATION.name to JsonPrimitive(
+                advancedSettings.chromaticAberration
+            ),
+            KEY_LIQUID_GLASS_CONTENT_DISTORTION.name to JsonPrimitive(
+                advancedSettings.contentDistortion
+            ),
+        )
+    }
+
     suspend fun applyShareableSettingsSnapshot(
         context: Context,
         settings: Map<String, JsonElement>
@@ -6220,16 +9136,38 @@ object SettingsManager {
         val definitionsByKey = shareableSettingDefinitions.associateBy { it.entryDefinition.storageKey }
         val appliedKeys = mutableListOf<String>()
         val skippedKeys = mutableListOf<String>()
+        val playbackSpeedKeys = setOf(
+            KEY_DEFAULT_PLAYBACK_SPEED.name,
+            KEY_REMEMBER_LAST_PLAYBACK_SPEED.name,
+            longPressSpeedPreferenceKey.name,
+            playbackSpeedOptionsPreferenceKey.name
+        )
+        var playbackSpeedChanged = false
 
-        context.settingsDataStore.edit { preferences ->
+        val updated = context.settingsDataStore.edit { preferences ->
             settings.forEach { (key, value) ->
                 val definition = definitionsByKey[key]
                 when {
                     definition == null -> skippedKeys += key
-                    definition.write(preferences, value) -> appliedKeys += key
+                    definition.write(preferences, value) -> {
+                        appliedKeys += key
+                        if (key in playbackSpeedKeys) playbackSpeedChanged = true
+                    }
                     else -> skippedKeys += key
                 }
             }
+            if (playbackSpeedChanged) {
+                PlayerSettingsStore.reconcilePlaybackSpeedSelections(preferences)
+            }
+        }
+        ContentDisplayPreferences.syncRememberPlayerAdjustments(updated)
+        if (playbackSpeedChanged) {
+            PlayerSettingsStore.syncPlaybackSpeedCache(context, updated)
+        }
+        if (KEY_RESILIENT_VIDEO_BUFFER.name in appliedKeys) {
+            context.getSharedPreferences("auto_play_cache", Context.MODE_PRIVATE).edit()
+                .putBoolean(CACHE_KEY_RESILIENT_VIDEO_BUFFER, updated[KEY_RESILIENT_VIDEO_BUFFER] ?: false)
+                .apply()
         }
 
         return SettingsShareApplyResult(

@@ -5,61 +5,65 @@ import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-class VideoDetailVideoShareSheetStructureTest {
+class VideoDetailShareSheetStructureTest {
 
     @Test
-    fun ordinaryVideoDetailShareEntrypoints_openVideoShareSheet() {
+    fun ordinaryVideoDetailShareEntrypoints_openShareSheetWithStylePicker() {
         val source = loadVideoDetailSource()
         val phoneContentSource = loadVideoDetailPhoneContentSource()
+        val overlayAdapterSource = loadVideoDetailCommonOverlayAdapterSource()
 
-        assertTrue(
-            source.contains("pendingVideoShare"),
-            "VideoDetailScreen should keep a local sheet state for ordinary video sharing"
-        )
-        assertTrue(
+        assertTrue(source.contains("VideoDetailCommonOverlayAdapter("))
+        assertFalse(
             source.contains("VideoShareSheet("),
-            "VideoDetailScreen should render the shared video share sheet"
+            "VideoDetailScreenStateHolder should keep the share sheet outside the state holder",
         )
+        assertFalse(overlayAdapterSource.contains("VideoShareSheet("))
+        assertFalse(overlayAdapterSource.contains("pendingVideoShare"))
 
         val detailActionShare = phoneContentSource
-            .substringAfter("onDownloadClick = { viewModel.openDownloadDialog() }")
-            .substringBefore("//  [新增] 时间戳点击跳转")
+            .substringAfter("onDownloadClick = playbackActions.openDownloadDialog")
+            .substringBefore("onTimestampClick = {")
         val bottomInputShare = phoneContentSource
             .substringAfter("BottomInputBar(")
             .substringBefore("onCommentClick = {")
 
         assertTrue(
-            detailActionShare.contains("onShareVideo(") &&
+            detailActionShare.contains("pendingVideoShare =") &&
                 detailActionShare.contains("buildVideoSharePayload"),
-            "Detail action row share should emit unified share payload"
+            "Detail action row share should open the in-app share sheet with a unified payload"
         )
         assertTrue(
             detailActionShare.contains("coverUrl = success.info.pic"),
             "Detail action row share should include the current video cover"
         )
         assertTrue(
-            bottomInputShare.contains("onShareVideo(") &&
+            detailActionShare.contains("upName = success.info.owner.name"),
+            "Detail action row share should include the uploader name for card mode"
+        )
+        assertTrue(
+            bottomInputShare.contains("pendingVideoShare =") &&
                 bottomInputShare.contains("buildVideoSharePayload"),
-            "Bottom input bar share should emit unified share payload"
+            "Bottom input bar share should open the in-app share sheet with a unified payload"
         )
         assertTrue(
             bottomInputShare.contains("coverUrl = success.info.pic"),
             "Bottom input bar share should include the current video cover"
         )
-        assertFalse(
-            detailActionShare.contains("ShareUtils.shareVideo("),
-            "Detail action row share should not directly invoke the system chooser"
+        assertTrue(
+            phoneContentSource.contains("VideoShareSheet("),
+            "Phone detail content should host VideoShareSheet for share-style selection"
         )
-        assertFalse(
-            bottomInputShare.contains("Intent.createChooser"),
-            "Bottom input bar share should not directly invoke the system chooser"
+        assertTrue(
+            phoneContentSource.contains("onDismiss = { pendingVideoShare = null }"),
+            "Share sheet dismiss should clear the pending payload"
         )
     }
 
     private fun loadVideoDetailSource(): String {
         val candidates = listOf(
-            File("src/main/java/com/android/purebilibili/feature/video/screen/VideoDetailScreen.kt"),
-            File("app/src/main/java/com/android/purebilibili/feature/video/screen/VideoDetailScreen.kt")
+            File("src/main/java/com/android/purebilibili/feature/video/screen/VideoDetailScreenStateHolder.kt"),
+            File("app/src/main/java/com/android/purebilibili/feature/video/screen/VideoDetailScreenStateHolder.kt")
         )
         val sourceFile = candidates.firstOrNull { it.exists() }
             ?: error("Cannot locate VideoDetailScreen.kt from ${File(".").absolutePath}")
@@ -73,6 +77,16 @@ class VideoDetailVideoShareSheetStructureTest {
         )
         val sourceFile = candidates.firstOrNull { it.exists() }
             ?: error("Cannot locate VideoDetailPhoneContent.kt from ${File(".").absolutePath}")
+        return sourceFile.readText()
+    }
+
+    private fun loadVideoDetailCommonOverlayAdapterSource(): String {
+        val candidates = listOf(
+            File("src/main/java/com/android/purebilibili/feature/video/screen/VideoDetailCommonOverlayAdapter.kt"),
+            File("app/src/main/java/com/android/purebilibili/feature/video/screen/VideoDetailCommonOverlayAdapter.kt"),
+        )
+        val sourceFile = candidates.firstOrNull { it.exists() }
+            ?: error("Cannot locate VideoDetailCommonOverlayAdapter.kt from ${File(".").absolutePath}")
         return sourceFile.readText()
     }
 }

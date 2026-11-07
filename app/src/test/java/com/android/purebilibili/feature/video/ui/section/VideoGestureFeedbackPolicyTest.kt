@@ -1,9 +1,17 @@
 package com.android.purebilibili.feature.video.ui.section
 
-import io.github.alexzhirkevich.cupertino.icons.CupertinoIcons
-import io.github.alexzhirkevich.cupertino.icons.filled.*
-import io.github.alexzhirkevich.cupertino.icons.outlined.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeDown
+import androidx.compose.material.icons.automirrored.filled.VolumeMute
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Brightness4
+import androidx.compose.material.icons.filled.Brightness7
+import androidx.compose.material.icons.filled.BrightnessHigh
+import androidx.compose.material.icons.filled.BrightnessLow
+import androidx.compose.material.icons.filled.BrightnessMedium
 import androidx.compose.ui.graphics.Color
+import com.android.purebilibili.core.ui.AppTopTabPresentation
 import com.android.purebilibili.feature.video.ui.components.GesturePercentTransitionDirection
 import com.android.purebilibili.feature.video.ui.components.resolveGesturePercentTransitionDirection
 import com.android.purebilibili.feature.video.ui.components.shouldTriggerGesturePercentHaptic
@@ -40,42 +48,134 @@ class VideoGestureFeedbackPolicyTest {
     }
 
     @Test
-    fun `resolveGestureDisplayIcon maps brightness level`() {
+    fun `resolveGestureLevelIconStyle maps three distinct themes`() {
         assertEquals(
-            CupertinoIcons.Outlined.SunMax,
-            resolveGestureDisplayIcon(VideoGestureMode.Brightness, 0.2f, null)
+            GestureLevelIconStyle.Md3,
+            resolveGestureLevelIconStyle(AppTopTabPresentation.MATERIAL_UNDERLINE)
         )
         assertEquals(
-            CupertinoIcons.Default.SunMax,
-            resolveGestureDisplayIcon(VideoGestureMode.Brightness, 0.52f, null)
+            GestureLevelIconStyle.Ios,
+            resolveGestureLevelIconStyle(AppTopTabPresentation.MOVING_CAPSULE)
         )
         assertEquals(
-            CupertinoIcons.Default.SunMax,
-            resolveGestureDisplayIcon(VideoGestureMode.Brightness, 0.92f, null)
+            GestureLevelIconStyle.Miuix,
+            resolveGestureLevelIconStyle(AppTopTabPresentation.TONAL_CAPSULE)
         )
     }
 
     @Test
-    fun `resolveGestureDisplayIcon maps volume level`() {
+    fun `resolveGestureDisplayIcon maps brightness level for md3`() {
         assertEquals(
-            CupertinoIcons.Default.SpeakerSlash,
-            resolveGestureDisplayIcon(VideoGestureMode.Volume, 0f, null)
+            Icons.Filled.BrightnessLow,
+            resolveGestureDisplayIcon(
+                mode = VideoGestureMode.Brightness,
+                percent = 0.2f,
+                fallbackIcon = null,
+                iconStyle = GestureLevelIconStyle.Md3
+            )
         )
         assertEquals(
-            CupertinoIcons.Default.Speaker,
-            resolveGestureDisplayIcon(VideoGestureMode.Volume, 0.3f, null)
+            Icons.Filled.BrightnessMedium,
+            resolveGestureDisplayIcon(
+                mode = VideoGestureMode.Brightness,
+                percent = 0.52f,
+                fallbackIcon = null,
+                iconStyle = GestureLevelIconStyle.Md3
+            )
         )
         assertEquals(
-            CupertinoIcons.Default.SpeakerWave2,
-            resolveGestureDisplayIcon(VideoGestureMode.Volume, 0.9f, null)
+            Icons.Filled.BrightnessHigh,
+            resolveGestureDisplayIcon(
+                mode = VideoGestureMode.Brightness,
+                percent = 0.92f,
+                fallbackIcon = null,
+                iconStyle = GestureLevelIconStyle.Md3
+            )
+        )
+    }
+
+    @Test
+    fun `resolveGestureDisplayIcon maps volume level for md3`() {
+        assertEquals(
+            Icons.AutoMirrored.Filled.VolumeOff,
+            resolveGestureDisplayIcon(
+                mode = VideoGestureMode.Volume,
+                percent = 0f,
+                fallbackIcon = null,
+                iconStyle = GestureLevelIconStyle.Md3
+            )
+        )
+        assertEquals(
+            Icons.AutoMirrored.Filled.VolumeMute,
+            resolveGestureDisplayIcon(
+                mode = VideoGestureMode.Volume,
+                percent = 0.2f,
+                fallbackIcon = null,
+                iconStyle = GestureLevelIconStyle.Md3
+            )
+        )
+        assertEquals(
+            Icons.AutoMirrored.Filled.VolumeDown,
+            resolveGestureDisplayIcon(
+                mode = VideoGestureMode.Volume,
+                percent = 0.5f,
+                fallbackIcon = null,
+                iconStyle = GestureLevelIconStyle.Md3
+            )
+        )
+        assertEquals(
+            Icons.AutoMirrored.Filled.VolumeUp,
+            resolveGestureDisplayIcon(
+                mode = VideoGestureMode.Volume,
+                percent = 0.9f,
+                fallbackIcon = null,
+                iconStyle = GestureLevelIconStyle.Md3
+            )
+        )
+    }
+
+    @Test
+    fun `resolveGestureDisplayIcon maps miuix volume and brightness ladders`() {
+        assertEquals(
+            Icons.AutoMirrored.Filled.VolumeOff,
+            resolveVolumeGestureIcon(
+                percent = 0f,
+                iconStyle = GestureLevelIconStyle.Miuix
+            )
+        )
+        assertEquals(
+            Icons.AutoMirrored.Filled.VolumeUp,
+            resolveVolumeGestureIcon(
+                percent = 0.9f,
+                iconStyle = GestureLevelIconStyle.Miuix
+            )
+        )
+        assertEquals(
+            Icons.Filled.Brightness4,
+            resolveBrightnessGestureIcon(
+                percent = 0.1f,
+                iconStyle = GestureLevelIconStyle.Miuix
+            )
+        )
+        assertEquals(
+            Icons.Filled.Brightness7,
+            resolveBrightnessGestureIcon(
+                percent = 0.9f,
+                iconStyle = GestureLevelIconStyle.Miuix
+            )
         )
     }
 
     @Test
     fun `resolveGestureDisplayIcon falls back for unsupported mode`() {
         assertEquals(
-            CupertinoIcons.Filled.SunMax,
-            resolveGestureDisplayIcon(VideoGestureMode.Seek, 0.5f, null)
+            Icons.Filled.BrightnessHigh,
+            resolveGestureDisplayIcon(
+                mode = VideoGestureMode.Seek,
+                percent = 0.5f,
+                fallbackIcon = null,
+                iconStyle = GestureLevelIconStyle.Md3
+            )
         )
     }
 
@@ -121,6 +221,45 @@ class VideoGestureFeedbackPolicyTest {
                 thresholdPx = 50f
             )
         )
+    }
+
+    @Test
+    fun `vertical inline swipe dispatches directly to portrait fullscreen`() {
+        assertEquals(
+            true,
+            shouldEnterPortraitFullscreenFromSwipe(
+                isFullscreen = false,
+                isVerticalVideo = true,
+            )
+        )
+        assertEquals(
+            false,
+            shouldEnterPortraitFullscreenFromSwipe(
+                isFullscreen = false,
+                isVerticalVideo = false,
+            )
+        )
+        assertEquals(
+            false,
+            shouldEnterPortraitFullscreenFromSwipe(
+                isFullscreen = true,
+                isVerticalVideo = true,
+            )
+        )
+    }
+
+    @Test
+    fun `portrait entry requires clear vertical direction and respects reverse gesture`() {
+        fun enters(dx: Float, dy: Float, reversed: Boolean = false, fullscreen: Boolean = false, vertical: Boolean = true) =
+            shouldTriggerPortraitFullscreenDuringDrag(fullscreen, vertical, reversed, dx, dy, 2.5f)
+
+        assertEquals(true, enters(0f, -3f))
+        assertEquals(false, enters(1f, -3f))
+        assertEquals(false, enters(0f, -2.5f))
+        assertEquals(false, enters(0f, 3f))
+        assertEquals(true, enters(0f, 3f, reversed = true))
+        assertEquals(false, enters(0f, -3f, fullscreen = true))
+        assertEquals(false, enters(0f, -3f, vertical = false))
     }
 
     @Test
@@ -312,7 +451,8 @@ class VideoGestureFeedbackPolicyTest {
         )
 
         assertEquals(Color(0xFFFFD54F), policy.accentColor)
-        assertTrue(policy.containerAlpha > 0.15f)
+        // Scrim must stay opaque enough for white text over bright video frames.
+        assertTrue(policy.containerAlpha >= 0.70f)
     }
 
     @Test
@@ -324,6 +464,7 @@ class VideoGestureFeedbackPolicyTest {
 
         assertEquals(Color(0xFF80DEEA), policy.accentColor)
         assertTrue(policy.glowAlpha > 0.3f)
+        assertTrue(policy.containerAlpha >= 0.70f)
     }
 
     @Test
@@ -350,16 +491,16 @@ class VideoGestureFeedbackPolicyTest {
     fun `resolveVideoGestureMotionSpec keeps tuned durations for hints and digit transitions`() {
         val spec = resolveVideoGestureMotionSpec()
 
-        assertEquals(10f, spec.digitInitialBlurRadiusDp)
-        assertEquals(0.42f, spec.digitInitialAlpha)
-        assertEquals(40, spec.digitBlurHoldDurationMillis)
-        assertEquals(260, spec.digitBlurResetDurationMillis)
-        assertEquals(220, spec.digitAlphaResetDurationMillis)
-        assertEquals(220, spec.digitEnterFadeDurationMillis)
-        assertEquals(140, spec.digitExitFadeDurationMillis)
+        assertEquals(5f, spec.digitInitialBlurRadiusDp)
+        assertEquals(0.78f, spec.digitInitialAlpha)
+        assertEquals(0, spec.digitBlurHoldDurationMillis)
+        assertEquals(90, spec.digitBlurResetDurationMillis)
+        assertEquals(80, spec.digitAlphaResetDurationMillis)
+        assertEquals(100, spec.digitEnterFadeDurationMillis)
+        assertEquals(70, spec.digitExitFadeDurationMillis)
         assertEquals(0, spec.digitScaleDurationMillis)
-        assertEquals(0.82f, spec.digitSlideSpringDampingRatio)
-        assertEquals(520f, spec.digitSlideSpringStiffness)
+        assertEquals(0.88f, spec.digitSlideSpringDampingRatio)
+        assertEquals(780f, spec.digitSlideSpringStiffness)
         assertEquals(150, spec.orientationHintEnterFadeDurationMillis)
         assertEquals(230, spec.orientationHintEnterTransformDurationMillis)
         assertEquals(200, spec.orientationHintExitDurationMillis)

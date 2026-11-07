@@ -35,29 +35,6 @@ class LiveHomeCategoryIndicatorPolicyTest {
         assertEquals(0, index)
     }
 
-    @Test
-    fun `live home category control fits four visible items with matching indicator width`() {
-        val spec = resolveLiveHomeCategorySegmentedControlSpec()
-
-        assertEquals(82, spec.itemWidthDp)
-        assertEquals(44, spec.heightDp)
-        assertEquals(30, spec.indicatorHeightDp)
-        assertEquals(14, spec.labelFontSizeSp)
-        assertEquals(4, spec.containerHorizontalPaddingDp)
-        assertEquals(4, spec.containerVerticalPaddingDp)
-    }
-
-    @Test
-    fun `all tags parent category uses fixed width so labels are not compressed`() {
-        val spec = resolveLiveAreaParentSegmentedControlSpec()
-
-        assertEquals(112, spec.itemWidthDp)
-        assertEquals(44, spec.heightDp)
-        assertEquals(30, spec.indicatorHeightDp)
-        assertEquals(16, spec.labelFontSizeSp)
-        assertEquals(4, spec.containerHorizontalPaddingDp)
-        assertEquals(4, spec.containerVerticalPaddingDp)
-    }
 
     @Test
     fun `follow scroll keeps visible indicator in place`() {
@@ -103,4 +80,5 @@ class LiveHomeCategoryIndicatorPolicyTest {
 
         assertEquals(80, target)
     }
+
 }

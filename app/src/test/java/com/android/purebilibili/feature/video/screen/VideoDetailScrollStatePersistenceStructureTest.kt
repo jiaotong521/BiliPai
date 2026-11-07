@@ -9,7 +9,7 @@ class VideoDetailScrollStatePersistenceStructureTest {
 
     @Test
     fun `phone detail scroll state survives loading and navigation preview`() {
-        val screenSource = loadSource("VideoDetailScreen.kt")
+        val screenSource = loadSource("VideoDetailScreenStateHolder.kt")
         val phoneSource = loadSource("VideoDetailPhoneContent.kt")
         val contentSource = loadSource("VideoContentSection.kt")
 
@@ -30,12 +30,14 @@ class VideoDetailScrollStatePersistenceStructureTest {
 
     @Test
     fun `phone player collapse state is saveable per video`() {
-        val source = loadSource("VideoDetailScreen.kt")
+        val source = loadSource("VideoDetailScreenStateHolder.kt")
+        val collapseStateSource = loadSource("VideoDetailInlineCollapseState.kt")
 
-        assertTrue(source.contains("InlinePortraitPlayerCollapseState.Saver"))
+        assertTrue(collapseStateSource.contains("InlinePortraitPlayerCollapseState.Saver"))
+        assertTrue(collapseStateSource.contains("rememberSaveable(videoBvid, saver = InlinePortraitPlayerCollapseState.Saver)"))
         assertTrue(source.contains("rememberInlinePortraitPlayerCollapseState(currentBvid)"))
-        assertTrue(source.contains("var introScrollPastCollapseThreshold by rememberSaveable(currentBvid)"))
-        assertFalse(source.contains("remember { InlinePortraitPlayerCollapseState() }"))
+        assertFalse(source.contains("inlinePlayerCollapseState.updateOffset(-collapseRangePx)"))
+        assertFalse(collapseStateSource.contains("remember { InlinePortraitPlayerCollapseState() }"))
     }
 
     private fun loadSource(name: String): String {

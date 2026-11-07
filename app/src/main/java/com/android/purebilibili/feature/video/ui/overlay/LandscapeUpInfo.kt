@@ -1,12 +1,14 @@
 // 文件路径: feature/video/ui/overlay/LandscapeUpInfo.kt
 package com.android.purebilibili.feature.video.ui.overlay
 
+import com.android.purebilibili.core.ui.MediaContrastPalette
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import androidx.compose.material3.MaterialTheme
+import com.android.purebilibili.core.ui.components.AppText
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -17,7 +19,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
+import coil3.compose.AsyncImage
+import com.android.purebilibili.core.ui.components.AppSurface
+import com.android.purebilibili.core.ui.AppShapes
+import com.android.purebilibili.core.ui.ContainerLevel
 
 /**
  *  横屏 UP 主信息组件
@@ -32,9 +37,9 @@ fun LandscapeUpInfo(
     upName: String,
     modifier: Modifier = Modifier
 ) {
-    Surface(
+    AppSurface(
         modifier = modifier,
-        shape = RoundedCornerShape(20.dp),
+        shape = AppShapes.container(ContainerLevel.Floating),
         color = Color.Black.copy(alpha = 0.5f)
     ) {
         Row(
@@ -49,18 +54,17 @@ fun LandscapeUpInfo(
                 modifier = Modifier
                     .size(28.dp)
                     .clip(CircleShape)
-                    .background(Color.Gray.copy(alpha = 0.3f)),
+                    .background(MediaContrastPalette.ControlScrim),
                 contentScale = ContentScale.Crop
             )
             
             Spacer(modifier = Modifier.width(8.dp))
             
             // UP 主名字
-            Text(
+            AppText(
                 text = upName,
                 color = Color.White,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
+                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.widthIn(max = 120.dp)
@@ -79,9 +83,9 @@ fun LandscapeViewerCount(
 ) {
     if (count.isEmpty()) return
     
-    Surface(
+    AppSurface(
         modifier = modifier,
-        shape = RoundedCornerShape(12.dp),
+        shape = AppShapes.container(ContainerLevel.Card),
         color = Color.Black.copy(alpha = 0.5f)
     ) {
         Row(
@@ -89,18 +93,17 @@ fun LandscapeViewerCount(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
         ) {
             // 观看图标（使用文字代替）
-            Text(
+            AppText(
                 text = "👁",
-                fontSize = 10.sp
+                style = MaterialTheme.typography.labelSmall
             )
             
             Spacer(modifier = Modifier.width(4.dp))
             
-            Text(
+            AppText(
                 text = count,
                 color = Color.White.copy(alpha = 0.9f),
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Normal
+                style = MaterialTheme.typography.labelSmall
             )
         }
     }

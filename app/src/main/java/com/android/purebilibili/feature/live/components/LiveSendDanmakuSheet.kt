@@ -1,109 +1,126 @@
 package com.android.purebilibili.feature.live.components
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Button
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Send
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ClearAll
+import androidx.compose.material.icons.outlined.EmojiEmotions
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.android.purebilibili.core.ui.AppContentColors
+import com.android.purebilibili.core.ui.AppSurfaceTokens
+import com.android.purebilibili.core.ui.LocalNavigationBackHandler
+import com.android.purebilibili.core.ui.components.*
 import com.android.purebilibili.data.repository.LiveDanmakuPermission
 import com.android.purebilibili.feature.live.LiveDanmakuItem
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** 页面底部共用的弹幕编辑器；键盘、表情共用草稿，成功发送后由调用方清理。 */
 @Composable
 fun LiveSendDanmakuSheet(
     onDismiss: () -> Unit,
-    onSend: (String) -> Unit,
+    onSend: (String, Int, Int) -> Unit,
+    message: TextFieldValue,
+    onMessageChange: (TextFieldValue) -> Unit,
     permission: LiveDanmakuPermission = LiveDanmakuPermission(),
-    replyTarget: LiveDanmakuItem? = null
+    replyTarget: LiveDanmakuItem? = null,
+    onOpenEmote: (() -> Unit)? = null,
+    isSending: Boolean = false,
+    onClearReply: () -> Unit = {},
+    emoticonContent: (@Composable () -> Unit)? = null,
+    emoticonPackages: List<com.android.purebilibili.data.repository.LiveEmoticonPackage> = emptyList(),
+    modifier: Modifier = Modifier,
 ) {
-    var message by remember { mutableStateOf("") }
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val showingEmoticons = emoticonContent != null
     val maxLength = permission.maxLength.takeIf { it > 0 } ?: 40
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+    val canSend = !isSending && permission.canSend && message.text.isNotBlank() && message.text.length <= maxLength
+    val dismiss = {
+        focusManager.clearFocus(force = true)
+        keyboard?.hide()
+        onDismiss()
+    }
+    val send: (String) -> Unit = { text ->
+        if (!isSending && permission.canSend && text.isNotBlank() && text.length <= maxLength) {
+            onSend(text.trim(), 16777215, 1)
+        }
+    }
+    LocalNavigationBackHandler(enabled = true) { dismiss() }
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxSize()
+            .imePadding()
+            .navigationBarsPadding()
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)),
+    ) {
+        val panelHeight = maxHeight * 0.5f
+        Box(Modifier.fillMaxSize().clickable(
+            interactionSource = remember { MutableInteractionSource() },
+            indication = null,
+            onClickLabel = "关闭输入，保留草稿",
+            onClick = dismiss,
+        ))
+        AppSurface(
+            modifier = Modifier.align(Alignment.BottomCenter).widthIn(max = 640.dp).fillMaxWidth(),
+            shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp),
+            color = AppSurfaceTokens.surface(),
         ) {
-            Text(
-                text = if (replyTarget == null) "发弹幕" else "回复 @${replyTarget.uname.ifBlank { replyTarget.uid.toString() }}",
-                color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 22.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = 8.dp, top = 2.dp, end = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    OutlinedTextField(
+                    AppIconButton(onClick = { onOpenEmote?.invoke() }, enabled = !isSending) {
+                        AppIcon(Icons.Outlined.EmojiEmotions, if (showingEmoticons) "切换键盘" else "表情",
+                            tint = if (showingEmoticons) AppContentColors.accent() else AppContentColors.secondaryText())
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    LiveRichDanmakuEditor(
                         value = message,
-                        onValueChange = { message = it.take(maxLength) },
-                        modifier = Modifier.fillMaxWidth(),
-                        minLines = 3,
-                        maxLines = 4,
-                        placeholder = { Text(if (replyTarget == null) "输入弹幕内容" else "输入回复内容") },
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                        keyboardActions = KeyboardActions(onSend = {
-                            val content = message.trim()
-                            if (content.isNotEmpty() && permission.canSend) onSend(content)
-                        })
+                        onValueChange = onMessageChange,
+                        replyName = replyTarget?.uname,
+                        onClearReply = onClearReply,
+                        packages = emoticonPackages,
+                        showingEmoticons = showingEmoticons,
+                        isSending = isSending,
+                        onSend = send,
+                        modifier = Modifier.weight(1f),
                     )
-                    Text(
-                        text = buildString {
-                            append(permission.statusText)
-                            append(" · ")
-                            append(message.length)
-                            append("/")
-                            append(maxLength)
-                            if (permission.availableColors.isNotEmpty()) {
-                                append(" · ")
-                                append(permission.availableColors.take(3).joinToString("、") { it.name })
-                            }
-                            if (permission.availableModes.isNotEmpty()) {
-                                append(" · ")
-                                append(permission.availableModes.take(2).joinToString("、") { it.name })
-                            }
-                        },
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 12.sp,
-                        lineHeight = 18.sp
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End
-                    ) {
-                        Button(
-                            enabled = permission.canSend && message.trim().isNotEmpty(),
-                            onClick = { onSend(message.trim()) }
-                        ) {
-                            Text("发送")
+                    if (replyTarget != null) {
+                        AppIconButton(onClick = onClearReply, enabled = !isSending, modifier = Modifier.size(30.dp)) {
+                            AppIcon(Icons.Outlined.Close, "取消回复，保留正文")
                         }
                     }
+                    if (message.text.isNotEmpty()) {
+                        AppIconButton(onClick = { onMessageChange(TextFieldValue("")) }, enabled = !isSending) {
+                            AppIcon(Icons.Outlined.ClearAll, "清空正文，保留回复对象")
+                        }
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    AppIconButton(onClick = { send(message.text) }, enabled = canSend) {
+                        AppIcon(Icons.AutoMirrored.Outlined.Send, if (isSending) "发送中" else "发送",
+                            tint = if (canSend) AppContentColors.accent() else AppContentColors.secondaryText())
+                    }
+                }
+                if (!permission.canSend || message.text.length > maxLength) {
+                    AppText(
+                        if (!permission.canSend) permission.statusText else "弹幕最多 $maxLength 字",
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+                        color = AppContentColors.secondaryText(), fontSize = 12.sp,
+                    )
+                }
+                if (emoticonContent != null) {
+                    Box(Modifier.fillMaxWidth().heightIn(max = panelHeight)) { emoticonContent() }
                 }
             }
         }

@@ -1,20 +1,31 @@
 // 文件路径: app/src/main/java/com/android/purebilibili/MainActivity.kt
 package com.android.purebilibili
 
+import com.android.purebilibili.core.ui.components.AppText
+
+import androidx.compose.runtime.collectAsState
+
 import android.animation.ValueAnimator
 import android.app.PictureInPictureParams
+import android.app.HandoffActivityData
+import android.app.HandoffActivityDataRequestInfo
+import android.app.HandoffActivityParams
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.graphics.Bitmap
+import android.graphics.Outline
 import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.Rational
 import android.view.Gravity
 import android.view.View
+import android.view.ViewOutlineProvider
 import android.view.animation.PathInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -24,6 +35,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.annotation.OptIn
 import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.content.res.AppCompatResources
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
@@ -40,9 +52,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
+import com.android.purebilibili.core.ui.common.ProvideAppTextSelectionHost
+import com.android.purebilibili.core.ui.MaidLottieAnimationSettingsHost
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
@@ -53,7 +68,6 @@ import androidx.compose.ui.unit.sp
 import androidx.core.animation.doOnEnd
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
@@ -61,21 +75,23 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.platform.ViewCompositionStrategy
-import androidx.compose.ui.unit.Density
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import androidx.metrics.performance.JankStats
 import androidx.window.layout.WindowMetrics
 import androidx.window.layout.WindowMetricsCalculator
-import coil.compose.AsyncImagePainter
-import coil.compose.AsyncImage
-import coil.compose.rememberAsyncImagePainter
+import coil3.compose.AsyncImage
 import com.android.purebilibili.core.store.SettingsManager
+import com.android.purebilibili.core.ui.LocalDetailedCommentTimeEnabled
 import com.android.purebilibili.core.coroutines.AppScope
-import com.android.purebilibili.core.theme.BiliPink
+
 import com.android.purebilibili.core.theme.LocalDisplayMetricsSnapshot
 import com.android.purebilibili.core.theme.PureBiliBiliTheme
 import com.android.purebilibili.core.ui.blur.rememberRecoverableHazeState
-import com.android.purebilibili.core.ui.motion.AppMotionEasing
+import com.android.purebilibili.core.ui.motion.emphasizedEnterTween
+import com.android.purebilibili.core.ui.performance.AppRuntimeVisualGuardTracker
+import com.android.purebilibili.core.ui.performance.applyPreferredDisplayMode
 import com.android.purebilibili.core.ui.wallpaper.SplashWallpaperLayout
 import com.android.purebilibili.core.ui.wallpaper.resolveSplashWallpaperLayout
 import com.android.purebilibili.core.util.BilibiliNavigationTarget
@@ -83,9 +99,13 @@ import com.android.purebilibili.core.util.BilibiliNavigationTargetParser
 import com.android.purebilibili.core.util.WindowWidthSizeClass
 import com.android.purebilibili.core.util.Logger
 import com.android.purebilibili.feature.plugin.EyeProtectionOverlay
+import com.android.purebilibili.feature.plugin.PluginEffectHintHost
+import com.android.purebilibili.app.StartupRecovery
+import com.android.purebilibili.feature.settings.diagnostics.StartupRecoveryActivity
 import com.android.purebilibili.feature.settings.AppUpdateAutoCheckGate
 import com.android.purebilibili.feature.settings.AppUpdateCheckResult
 import com.android.purebilibili.feature.settings.AppUpdateChecker
+import com.android.purebilibili.feature.settings.AppUpdateDialogHost
 import com.android.purebilibili.feature.settings.AppUpdateDownloadState
 import com.android.purebilibili.feature.settings.AppUpdateDownloadStatus
 import com.android.purebilibili.feature.settings.AppUpdateInstallAction
@@ -93,14 +113,28 @@ import com.android.purebilibili.feature.settings.AppLanguage
 import com.android.purebilibili.feature.settings.applyAppLanguage
 import com.android.purebilibili.core.theme.resolveEffectiveDynamicColorEnabled
 import com.android.purebilibili.core.theme.buildDisplayMetricsSnapshot
-import com.android.purebilibili.core.ui.IOSAlertDialog
-import com.android.purebilibili.core.ui.IOSDialogAction
+import com.android.purebilibili.core.theme.withDensityScale
+import com.android.purebilibili.core.ui.AppAlertDialog
+import com.android.purebilibili.core.ui.AppDialogAction
+import com.android.purebilibili.core.ui.AppThemeConfig
+import com.android.purebilibili.core.ui.BrandSuccessFeedbackHost
+import com.android.purebilibili.core.ui.AppWindowSystemUiController
+import com.android.purebilibili.core.ui.ProvideAppThemeConfig
+import com.android.purebilibili.core.ui.components.AppCard
+import com.android.purebilibili.core.ui.components.AppCardShape
+import com.android.purebilibili.core.ui.components.LocalAppSingleChoicePresentation
+import com.android.purebilibili.core.ui.blur.BlurIntensity
 import com.android.purebilibili.core.ui.blur.ProvideUnifiedBlurIntensity
+import com.android.purebilibili.core.ui.performance.ProvideRuntimeVisualGuard
 import com.android.purebilibili.core.util.BilibiliUrlParser
 import com.android.purebilibili.core.util.LocalWindowSizeClass
+import com.android.purebilibili.core.util.LocalAppWindowAdaptiveInfo
 import com.android.purebilibili.core.util.calculateWindowSizeClass
+import com.android.purebilibili.core.util.rememberAppWindowAdaptiveInfo
+import com.android.purebilibili.core.util.resolveSafeAndroidPipRational
 import com.android.purebilibili.data.repository.VideoRepository
 import com.android.purebilibili.feature.cast.LocalProxyServer
+import com.android.purebilibili.feature.onboarding.USER_AGREEMENT_ACK_KEY
 import com.android.purebilibili.feature.settings.RELEASE_DISCLAIMER_ACK_KEY
 import com.android.purebilibili.feature.settings.completeAppUpdateDownload
 import com.android.purebilibili.feature.settings.downloadAppUpdateApk
@@ -113,6 +147,7 @@ import com.android.purebilibili.feature.settings.resolveUpdateReleaseNotesText
 import com.android.purebilibili.feature.settings.selectPreferredAppUpdateAsset
 import com.android.purebilibili.feature.settings.shouldRunAppEntryAutoCheck
 import com.android.purebilibili.feature.settings.resolveThemePreferenceState
+import com.android.purebilibili.feature.settings.AppThemeMode
 import com.android.purebilibili.core.theme.resolveMd3DynamicColorEnabled
 import com.android.purebilibili.feature.screenshot.AppScreenshotCaptureMode
 import com.android.purebilibili.feature.screenshot.AppScreenshotGestureBlockState
@@ -130,18 +165,28 @@ import com.android.purebilibili.feature.privacy.PrivacyAuthenticationReason
 import com.android.purebilibili.feature.privacy.PrivacyAuthenticationRequest
 import com.android.purebilibili.feature.privacy.PrivacyAuthenticationResult
 import com.android.purebilibili.feature.video.player.MiniPlayerManager
+import com.android.purebilibili.core.player.PlaybackProgressManager
+import com.android.purebilibili.feature.video.handoff.PlaybackHandoffCodec
+import com.android.purebilibili.feature.video.handoff.PlaybackHandoffPayload
+import com.android.purebilibili.feature.video.handoff.PlaybackHandoffRegistry
 import com.android.purebilibili.feature.video.player.buildPipPlaybackRemoteActions
 import com.android.purebilibili.feature.video.ui.overlay.FullscreenPlayerOverlay
+import com.android.purebilibili.feature.audio.player.AudioNowPlayingSession
+import com.android.purebilibili.feature.audio.screen.resolveAudioNowPlayingVisible
+import com.android.purebilibili.feature.video.player.PlaylistManager
 import com.android.purebilibili.feature.video.ui.overlay.MiniPlayerOverlay
 import com.android.purebilibili.navigation.AppNavigation
 import com.android.purebilibili.navigation.ScreenRoutes
 import com.android.purebilibili.navigation.VideoRoute
-import dev.chrisbanes.haze.haze
+import com.android.purebilibili.navigation3.BiliPaiNavKey
+import com.android.purebilibili.navigation3.toLegacyRoute
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.net.URI
 import java.net.URLEncoder
@@ -149,12 +194,17 @@ import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import kotlin.math.max
 import kotlin.math.pow
+import kotlin.math.roundToInt
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.android.purebilibili.core.ui.AppShapes
+import com.android.purebilibili.core.ui.ContainerLevel
 
 private const val TAG = "MainActivity"
 private const val PREFS_NAME = "app_welcome"
 private const val KEY_FIRST_LAUNCH = "first_launch_shown"
+private const val STATE_MAIN_ACTIVITY_INTENT = "main_activity_intent"
 internal const val EXTRA_PENDING_NAVIGATION_ROUTE = "pending_navigation_route"
+internal const val EXTRA_OPEN_ACTIVE_PLAYBACK = "open_active_playback"
 private val PLUGIN_INSTALL_HTTPS_HOSTS = setOf(
     "bilipai.app",
     "www.bilipai.app",
@@ -172,6 +222,7 @@ internal fun resolveShortcutRoute(host: String): String? {
         "dynamic" -> ScreenRoutes.Dynamic.route
         "favorite" -> ScreenRoutes.Favorite.route
         "history" -> ScreenRoutes.History.route
+        "watch_later" -> ScreenRoutes.WatchLater.route
         "login" -> ScreenRoutes.Login.route
         "playback" -> ScreenRoutes.PlaybackSettings.route
         "plugins" -> ScreenRoutes.PluginsSettings.createRoute()
@@ -232,7 +283,8 @@ internal fun shouldNavigateToVideoFromNotification(
 internal fun resolveMainActivityVideoRoute(
     bvid: String,
     cid: Long,
-    startFullscreen: Boolean = false
+    startFullscreen: Boolean = false,
+    resumePositionMs: Long = 0L,
 ): String {
     return VideoRoute.resolveVideoRoutePath(
         bvid = bvid,
@@ -241,7 +293,22 @@ internal fun resolveMainActivityVideoRoute(
         startAudio = false,
         autoPortrait = true,
         fullscreen = startFullscreen,
-        resumePositionMs = 0L
+        resumePositionMs = resumePositionMs.coerceAtLeast(0L)
+    )
+}
+
+internal fun resolveActivePlaybackReturnRoute(
+    isActive: Boolean,
+    bvid: String?,
+    cid: Long,
+    currentPositionMs: Long,
+): String? {
+    val safeBvid = bvid?.trim().orEmpty()
+    if (!isActive || safeBvid.isBlank() || cid <= 0L) return null
+    return resolveMainActivityVideoRoute(
+        bvid = safeBvid,
+        cid = cid,
+        resumePositionMs = currentPositionMs,
     )
 }
 
@@ -304,12 +371,45 @@ internal fun resolveMainActivityLinkNavigation(
     target: BilibiliNavigationTarget
 ): MainActivityLinkNavigation? {
     return when (target) {
-        is BilibiliNavigationTarget.Video -> MainActivityLinkNavigation(
-            pendingVideoId = target.videoId
-        )
+        is BilibiliNavigationTarget.Video -> {
+            if (target.commentRootRpid > 0L || target.commentTargetRpid > 0L) {
+                MainActivityLinkNavigation(
+                    pendingNavigationRoute = VideoRoute.resolveVideoRoutePath(
+                        bvid = target.videoId,
+                        cid = 0L,
+                        encodedCover = "",
+                        startAudio = false,
+                        autoPortrait = false,
+                        commentRootRpid = target.commentRootRpid,
+                        commentTargetRpid = target.commentTargetRpid,
+                    )
+                )
+            } else {
+                MainActivityLinkNavigation(pendingVideoId = target.videoId)
+            }
+        }
 
         is BilibiliNavigationTarget.Dynamic -> MainActivityLinkNavigation(
-            pendingNavigationRoute = resolveMainActivityDynamicRoute(target.dynamicId)
+            pendingNavigationRoute = if (target.openComments || target.commentRootRpid > 0L || target.commentTargetRpid > 0L) {
+                ScreenRoutes.DynamicDetail.createRoute(
+                    target.dynamicId,
+                    commentRootRpid = target.commentRootRpid,
+                    commentTargetRpid = target.commentTargetRpid,
+                    openComments = target.openComments,
+                )
+            } else {
+                resolveMainActivityDynamicRoute(target.dynamicId)
+            }
+        )
+
+        is BilibiliNavigationTarget.CommentDetail -> MainActivityLinkNavigation(
+            pendingNavigationRoute = BiliPaiNavKey.CommentDetail(
+                oid = target.oid,
+                rootId = target.rootReplyId,
+                targetId = target.targetReplyId,
+                type = target.businessId,
+                enterUri = target.enterUri,
+            ).toLegacyRoute()
         )
 
         is BilibiliNavigationTarget.Search -> MainActivityLinkNavigation(
@@ -331,7 +431,8 @@ internal fun resolveMainActivityLinkNavigation(
 
         is BilibiliNavigationTarget.BangumiSeason -> MainActivityLinkNavigation(
             pendingNavigationRoute = ScreenRoutes.BangumiDetail.createRoute(
-                seasonId = target.seasonId
+                seasonId = target.seasonId,
+                mediaId = target.mediaId
             )
         )
 
@@ -343,15 +444,30 @@ internal fun resolveMainActivityLinkNavigation(
         )
 
         is BilibiliNavigationTarget.Music -> {
-            val auSid = target.musicId.removePrefix("au").removePrefix("AU").toLongOrNull() ?: return null
             MainActivityLinkNavigation(
-                pendingNavigationRoute = ScreenRoutes.MusicDetail.createRoute(auSid)
+                pendingNavigationRoute = ScreenRoutes.createMusicRoute(target.musicId) ?: return null
             )
         }
 
-        is BilibiliNavigationTarget.Article -> MainActivityLinkNavigation(
-            pendingNavigationRoute = ScreenRoutes.ArticleDetail.createRoute(target.articleId)
+        is BilibiliNavigationTarget.ArticleCollection -> MainActivityLinkNavigation(
+            pendingNavigationRoute = ScreenRoutes.ArticleCollection.createRoute(target.collectionId)
         )
+
+        is BilibiliNavigationTarget.Article -> MainActivityLinkNavigation(
+            pendingNavigationRoute = ScreenRoutes.ArticleDetail.createRoute(target.articleId, commentRootRpid = target.commentRootRpid, commentTargetRpid = target.commentTargetRpid)
+        )
+
+        is BilibiliNavigationTarget.Match -> MainActivityLinkNavigation(
+            pendingNavigationRoute = ScreenRoutes.MatchInfo.createRoute(target.contestId)
+        )
+
+        is BilibiliNavigationTarget.PopularFeed -> if (target.subCategoryKey == "weekly") {
+            MainActivityLinkNavigation(
+                pendingNavigationRoute = ScreenRoutes.WeeklySeries.createRoute(target.weeklyNumber)
+            )
+        } else {
+            MainActivityLinkNavigation()
+        }
     }
 }
 
@@ -399,10 +515,15 @@ internal data class MainActivityPlaybackOverlayState(
 
 internal fun resolveMainActivityPlaybackOverlayState(
     isInPipMode: Boolean,
-    isMiniMode: Boolean
+    isMiniMode: Boolean,
+    showAudioNowPlaying: Boolean = false
 ): MainActivityPlaybackOverlayState {
+    // The mini player owns the visible video surface whenever it is active.
+    // Guard this here as well as in the bar visibility policy so a one-frame
+    // state lag cannot hide both overlays at once.
+    val showAudioNowPlayingEffective = showAudioNowPlaying && !isMiniMode && !isInPipMode
     return MainActivityPlaybackOverlayState(
-        showMiniPlayerOverlay = !isInPipMode,
+        showMiniPlayerOverlay = !isInPipMode && (isMiniMode || !showAudioNowPlayingEffective),
         // 从首页小窗进入系统 PiP 时，原详情页已销毁，需要独立渲染面承接同一个 Player。
         showDedicatedPipPlayer = isInPipMode && isMiniMode
     )
@@ -423,11 +544,53 @@ internal fun shouldClearPendingCrashLogAfterAction(
     action: CrashLogPromptAction
 ): Boolean = action != CrashLogPromptAction.IGNORE
 
-internal fun shouldUseRealtimeSplashBlur(sdkInt: Int): Boolean =
-    sdkInt >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && sdkInt < 36
+internal fun shouldUseRealtimeSplashBlur(
+    sdkInt: Int,
+    manufacturer: String = ""
+): Boolean {
+    // Samsung One UI 5 (Android 13 / API 33) has a known HWUI/Vulkan driver issue where dynamic
+    // RenderEffect blur creation triggers SIGSEGV (status 11) in libhwui / vulkan.adreno.so.
+    if (sdkInt == 33 && manufacturer.equals("samsung", ignoreCase = true)) {
+        return false
+    }
+    return sdkInt >= Build.VERSION_CODES.S && sdkInt < 36
+}
 
 internal fun resolveSplashIconResIdForComponentClassName(className: String?): Int {
     return when (className?.substringAfterLast('.')) {
+        "MainActivityAliasBlueSnowMaid",
+        "MainActivityAliasBlueSnowMaidNoIcon" -> R.mipmap.ic_launcher_blue_snow_maid
+        "MainActivitySplashBlueSnowMaid" -> R.drawable.splash_icon_blue_snow_maid
+        "MainActivityAliasBlueSnowMaidAnnouncement",
+        "MainActivityAliasBlueSnowMaidAnnouncementNoIcon" -> R.mipmap.ic_launcher_blue_snow_maid_announcement
+        "MainActivitySplashBlueSnowMaidAnnouncement" -> R.drawable.splash_icon_blue_snow_maid_announcement
+        "MainActivityAliasBlueSnowMaidAnnouncementLight",
+        "MainActivityAliasBlueSnowMaidAnnouncementLightNoIcon" -> R.mipmap.ic_launcher_blue_snow_maid_announcement_light
+        "MainActivitySplashBlueSnowMaidAnnouncementLight" -> R.drawable.splash_icon_blue_snow_maid_announcement_light
+        "MainActivityAliasBlueSnowMaidAnnouncementDark",
+        "MainActivityAliasBlueSnowMaidAnnouncementDarkNoIcon" -> R.mipmap.ic_launcher_blue_snow_maid_announcement_dark
+        "MainActivitySplashBlueSnowMaidAnnouncementDark" -> R.drawable.splash_icon_blue_snow_maid_announcement_dark
+        "MainActivityAliasBlueSnowMaidLight",
+        "MainActivityAliasBlueSnowMaidLightNoIcon" -> R.mipmap.ic_launcher_blue_snow_maid_light
+        "MainActivitySplashBlueSnowMaidLight" -> R.drawable.splash_icon_blue_snow_maid_light
+        "MainActivityAliasBlueSnowMaidDark",
+        "MainActivityAliasBlueSnowMaidDarkNoIcon" -> R.mipmap.ic_launcher_blue_snow_maid_dark
+        "MainActivitySplashBlueSnowMaidDark" -> R.drawable.splash_icon_blue_snow_maid_dark
+        "MainActivityAliasBlueSnowMaidFront",
+        "MainActivityAliasBlueSnowMaidFrontNoIcon" -> R.mipmap.ic_launcher_blue_snow_maid_front
+        "MainActivitySplashBlueSnowMaidFront" -> R.drawable.splash_icon_blue_snow_maid_front
+        "MainActivityAliasBlueSnowMaidFrontLight",
+        "MainActivityAliasBlueSnowMaidFrontLightNoIcon" -> R.mipmap.ic_launcher_blue_snow_maid_front_light
+        "MainActivitySplashBlueSnowMaidFrontLight" -> R.drawable.splash_icon_blue_snow_maid_front_light
+        "MainActivityAliasBlueSnowMaidFrontDark",
+        "MainActivityAliasBlueSnowMaidFrontDarkNoIcon" -> R.mipmap.ic_launcher_blue_snow_maid_front_dark
+        "MainActivitySplashBlueSnowMaidFrontDark" -> R.drawable.splash_icon_blue_snow_maid_front_dark
+        "MainActivityAlias3DLight",
+        "MainActivityAlias3DLightNoIcon",
+        "MainActivitySplashIcon3DLight" -> R.mipmap.ic_launcher_3d_light
+        "MainActivityAlias3DDark",
+        "MainActivityAlias3DDarkNoIcon",
+        "MainActivitySplashIcon3DDark" -> R.mipmap.ic_launcher_3d_dark
         "MainActivityAlias3DLauncher",
         "MainActivityAlias3D",
         "MainActivityAlias3DNoIcon",
@@ -442,8 +605,8 @@ internal fun resolveSplashIconResIdForComponentClassName(className: String?): In
         "MainActivityAliasBiliPaiWhiteNoIcon",
         "MainActivitySplashBiliPaiWhite" -> R.mipmap.ic_launcher_bilipai_white
         "MainActivityAliasBiliPaiMonet",
-        "MainActivityAliasBiliPaiMonetNoIcon",
-        "MainActivitySplashBiliPaiMonet" -> R.mipmap.ic_launcher_bilipai_monet
+        "MainActivityAliasBiliPaiMonetNoIcon" -> R.mipmap.ic_launcher_bilipai_monet
+        "MainActivitySplashBiliPaiMonet" -> R.mipmap.splash_icon_bilipai_monet
         "MainActivityAliasFlat",
         "MainActivityAliasFlatNoIcon",
         "MainActivityAliasTelegramBlue",
@@ -461,12 +624,16 @@ internal fun resolveSplashIconResIdForComponentClassName(className: String?): In
 }
 
 @Suppress("DEPRECATION")
-internal fun resolveLaunchIconResId(context: Context, launchIntent: Intent?): Int {
-    resolveSplashIconResIdForComponentClassName(context::class.java.name)
+internal fun resolveLaunchIconResId(
+    context: Context,
+    launchIntent: Intent?,
+    launcherInfo: ActivityInfo?
+): Int {
+    resolveSplashIconResIdForComponentClassName(launcherInfo?.targetActivity ?: launcherInfo?.name)
         .takeIf { it != 0 }
         ?.let { return it }
 
-    resolveSplashIconResIdForComponentClassName(launchIntent?.component?.className)
+    resolveSplashIconResIdForComponentClassName(launcherInfo?.name ?: launchIntent?.component?.className)
         .takeIf { it != 0 }
         ?.let { return it }
 
@@ -531,26 +698,27 @@ internal fun shouldEnableSplashFlyoutAnimation(
 }
 
 internal fun shouldKeepSystemSplashForPreload(
-    runColdStartSplash: Boolean,
-    splashIconVisible: Boolean
+    runColdStartSplash: Boolean
 ): Boolean {
-    return runColdStartSplash && splashIconVisible
+    // The native splash background is still the cold-start handoff when both the optional
+    // launcher icon animation and custom wallpaper are disabled.
+    return runColdStartSplash
 }
 
 internal fun shouldApplySplashRealtimeBlur(
     useRealtimeBlur: Boolean,
     progress: Float
-): Boolean {
-    return useRealtimeBlur && progress > 0f
-}
+): Boolean = useRealtimeBlur && splashExitBlurProgress(progress) > 0f
 
 internal fun shouldRunColdStartSplash(savedInstanceStatePresent: Boolean): Boolean = !savedInstanceStatePresent
 
 internal fun splashExitDurationMs(): Long = 920L
 internal fun splashExitTranslateYDp(): Float = 220f
 internal fun splashExitScaleEnd(): Float = 1.12f
-internal fun splashExitBlurRadiusEnd(): Float = 32f
+internal fun splashExitBlurRadiusEnd(): Float = 24f
 internal fun splashMaxKeepOnScreenMs(): Long = 1000L
+internal fun splashExitWaitTimeoutMs(): Long =
+    splashMaxKeepOnScreenMs() + splashExitDurationMs() + 500L
 internal fun customSplashHoldDurationMs(): Long = 1900L
 internal fun customSplashFadeDurationMs(): Int = 1450
 
@@ -591,7 +759,11 @@ internal fun splashExitTravelDistancePx(
 
 internal fun splashExitBlurProgress(progress: Float): Float {
     val normalized = progress.coerceIn(0f, 1f)
-    return normalized.pow(1.6f)
+    val sharpHoldProgress = 0.10f
+    if (normalized <= sharpHoldProgress) return 0f
+    val blurProgress = ((normalized - sharpHoldProgress) / (1f - sharpHoldProgress))
+        .coerceIn(0f, 1f)
+    return blurProgress.pow(1.45f)
 }
 
 internal fun splashExitIconAlpha(progress: Float): Float {
@@ -604,6 +776,47 @@ internal fun splashExitBackgroundAlpha(progress: Float): Float {
     if (progress <= 0.18f) return 1f
     val normalized = ((progress - 0.18f) / 0.82f).coerceIn(0f, 1f)
     return (1f - normalized.pow(1.1f)).coerceIn(0f, 1f)
+}
+
+internal fun splashFlyoutCornerRadiusPx(sizePx: Int): Float {
+    return sizePx.coerceAtLeast(0) * 0.24f
+}
+
+internal fun resolveSplashFlyoutTargetSizePx(
+    systemIconWidthPx: Int,
+    systemIconHeightPx: Int,
+    density: Float,
+): Int {
+    val safeDensity = density.coerceAtLeast(0.1f)
+    val fallbackSizePx = (112f * safeDensity).roundToInt().coerceAtLeast(1)
+    if (systemIconWidthPx <= 0 || systemIconHeightPx <= 0) return fallbackSizePx
+
+    val shortSidePx = minOf(systemIconWidthPx, systemIconHeightPx)
+    val longSidePx = maxOf(systemIconWidthPx, systemIconHeightPx)
+    val isLauncherLikeSquare = longSidePx <= shortSidePx * 1.2f
+    val shortSideDp = shortSidePx / safeDensity
+    return if (isLauncherLikeSquare && shortSideDp in 72f..160f) {
+        shortSidePx
+    } else {
+        fallbackSizePx
+    }
+}
+
+private fun applySplashFlyoutRoundedClip(view: View) {
+    view.outlineProvider = object : ViewOutlineProvider() {
+        override fun getOutline(view: View, outline: Outline) {
+            val sizePx = minOf(view.width, view.height)
+            outline.setRoundRect(
+                0,
+                0,
+                view.width,
+                view.height,
+                splashFlyoutCornerRadiusPx(sizePx)
+            )
+        }
+    }
+    view.clipToOutline = true
+    view.invalidateOutline()
 }
 
 internal fun splashTrailPrimaryAlpha(progress: Float): Float {
@@ -622,53 +835,55 @@ internal fun splashTrailSecondaryAlpha(progress: Float): Float {
 
 @RequiresApi(Build.VERSION_CODES.S)
 private fun applySplashRealtimeBlur(
-    splashView: View,
     animatedTarget: View,
     primaryTrailView: View?,
     secondaryTrailView: View?,
     radius: Float
 ) {
-    splashView.setRenderEffect(
-        RenderEffect.createBlurEffect(
-            radius * 0.55f,
-            radius * 0.55f,
-            Shader.TileMode.CLAMP
-        )
-    )
+    if (radius < 0.5f) return
+    if (!animatedTarget.isAttachedToWindow) return
     animatedTarget.setRenderEffect(
         RenderEffect.createBlurEffect(
-            radius,
-            radius,
+            radius * 0.62f,
+            radius * 0.62f,
             Shader.TileMode.CLAMP
         )
     )
-    primaryTrailView?.setRenderEffect(
-        RenderEffect.createBlurEffect(
-            radius * 1.2f,
-            radius * 1.2f,
-            Shader.TileMode.CLAMP
+    if (primaryTrailView?.isAttachedToWindow == true) {
+        primaryTrailView.setRenderEffect(
+            RenderEffect.createBlurEffect(
+                radius,
+                radius,
+                Shader.TileMode.CLAMP
+            )
         )
-    )
-    secondaryTrailView?.setRenderEffect(
-        RenderEffect.createBlurEffect(
-            radius * 1.45f,
-            radius * 1.45f,
-            Shader.TileMode.CLAMP
+    }
+    if (secondaryTrailView?.isAttachedToWindow == true) {
+        secondaryTrailView.setRenderEffect(
+            RenderEffect.createBlurEffect(
+                radius * 1.2f,
+                radius * 1.2f,
+                Shader.TileMode.CLAMP
+            )
         )
-    )
+    }
 }
 
 @RequiresApi(Build.VERSION_CODES.S)
 private fun clearSplashRealtimeBlur(
-    splashView: View,
     animatedTarget: View,
     primaryTrailView: View?,
     secondaryTrailView: View?
 ) {
-    splashView.setRenderEffect(null)
-    animatedTarget.setRenderEffect(null)
-    primaryTrailView?.setRenderEffect(null)
-    secondaryTrailView?.setRenderEffect(null)
+    if (animatedTarget.isAttachedToWindow) {
+        animatedTarget.setRenderEffect(null)
+    }
+    if (primaryTrailView?.isAttachedToWindow == true) {
+        primaryTrailView.setRenderEffect(null)
+    }
+    if (secondaryTrailView?.isAttachedToWindow == true) {
+        secondaryTrailView.setRenderEffect(null)
+    }
 }
 
 internal enum class SplashFlyoutTargetType {
@@ -707,7 +922,8 @@ internal fun shouldRefreshMainActivitySystemThemeSnapshot(
 }
 
 @OptIn(UnstableApi::class) // 解决 UnsafeOptInUsageError，因为 AppNavigation 内部使用了不稳定的 API
-open class MainActivity : AppCompatActivity() {
+class MainActivity : AppCompatActivity() {
+    private var startupRecoveryRedirected = false
     
     //  PiP 状态
     var isInPipMode by mutableStateOf(false)
@@ -722,9 +938,71 @@ open class MainActivity : AppCompatActivity() {
     private var hasCompletedInitialResume = false
     private var splashFlyoutEnabledAtCreate = false
     private var splashExitCallbackTriggered = false
-    private var systemInDarkThemeSnapshot by mutableStateOf(false)
+    private var systemSplashExited by mutableStateOf(false)
 
-    var windowMetrics: WindowMetrics? by mutableStateOf(null)
+    /** TTFD 是否已上报（只上报一次）。 */
+    private var ttfdReported = false
+    private var systemInDarkThemeSnapshot by mutableStateOf(false)
+    private var runtimeJankStats: JankStats? = null
+    private val runtimeVisualGuardSession = Any()
+    private var android17HandoffEnabled = false
+
+    var currentWindowMetrics: WindowMetrics? by mutableStateOf(null)
+    var maximumWindowMetrics: WindowMetrics? by mutableStateOf(null)
+
+    private fun refreshWindowMetrics() {
+        val calculator = WindowMetricsCalculator.getOrCreate()
+        currentWindowMetrics = calculator.computeCurrentWindowMetrics(this)
+        maximumWindowMetrics = calculator.computeMaximumWindowMetrics(this)
+    }
+
+    private fun currentPlaybackHandoffPayload(): PlaybackHandoffPayload? {
+        PlaybackHandoffRegistry.currentBangumiPayload()?.let { return it }
+        if (!isInVideoDetail && !isInAudioModeRoute) return null
+        if (!::miniPlayerManager.isInitialized || miniPlayerManager.isLiveMode) return null
+        if (!miniPlayerManager.isActive) return null
+        val bvid = miniPlayerManager.currentBvid?.trim().orEmpty()
+        val cid = miniPlayerManager.currentCid
+        if (bvid.isBlank() || cid <= 0L) return null
+        val durationMs = miniPlayerManager.duration.coerceAtLeast(0L)
+        val positionMs = miniPlayerManager.player?.currentPosition
+            ?.coerceAtLeast(0L)
+            ?.let { position -> if (durationMs > 0L) position.coerceAtMost(durationMs) else position }
+            ?: miniPlayerManager.currentPosition.coerceAtLeast(0L)
+        return PlaybackHandoffPayload.V1.Video(
+            bvid = bvid,
+            cid = cid,
+            resumePositionMs = positionMs,
+            startAudio = isInAudioModeRoute
+        )
+    }
+
+    private fun refreshAndroid17HandoffAvailability() {
+        if (Build.VERSION.SDK_INT < 37) return
+        val shouldEnable = currentPlaybackHandoffPayload() != null
+        if (android17HandoffEnabled == shouldEnable) return
+        val params = if (shouldEnable) {
+            HandoffActivityParams.Builder()
+                .setAllowHandoffWithoutPackageInstalled(true)
+                .build()
+        } else {
+            null
+        }
+        setHandoffEnabled(shouldEnable, params)
+        android17HandoffEnabled = shouldEnable
+    }
+
+    @RequiresApi(37)
+    override fun onHandoffActivityDataRequested(
+        handoffRequestInfo: HandoffActivityDataRequestInfo
+    ): HandoffActivityData {
+        val payload = currentPlaybackHandoffPayload()
+        return if (payload != null) {
+            PlaybackHandoffCodec.toPlatformData(payload, componentName)
+        } else {
+            HandoffActivityData.createWebHandoff(Uri.parse("https://www.bilibili.com"))
+        }
+    }
 
     private fun authenticatePrivacyAccess(
         request: PrivacyAuthenticationRequest,
@@ -794,28 +1072,64 @@ open class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun redirectToStartupRecovery() {
+        startActivity(Intent(intent).apply {
+            setClass(this@MainActivity, StartupRecoveryActivity::class.java)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        })
+        finish()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        // setIntent() updates from singleTask delivery must also survive process recreation.
+        @Suppress("DEPRECATION")
+        val restoredIntent = savedInstanceState?.getParcelable<Intent>(STATE_MAIN_ACTIVITY_INTENT)
+        restoredIntent?.let(::setIntent)
+        if (StartupRecovery.isRecoveryMode) {
+            startupRecoveryRedirected = true
+            // Do not restore Compose/navigation/player state on the emergency route.
+            // Explicitly use the AppCompat host theme when bypassing installSplashScreen.
+            setTheme(R.style.Theme_PureBiliBili_Main)
+            super.onCreate(null)
+            redirectToStartupRecovery()
+            return
+        }
+        Logger.recordStartupStage("main_create")
         applyAppLanguage(SettingsManager.getAppLanguageSync(this))
+        val launcherInfo = resolveForwardedLauncherActivityInfo(this, intent)
+        resolveSplashThemeResIdForActivityClassName(launcherInfo?.targetActivity ?: launcherInfo?.name)
+            .takeIf { it != 0 }
+            ?.let(::setTheme)
         //  安装 SplashScreen
         val splashScreen = installSplashScreen()
         val runColdStartSplash = shouldRunColdStartSplash(savedInstanceStatePresent = savedInstanceState != null)
         val welcomePrefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         val splashIconVisible = SettingsManager.isSplashIconAnimationEnabledSync(this)
-        val splashFlyoutEnabled = runColdStartSplash && shouldEnableSplashFlyoutAnimation(
+        val userAgreementAcked = welcomePrefs.getBoolean(USER_AGREEMENT_ACK_KEY, false)
+        val startupStyle = SettingsManager.getStartupAnimationStyleSync(this)
+        val maidStartupEnabled = com.android.purebilibili.core.store.shouldShowMaidStartup(
+            coldStart = runColdStartSplash,
+            agreementAccepted = userAgreementAcked,
+            iconAnimationEnabled = splashIconVisible,
+            style = startupStyle
+        )
+        val splashFlyoutEnabled = startupStyle == com.android.purebilibili.core.store.StartupAnimationStyle.ICON_FLYOUT &&
+            runColdStartSplash && shouldEnableSplashFlyoutAnimation(
             sdkInt = Build.VERSION.SDK_INT,
-            hasCompletedOnboarding = welcomePrefs.getBoolean(KEY_FIRST_LAUNCH, false),
-            hasAcceptedReleaseDisclaimer = welcomePrefs.getBoolean(RELEASE_DISCLAIMER_ACK_KEY, false),
+            // Flyout only after mandatory user-agreement gate (covers both new and old users).
+            hasCompletedOnboarding = userAgreementAcked,
+            hasAcceptedReleaseDisclaimer = userAgreementAcked ||
+                welcomePrefs.getBoolean(RELEASE_DISCLAIMER_ACK_KEY, false),
             splashIconAnimationEnabled = splashIconVisible
         )
         val keepSystemSplashForPreload = shouldKeepSystemSplashForPreload(
-            runColdStartSplash = runColdStartSplash,
-            splashIconVisible = splashIconVisible
+            runColdStartSplash = runColdStartSplash
         )
-        val splashFlyoutIconResId = resolveLaunchIconResId(this, intent)
+        val splashFlyoutIconResId = resolveLaunchIconResId(this, intent, launcherInfo)
         splashFlyoutEnabledAtCreate = splashFlyoutEnabled
         Logger.d(
             TAG,
-            "🚀 Splash setup. coldStart=$runColdStartSplash, iconVisible=$splashIconVisible, keepForPreload=$keepSystemSplashForPreload, flyoutEnabled=$splashFlyoutEnabled, firstLaunchShown=${welcomePrefs.getBoolean(KEY_FIRST_LAUNCH, false)}, disclaimerAck=${welcomePrefs.getBoolean(RELEASE_DISCLAIMER_ACK_KEY, false)}, taskRoot=$isTaskRoot, savedState=${savedInstanceState != null}, intentFlags=0x${intent?.flags?.toString(16) ?: "0"}, launchIconResId=$splashFlyoutIconResId"
+            "🚀 Splash setup. coldStart=$runColdStartSplash, iconVisible=$splashIconVisible, keepForPreload=$keepSystemSplashForPreload, flyoutEnabled=$splashFlyoutEnabled, userAgreementAck=$userAgreementAcked, firstLaunchShown=${welcomePrefs.getBoolean(KEY_FIRST_LAUNCH, false)}, disclaimerAck=${welcomePrefs.getBoolean(RELEASE_DISCLAIMER_ACK_KEY, false)}, taskRoot=$isTaskRoot, savedState=${savedInstanceState != null}, intentFlags=0x${intent?.flags?.toString(16) ?: "0"}, launchIconResId=$splashFlyoutIconResId"
         )
         
         //  🚀 [启动优化] 立即开始预加载首页数据
@@ -823,18 +1137,25 @@ open class MainActivity : AppCompatActivity() {
         VideoRepository.preloadHomeData()
         
         super.onCreate(savedInstanceState)
+        lifecycleScope.launch {
+            applyPreferredDisplayMode(SettingsManager.getScreenDisplayModeId(this@MainActivity).first())
+        }
         //  初始调用，后续会根据主题动态更新
         enableEdgeToEdge()
+        AppWindowSystemUiController.configureEdgeToEdgeHost(this)
         
         // 初始化小窗管理器
         miniPlayerManager = MiniPlayerManager.getInstance(this)
+        PlaybackHandoffRegistry.setAvailabilityListener {
+            window.decorView.post { refreshAndroid17HandoffAvailability() }
+        }
         refreshSystemThemeSnapshot(reason = "create")
         
         //  🚀 [启动优化] 保持 Splash 直到数据加载完成或超时
         var isDataReady = false
         val startTime = System.currentTimeMillis()
 
-        windowMetrics = WindowMetricsCalculator.getOrCreate().computeMaximumWindowMetrics(this)
+        refreshWindowMetrics()
 
         splashScreen.setKeepOnScreenCondition {
             if (!keepSystemSplashForPreload) {
@@ -866,51 +1187,43 @@ open class MainActivity : AppCompatActivity() {
                 splashExitCallbackTriggered = true
                 runCatching {
                     val splashView = splashScreenViewProvider.view
-                    val animatedTarget = splashScreenViewProvider.iconView
-                    val targetType = resolveSplashFlyoutTargetType(
-                        hasSystemIcon = true,
-                        hasFallbackIcon = false
-                    )
-                    Logger.d(
-                        TAG,
-                        "🚀 Splash exit animation start. targetType=$targetType, hasSystemIcon=true, hasFallbackIcon=false"
-                    )
-                    if (targetType == SplashFlyoutTargetType.SPLASH_ROOT) {
-                        Logger.w(
-                            TAG,
-                            "⚠️ Splash flyout degraded to splash root animation (icon target unavailable)"
-                        )
-                    }
+                    val systemIconView = splashScreenViewProvider.iconView
                     val frameContainer = splashView as? FrameLayout
-                    val targetDrawableState = (animatedTarget as? ImageView)
+                        ?: error("Splash root is not a FrameLayout")
+                    val targetDrawableState = (systemIconView as? ImageView)
                         ?.drawable
                         ?.constantState
-                    val targetSizePx = if (animatedTarget.width > 0 && animatedTarget.height > 0) {
-                        minOf(animatedTarget.width, animatedTarget.height)
-                    } else {
-                        (112f * resources.displayMetrics.density).toInt()
-                    }
+                    val targetSizePx = resolveSplashFlyoutTargetSizePx(
+                        systemIconWidthPx = systemIconView.width,
+                        systemIconHeightPx = systemIconView.height,
+                        density = resources.displayMetrics.density,
+                    )
                     Logger.d(
                         TAG,
-                        "🚀 Splash exit target metrics. targetSizePx=$targetSizePx, hasFrameContainer=${frameContainer != null}, useRealtimeBlur=${shouldUseRealtimeSplashBlur(Build.VERSION.SDK_INT)}"
+                        "🚀 Splash exit target metrics. system=${systemIconView.width}x${systemIconView.height}, targetSizePx=$targetSizePx, useRealtimeBlur=${shouldUseRealtimeSplashBlur(Build.VERSION.SDK_INT, Build.MANUFACTURER.orEmpty())}"
                     )
-                    fun createTrailView(): ImageView? {
-                        val container = frameContainer ?: return null
-                        val drawable = targetDrawableState?.newDrawable(resources)?.mutate()
-                        if (drawable == null && splashFlyoutIconResId == 0) return null
+
+                    var nextInsertIndex = frameContainer.indexOfChild(systemIconView)
+                        .let { if (it >= 0) it + 1 else frameContainer.childCount }
+                    fun createFlyoutIconView(initialAlpha: Float): ImageView? {
+                        // Prefer the original high-density resource. The OEM iconView drawable can
+                        // already be a stretched/rasterized snapshot on customized Android builds.
+                        val drawable = if (splashFlyoutIconResId != 0) {
+                            AppCompatResources.getDrawable(
+                                this@MainActivity,
+                                splashFlyoutIconResId,
+                            )?.mutate()
+                        } else {
+                            targetDrawableState?.newDrawable(resources)?.mutate()
+                        } ?: return null
                         return ImageView(this).apply {
-                            scaleType = ImageView.ScaleType.FIT_CENTER
-                            alpha = 0f
-                            if (drawable != null) {
-                                setImageDrawable(drawable)
-                            } else {
-                                setImageResource(splashFlyoutIconResId)
-                            }
-                            val anchorIndex = container.indexOfChild(animatedTarget)
-                                .let { if (it >= 0) it else container.childCount }
-                            container.addView(
+                            scaleType = ImageView.ScaleType.CENTER_INSIDE
+                            alpha = initialAlpha
+                            applySplashFlyoutRoundedClip(this)
+                            setImageDrawable(drawable)
+                            frameContainer.addView(
                                 this,
-                                anchorIndex,
+                                nextInsertIndex++,
                                 FrameLayout.LayoutParams(
                                     targetSizePx,
                                     targetSizePx,
@@ -919,16 +1232,31 @@ open class MainActivity : AppCompatActivity() {
                             )
                         }
                     }
-                    val primaryTrailView = createTrailView()
-                    val secondaryTrailView = createTrailView()
+                    val secondaryTrailView = createFlyoutIconView(initialAlpha = 0f)
+                    val primaryTrailView = createFlyoutIconView(initialAlpha = 0f)
+                    val animatedTarget = createFlyoutIconView(initialAlpha = 1f)
+                        ?: error("Unable to create a square splash flyout icon")
+                    // Never clip or animate the OEM iconView directly: some devices expose a
+                    // full-height rectangular container here, which produces the giant leaking
+                    // rounded card seen on first cold start.
+                    systemIconView.alpha = 0f
+                    val targetType = resolveSplashFlyoutTargetType(
+                        hasSystemIcon = false,
+                        hasFallbackIcon = true,
+                    )
+                    Logger.d(
+                        TAG,
+                        "🚀 Splash exit animation start. targetType=$targetType, dedicatedSquareIcon=true"
+                    )
                     val minTranslateYPx = splashExitTranslateYDp() * resources.displayMetrics.density
                     val translateYPx = splashExitTravelDistancePx(
                         splashHeightPx = splashView.height,
                         targetSizePx = targetSizePx,
                         minTravelPx = minTranslateYPx
                     )
-                    val supportsRealtimeBlur = shouldUseRealtimeSplashBlur(Build.VERSION.SDK_INT)
+                    val supportsRealtimeBlur = shouldUseRealtimeSplashBlur(Build.VERSION.SDK_INT, Build.MANUFACTURER.orEmpty())
                     var blurEffectEnabled = supportsRealtimeBlur
+                    var lastAppliedBlurRadius = -1f
                     val animator = ValueAnimator.ofFloat(0f, 1f).apply {
                         duration = splashExitDurationMs()
                         interpolator = PathInterpolator(0.12f, 0.98f, 0.2f, 1.0f)
@@ -963,25 +1291,26 @@ open class MainActivity : AppCompatActivity() {
                                 shouldApplySplashRealtimeBlur(blurEffectEnabled, progress)
                             ) {
                                 val radius = splashExitBlurRadiusEnd() * splashExitBlurProgress(progress)
-                                runCatching {
-                                    applySplashRealtimeBlur(
-                                        splashView = splashView,
-                                        animatedTarget = animatedTarget,
-                                        primaryTrailView = primaryTrailView,
-                                        secondaryTrailView = secondaryTrailView,
-                                        radius = radius
-                                    )
-                                }.onFailure {
-                                    blurEffectEnabled = false
-                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                                        clearSplashRealtimeBlur(
-                                            splashView = splashView,
+                                if (radius >= 0.5f && kotlin.math.abs(radius - lastAppliedBlurRadius) >= 1.0f) {
+                                    lastAppliedBlurRadius = radius
+                                    runCatching {
+                                        applySplashRealtimeBlur(
                                             animatedTarget = animatedTarget,
                                             primaryTrailView = primaryTrailView,
-                                            secondaryTrailView = secondaryTrailView
+                                            secondaryTrailView = secondaryTrailView,
+                                            radius = radius
                                         )
+                                    }.onFailure {
+                                        blurEffectEnabled = false
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                            clearSplashRealtimeBlur(
+                                                animatedTarget = animatedTarget,
+                                                primaryTrailView = primaryTrailView,
+                                                secondaryTrailView = secondaryTrailView
+                                            )
+                                        }
+                                        Logger.w(TAG, "⚠️ Splash realtime blur failed, fallback to non-blur flyout", it)
                                     }
-                                    Logger.w(TAG, "⚠️ Splash realtime blur failed, fallback to non-blur flyout", it)
                                 }
                             }
                         }
@@ -989,21 +1318,31 @@ open class MainActivity : AppCompatActivity() {
                     animator.doOnEnd {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && supportsRealtimeBlur) {
                             clearSplashRealtimeBlur(
-                                splashView = splashView,
                                 animatedTarget = animatedTarget,
                                 primaryTrailView = primaryTrailView,
                                 secondaryTrailView = secondaryTrailView
                             )
                         }
-                        primaryTrailView?.let { frameContainer?.removeView(it) }
-                        secondaryTrailView?.let { frameContainer?.removeView(it) }
-                        splashScreenViewProvider.remove()
+                        frameContainer.post {
+                            frameContainer.removeView(animatedTarget)
+                            primaryTrailView?.let(frameContainer::removeView)
+                            secondaryTrailView?.let(frameContainer::removeView)
+                            splashScreenViewProvider.remove()
+                            systemSplashExited = true
+                        }
                     }
                     animator.start()
                 }.onFailure {
                     Logger.e(TAG, "❌ Splash exit animation failed, removing splash immediately", it)
                     splashScreenViewProvider.remove()
+                    systemSplashExited = true
                 }
+            }
+        } else {
+            splashScreen.setOnExitAnimationListener { provider ->
+                splashExitCallbackTriggered = true
+                provider.remove()
+                systemSplashExited = true
             }
         }
 
@@ -1049,6 +1388,8 @@ open class MainActivity : AppCompatActivity() {
             val uriHandler = LocalUriHandler.current
             val scope = rememberCoroutineScope()
             var startupUpdateCheckResult by remember { mutableStateOf<AppUpdateCheckResult?>(null) }
+            var startupUpdateCheckFinished by remember { mutableStateOf(false) }
+            // Legacy state remains only for the retired in-place dialog path below.
             var startupUpdateDownloadState by remember { mutableStateOf(AppUpdateDownloadState()) }
             var pendingCrashSnapshotPath by remember {
                 mutableStateOf(Logger.getPendingCrashSnapshotPath(context))
@@ -1056,14 +1397,23 @@ open class MainActivity : AppCompatActivity() {
             var hasHandledCrashPrompt by remember { mutableStateOf(false) }
 
             LaunchedEffect(Unit) {
-                val autoCheckUpdateEnabled = SettingsManager.getAutoCheckAppUpdate(context).first()
-                val gateAllowsCheck = AppUpdateAutoCheckGate.tryMarkChecked()
-                if (shouldRunAppEntryAutoCheck(autoCheckUpdateEnabled, gateAllowsCheck)) {
-                    AppUpdateChecker.check(BuildConfig.VERSION_NAME).onSuccess { info ->
-                        if (info.isUpdateAvailable) {
-                            startupUpdateCheckResult = info
+                try {
+                    val autoCheckUpdateEnabled = SettingsManager.getAutoCheckAppUpdate(context).first()
+                    val updateChannel = SettingsManager.getAppUpdateChannel(context).first()
+                    val gateAllowsCheck = AppUpdateAutoCheckGate.tryMarkChecked()
+                    if (shouldRunAppEntryAutoCheck(autoCheckUpdateEnabled, gateAllowsCheck)) {
+                        AppUpdateChecker.check(
+                            currentVersion = BuildConfig.VERSION_NAME,
+                            currentVersionCode = BuildConfig.VERSION_CODE,
+                            includePrerelease = updateChannel == SettingsManager.AppUpdateChannel.BETA
+                        ).onSuccess { info ->
+                            if (info.isUpdateAvailable) {
+                                startupUpdateCheckResult = info
+                            }
                         }
                     }
+                } finally {
+                    startupUpdateCheckFinished = true
                 }
             }
             
@@ -1071,13 +1421,24 @@ open class MainActivity : AppCompatActivity() {
             // val prefs = remember { context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
             // var showWelcome by remember { mutableStateOf(!prefs.getBoolean(KEY_FIRST_LAUNCH, false)) }
 
-            val appThemeSettings by SettingsManager
-                .getAppThemeSettings(context)
+            // 同步队列操作在后台也会读取保存范围，订阅跟随应用外壳的组合生命周期。
+            LaunchedEffect(context) {
+                com.android.purebilibili.core.store.ContentDisplayPreferences.rememberPlayerAdjustments(context).collect { }
+            }
+            val playerControlsTimeout by remember(context) {
+                com.android.purebilibili.core.store.ContentDisplayPreferences.playerControlsTimeout(context)
+            }.collectAsStateWithLifecycle(initialValue = 0)
+            val contentImages by remember(context) {
+                com.android.purebilibili.core.store.ContentDisplayPreferences.images(context)
+            }.collectAsStateWithLifecycle(initialValue = com.android.purebilibili.core.store.ContentDisplayPreferences.imageSnapshot)
+            val scrollFeedbackPreset by remember(context) {
+                com.android.purebilibili.core.store.ContentDisplayPreferences.spring(context)
+            }.collectAsStateWithLifecycle(initialValue = com.android.purebilibili.core.store.ScrollFeedbackPreset.STANDARD)
+            SideEffect { com.android.purebilibili.core.store.ContentDisplayPreferences.publishImageSnapshot(contentImages) }
+            val appThemeSettings by remember(context) { SettingsManager.getAppThemeSettings(context) }
                 .collectAsStateWithLifecycle(
                     initialValue = SettingsManager.getInitialAppThemeSettings(context)
                 )
-            val uiPreset = appThemeSettings.uiPreset
-            val androidNativeVariant = appThemeSettings.androidNativeVariant
             val themeMode = appThemeSettings.themeMode
             val darkThemeStyle = appThemeSettings.darkThemeStyle
             val appLanguage = appThemeSettings.appLanguage
@@ -1091,24 +1452,130 @@ open class MainActivity : AppCompatActivity() {
             val themeRoleOverrides = appThemeSettings.themeRoleOverrides
             val colorStyle = appThemeSettings.colorStyle
             val colorSpec = appThemeSettings.colorSpec
+            val colorContrast = appThemeSettings.colorContrast
             val themeColorIndex = appThemeSettings.themeColorIndex
             val appFontSizePreset = appThemeSettings.appFontSizePreset
+            val appFontWeightPreset = appThemeSettings.appFontWeightPreset
             val appFontFileName = appThemeSettings.appFontFileName
             val appUiScalePreset = appThemeSettings.appUiScalePreset
             val appDpiOverridePercent = appThemeSettings.appDpiOverridePercent
             val appGestureScreenshotEnabled = appThemeSettings.appGestureScreenshotEnabled
             val appScreenshotGestureMode = appThemeSettings.appScreenshotGestureMode
             val appScreenshotCaptureMode = appThemeSettings.appScreenshotCaptureMode
+            val blurIntensity by SettingsManager.getBlurIntensity(context)
+                .collectAsStateWithLifecycle(initialValue = BlurIntensity.THIN)
+            val headerBlurEnabled by SettingsManager.getHeaderBlurEnabled(context)
+                .collectAsStateWithLifecycle(initialValue = true)
+            val bottomBarBlurEnabled by SettingsManager.getBottomBarBlurEnabled(context)
+                .collectAsStateWithLifecycle(initialValue = false)
+            val progressiveTopBlurEnabled by SettingsManager.getProgressiveTopBlurEnabled(context)
+                .collectAsStateWithLifecycle(initialValue = true)
+            val progressiveTopFadeEnabled by SettingsManager.getProgressiveTopFadeEnabled(context)
+                .collectAsStateWithLifecycle(initialValue = true)
+            val hapticSettings by remember(context) { SettingsManager.getHapticSettings(context) }
+                .collectAsStateWithLifecycle(initialValue = com.android.purebilibili.core.ui.AppHapticSettings())
+            val hapticFeedbackEnabled by SettingsManager.getHapticFeedbackEnabled(context)
+                .collectAsStateWithLifecycle(initialValue = true)
+            val globalTextTapCopyEnabled by SettingsManager
+                .getGlobalTextTapCopyEnabled(context)
+                .collectAsStateWithLifecycle(initialValue = false)
+            val detailedCommentTimeEnabled by remember(context) {
+                SettingsManager.getDetailedCommentTimeEnabled(context)
+            }.collectAsStateWithLifecycle(initialValue = false)
+            val commentReplyPreviewVisible by remember(context) {
+                SettingsManager.getCommentReplyPreviewVisible(context)
+            }.collectAsStateWithLifecycle(initialValue = true)
+            val globalDragFeedbackEnabled by SettingsManager
+                .getGlobalDragFeedbackEnabled(context)
+                .collectAsStateWithLifecycle(initialValue = true)
+            val uiEntranceAnimationEnabled by SettingsManager
+                .getUiEntranceAnimationEnabled(context)
+                .collectAsStateWithLifecycle(initialValue = true)
+            val runtimeVisualGuardEnabled by SettingsManager
+                .getRuntimeVisualGuardEnabled(context)
+                .collectAsStateWithLifecycle(initialValue = true)
+            val nativeMiuixPopupsEnabled by com.android.purebilibili.core.store.player.PlayerSettingsStore
+                .getNativeMiuixPlayerPopups(context)
+                .collectAsStateWithLifecycle(initialValue = true)
+            val liquidGlassMasterEnabled by SettingsManager.getAndroidNativeLiquidGlassEnabled(context)
+                .collectAsStateWithLifecycle(initialValue = true)
+            val liquidControlsUseThemeColor by SettingsManager.getLiquidControlsUseThemeColor(context)
+                .collectAsStateWithLifecycle(initialValue = false)
+            val liquidGlassScenes by SettingsManager.getLiquidGlassScenes(context)
+                .collectAsStateWithLifecycle(initialValue = com.android.purebilibili.core.ui.AppLiquidGlassSettings())
+            val liquidGlassEnabled = liquidGlassMasterEnabled && liquidGlassScenes.isEnabled(
+                com.android.purebilibili.core.ui.AppLiquidGlassScene.OTHER_COMPONENTS,
+            )
+            val liquidSwitchThumbMode by SettingsManager.getLiquidSwitchThumbMode(context)
+                .collectAsStateWithLifecycle(initialValue = com.android.purebilibili.core.ui.LiquidSwitchThumbMode.THEME)
+            val appThemeConfig = remember(
+                liquidGlassEnabled,
+                liquidGlassMasterEnabled,
+                liquidGlassScenes,
+                liquidControlsUseThemeColor,
+                liquidSwitchThumbMode,
+                blurIntensity,
+                headerBlurEnabled,
+                bottomBarBlurEnabled,
+                progressiveTopBlurEnabled,
+                progressiveTopFadeEnabled,
+                hapticFeedbackEnabled,
+                hapticSettings,
+                globalTextTapCopyEnabled,
+                uiEntranceAnimationEnabled,
+                globalDragFeedbackEnabled,
+                runtimeVisualGuardEnabled,
+                nativeMiuixPopupsEnabled,
+            ) {
+                AppThemeConfig(
+                    liquidGlassEnabled = liquidGlassEnabled,
+                    playerGlassEnabled = liquidGlassMasterEnabled && liquidGlassScenes.isEnabled(com.android.purebilibili.core.ui.AppLiquidGlassScene.PLAYER_CONTROLS),
+                    popupGlassEnabled = liquidGlassMasterEnabled && liquidGlassScenes.isEnabled(com.android.purebilibili.core.ui.AppLiquidGlassScene.MENUS_DIALOGS),
+                    nowPlayingGlassEnabled = liquidGlassMasterEnabled && liquidGlassScenes.isEnabled(com.android.purebilibili.core.ui.AppLiquidGlassScene.NOW_PLAYING),
+                    liquidControlsUseThemeColor = liquidControlsUseThemeColor,
+                    liquidSwitchThumbMode = liquidSwitchThumbMode,
+                    blurIntensity = blurIntensity,
+                    headerBlurEnabled = headerBlurEnabled,
+                    bottomBarBlurEnabled = bottomBarBlurEnabled,
+                    progressiveTopBlurEnabled = progressiveTopBlurEnabled,
+                    progressiveTopFadeEnabled = progressiveTopFadeEnabled,
+                    hapticFeedbackEnabled = hapticFeedbackEnabled,
+                    hapticSettings = hapticSettings,
+                    globalTextTapCopyEnabled = globalTextTapCopyEnabled,
+                    uiEntranceAnimationEnabled = uiEntranceAnimationEnabled,
+                    globalDragFeedbackEnabled = globalDragFeedbackEnabled,
+                    runtimeVisualGuardEnabled = runtimeVisualGuardEnabled,
+                    nativeMiuixPopupsEnabled = nativeMiuixPopupsEnabled,
+                )
+            }
             
             // 4. 获取系统当前的深色状态
             val systemInDark = systemInDarkThemeSnapshot
 
             // 5. 根据枚举值决定是否开启 DarkTheme
+            val scheduledDarkTheme = com.android.purebilibili.core.theme.rememberScheduledDarkTheme(
+                appThemeSettings.darkThemeSchedule,
+            )
             val themePreferenceState = resolveThemePreferenceState(
                 themeMode = themeMode,
                 darkThemeStyle = darkThemeStyle,
-                systemInDark = systemInDark
+                systemInDark = systemInDark,
+                scheduledDarkTheme = scheduledDarkTheme.takeIf { appThemeSettings.darkThemeSchedule.enabled },
             )
+            LaunchedEffect(appThemeSettings.darkThemeSchedule.enabled, scheduledDarkTheme, themeMode) {
+                // Keep native resources in step too, without recreating the retained page tree.
+                val nightMode = if (appThemeSettings.darkThemeSchedule.enabled) {
+                    if (scheduledDarkTheme) androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES
+                    else androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO
+                } else when (themeMode) {
+                    AppThemeMode.FOLLOW_SYSTEM -> androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
+                    AppThemeMode.LIGHT -> androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO
+                    AppThemeMode.DARK -> androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES
+                }
+                if (androidx.appcompat.app.AppCompatDelegate.getDefaultNightMode() != nightMode) {
+                    androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(nightMode)
+                }
+            }
             val useDarkTheme = themePreferenceState.useDarkTheme
             val useAmoledDarkTheme = themePreferenceState.useAmoledDarkTheme
             val effectiveDynamicColor = resolveEffectiveDynamicColorEnabled(
@@ -1117,20 +1584,23 @@ open class MainActivity : AppCompatActivity() {
                     sdkInt = Build.VERSION.SDK_INT
                 ),
                 amoledDarkTheme = useAmoledDarkTheme,
-                uiPreset = uiPreset
+                uiStyle = appThemeSettings.uiStyle
             )
 
-            //  [新增] 根据主题动态更新状态栏样式
+            //  [新增] 根据主题动态更新状态栏/导航栏样式（两条系统栏均保持透明，
+            //  只翻转图标明暗；补传 navigationBarStyle 避免回落到 enableEdgeToEdge 的默认 scrim）
+            val edgeToEdgeSystemBarStyle = if (useDarkTheme) {
+                SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+            } else {
+                SystemBarStyle.light(
+                    android.graphics.Color.TRANSPARENT,
+                    android.graphics.Color.TRANSPARENT
+                )
+            }
             LaunchedEffect(useDarkTheme) {
                 enableEdgeToEdge(
-                    statusBarStyle = if (useDarkTheme) {
-                        SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
-                    } else {
-                        SystemBarStyle.light(
-                            android.graphics.Color.TRANSPARENT,
-                            android.graphics.Color.TRANSPARENT
-                        )
-                    }
+                    statusBarStyle = edgeToEdgeSystemBarStyle,
+                    navigationBarStyle = edgeToEdgeSystemBarStyle
                 )
             }
 
@@ -1154,23 +1624,30 @@ open class MainActivity : AppCompatActivity() {
                     dpiOverridePercent = appDpiOverridePercent.takeIf { it > 0 }
                 )
             }
+            // 仅叠加 UI 缩放系数；sp↔px 换算委托系统 Density，保留大字号下的非线性字体缩放曲线。
             val effectiveDensity = remember(systemDensity, displayMetricsSnapshot.effectiveDensityMultiplier) {
-                Density(
-                    density = systemDensity.density * displayMetricsSnapshot.effectiveDensityMultiplier,
-                    fontScale = systemDensity.fontScale
-                )
+                systemDensity.withDensityScale(displayMetricsSnapshot.effectiveDensityMultiplier)
             }
 
             //  📐 [平板适配] 计算窗口尺寸类
+            val materialWindowAdaptiveInfo =
+                androidx.compose.material3.adaptive.currentWindowAdaptiveInfoV2()
             val windowSizeClass = calculateWindowSizeClass(
                 densityMultiplier = displayMetricsSnapshot.effectiveDensityMultiplier,
-                metrics = windowMetrics!!
+                metrics = currentWindowMetrics!!,
+                maximumMetrics = maximumWindowMetrics,
+                adaptiveWindowSizeClass = materialWindowAdaptiveInfo.windowSizeClass,
+            )
+            val appWindowAdaptiveInfo = rememberAppWindowAdaptiveInfo(
+                windowSizeClass = windowSizeClass,
+                windowPosture = materialWindowAdaptiveInfo.windowPosture,
             )
 
             // 6. 传入参数
             PureBiliBiliTheme(
-                uiPreset = uiPreset,
-                androidNativeVariant = androidNativeVariant,
+                themeTransitionEnabled = uiEntranceAnimationEnabled,
+                liquidGlassEnabled = liquidGlassEnabled,
+                uiStyle = appThemeSettings.uiStyle,
                 themeMode = themeMode,
                 darkTheme = useDarkTheme,
                 dynamicColor = effectiveDynamicColor,
@@ -1179,25 +1656,54 @@ open class MainActivity : AppCompatActivity() {
                 md3ColorSource = md3ColorSource,
                 md3CustomColorHex = md3CustomColorHex,
                 themeRoleOverrides = themeRoleOverrides,
+                wallpaperPaletteOverrides = appThemeSettings.wallpaperPaletteOverrides,
+                seedPaletteStyle = appThemeSettings.seedPaletteStyle,
                 colorStyle = colorStyle,
                 colorSpec = colorSpec,
+                colorContrast = colorContrast,
                 fontSizePreset = appFontSizePreset,
+                appFontWeightPreset = appFontWeightPreset,
                 appFontFileName = appFontFileName,
-
+                appIconStyle = appThemeSettings.appIconStyle,
+                appListItemStyle = appThemeSettings.appListItemStyle,
             ) {
+                ProvideAppThemeConfig(config = appThemeConfig) {
+                ProvideRuntimeVisualGuard(
+                    widthSizeClass = windowSizeClass.widthSizeClass
+                ) {
                 ProvideUnifiedBlurIntensity {
+                ProvideAppTextSelectionHost {
                     //  📐 [平板适配] 提供全局 WindowSizeClass
                     CompositionLocalProvider(
+                        com.android.purebilibili.feature.settings.LocalSettingsThemeConfiguration provides appThemeSettings,
+                        com.android.purebilibili.core.ui.LocalAdaptiveScaffoldHazeFactory provides
+                            { userEnabled -> com.android.purebilibili.core.ui.blur.rememberAppScaffoldHazeHandle(userEnabled) },
+                        com.android.purebilibili.feature.video.ui.overlay.LocalPlayerControlsTimeoutSeconds provides playerControlsTimeout,
+                        com.android.purebilibili.core.ui.components.LocalContentImageDarkTheme provides useDarkTheme,
+                        com.android.purebilibili.core.ui.components.LocalContentImageSettings provides contentImages,
+                        com.android.purebilibili.core.ui.components.LocalScrollFeedbackPreset provides scrollFeedbackPreset,
                         LocalDensity provides effectiveDensity,
+                        LocalDetailedCommentTimeEnabled provides detailedCommentTimeEnabled,
+                        com.android.purebilibili.core.ui.LocalCommentReplyPreviewVisible provides commentReplyPreviewVisible,
                         LocalWindowSizeClass provides windowSizeClass,
-                        LocalDisplayMetricsSnapshot provides displayMetricsSnapshot
+                        LocalAppWindowAdaptiveInfo provides appWindowAdaptiveInfo,
+                        com.android.purebilibili.core.ui.LocalHingeSafeOverlayRegions provides
+                            com.android.purebilibili.core.ui.adaptive.rememberHingeSafeOverlayRegions(
+                                adaptiveInfo = appWindowAdaptiveInfo
+                            ),
+                        LocalDisplayMetricsSnapshot provides displayMetricsSnapshot,
+                        LocalAppSingleChoicePresentation provides
+                            appThemeSettings.singleChoicePresentation,
                     ) {
+                    com.android.purebilibili.feature.dynamic.visibility.DynamicVisibilityNoticeHost()
+                    MaidLottieAnimationSettingsHost {
                     val isPipRenderingActive =
                         isInPipMode || miniPlayerManager.shouldKeepPlaybackForPipTransition()
                     val isFullscreenPlayerLocked = AppScreenshotGestureBlockState.fullscreenPlayerLocked
                     var isAppScreenshotBlockedBySplash by remember { mutableStateOf(false) }
                     var isAppScreenshotSaving by remember { mutableStateOf(false) }
                     var appScreenshotRegionBitmap by remember { mutableStateOf<Bitmap?>(null) }
+                    var brandFeedbackBottomInset by remember { mutableStateOf(0.dp) }
                     val appScreenshotSnackbarHostState = remember { SnackbarHostState() }
                     val isLandscapeAppScreenshot =
                         configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -1277,10 +1783,15 @@ open class MainActivity : AppCompatActivity() {
                         Box(
                             modifier = Modifier.fillMaxSize()
                         ) {
-                            LaunchedEffect(isInPipMode, miniPlayerManager.isPlaying) {
+                            LaunchedEffect(isInPipMode, miniPlayerManager.isPlaying, miniPlayerManager.videoAspectRatio) {
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isInPipMode) {
                                     val pipParams = PictureInPictureParams.Builder()
-                                        .setAspectRatio(Rational(16, 9))
+                                        .setAspectRatio(
+                                            resolveSafeAndroidPipRational(
+                                                videoWidth = miniPlayerManager.videoWidth,
+                                                videoHeight = miniPlayerManager.videoHeight
+                                            )
+                                        )
                                         .setActions(
                                             buildPipPlaybackRemoteActions(
                                                 context = this@MainActivity,
@@ -1291,9 +1802,32 @@ open class MainActivity : AppCompatActivity() {
                                     setPictureInPictureParams(pipParams)
                                 }
                             }
-                            AppNavigation(
+                            LaunchedEffect(
+                                isInVideoDetail,
+                                isInAudioModeRoute,
+                                miniPlayerManager.currentBvid,
+                                miniPlayerManager.currentCid,
+                                miniPlayerManager.isLiveMode
+                            ) {
+                                refreshAndroid17HandoffAvailability()
+                            }
+                            //  首次启动必须同意用户协议与隐私政策后才能使用应用
+                            com.android.purebilibili.feature.agreement.UserAgreementGate {
+                                com.android.purebilibili.feature.nearby.NearbyHandoffHost(
+                                    miniPlayer = miniPlayerManager,
+                                    onOpenVideo = { video ->
+                                        pendingNavigationRoute = PlaybackHandoffCodec.toRoute(
+                                            com.android.purebilibili.feature.video.handoff.PlaybackHandoffPayload.V1.Video(
+                                                bvid = video.bvid, cid = video.cid, resumePositionMs = video.positionMs,
+                                            )
+                                        )
+                                    },
+                                ) {
+                                AppNavigation(
                                 miniPlayerManager = miniPlayerManager,
                                 isInPipMode = isPipRenderingActive,
+                                entryDialogsBlocked = !startupUpdateCheckFinished || startupUpdateCheckResult != null ||
+                                    (pendingCrashSnapshotPath != null && !hasHandledCrashPrompt),
                                 pendingVideoId = pendingVideoId,
                                 pendingShortcutRoute = pendingRoute,
                                 pendingNavigationRoute = pendingNavigationRoute,
@@ -1320,23 +1854,30 @@ open class MainActivity : AppCompatActivity() {
                                 },
                                 onVideoDetailEnter = {
                                     isInVideoDetail = true
+                                    refreshAndroid17HandoffAvailability()
                                     Logger.d(TAG, " 进入视频详情页")
                                 },
                                 onVideoDetailExit = {
                                     isInVideoDetail = false
+                                    refreshAndroid17HandoffAvailability()
                                     Logger.d(TAG, "🔙 退出视频详情页")
                                 },
                                 onAudioModeEnter = {
                                     isInAudioModeRoute = true
+                                    refreshAndroid17HandoffAvailability()
                                     Logger.d(TAG, "🎧 进入听视频页")
                                 },
                                 onAudioModeExit = {
                                     isInAudioModeRoute = false
+                                    refreshAndroid17HandoffAvailability()
                                     Logger.d(TAG, "🎧 退出听视频页")
                                 },
                                 onPrivacyAuthenticationRequired = ::authenticatePrivacyAccess,
-                                mainHazeState = mainHazeState //  传递全局 Haze 状态
-                            )
+                                mainHazeState = mainHazeState, //  传递全局 Haze 状态
+                                onBrandFeedbackBottomInsetChanged = { brandFeedbackBottomInset = it }
+                                )
+                                }
+                            }
                             
                             //  OnboardingBottomSheet 等其他 overlay 组件
 
@@ -1344,33 +1885,80 @@ open class MainActivity : AppCompatActivity() {
                     }
                     //  小窗全屏状态
                     var showFullscreen by remember { mutableStateOf(false) }
-                    val playbackOverlayState = remember(isInPipMode, miniPlayerManager.isMiniMode) {
+                    val audioNowPlayingActive by AudioNowPlayingSession.active.collectAsStateWithLifecycle()
+                    val audioNowPlayingBarEnabled by SettingsManager
+                        .getAudioNowPlayingBarEnabled(context)
+                        .collectAsStateWithLifecycle(initialValue = true)
+                    val audioPlaylist by PlaylistManager.playlist.collectAsStateWithLifecycle()
+                    val audioPlaylistIndex by PlaylistManager.currentIndex.collectAsStateWithLifecycle()
+                    val audioNowPlayingItem = audioPlaylist.getOrNull(audioPlaylistIndex)
+                    val showAudioNowPlaying = resolveAudioNowPlayingVisible(
+                        sessionActive = audioNowPlayingActive,
+                        isOnAudioModeScreen = isInAudioModeRoute,
+                        isInPipMode = isInPipMode,
+                        hasCurrentItem = audioNowPlayingItem != null,
+                        barEnabled = audioNowPlayingBarEnabled,
+                        isInMiniMode = miniPlayerManager.isMiniMode,
+                        isVideoDetailDestination = isInVideoDetail
+                    )
+                    if (miniPlayerManager.isMiniMode) {
+                        com.android.purebilibili.feature.video.screen.VideoDetailPipParamsEffect(
+                            context = this@MainActivity,
+                            activity = this@MainActivity,
+                            playerBounds = miniPlayerManager.miniPlayerSourceBoundsPx,
+                            pipModeEnabled = miniPlayerManager.shouldEnterPip(),
+                            player = miniPlayerManager.player
+                        )
+                    }
+                    val playbackOverlayState = remember(
+                        isInPipMode,
+                        miniPlayerManager.isMiniMode,
+                        showAudioNowPlaying
+                    ) {
                         resolveMainActivityPlaybackOverlayState(
                             isInPipMode = isInPipMode,
-                            isMiniMode = miniPlayerManager.isMiniMode
+                            isMiniMode = miniPlayerManager.isMiniMode,
+                            showAudioNowPlaying = showAudioNowPlaying
                         )
                     }
                     if (playbackOverlayState.showDedicatedPipPlayer) {
                         miniPlayerManager.player?.let { pipPlayer ->
+                            val useTextureSurface = com.android.purebilibili.feature.video.ui.components.rememberCompatibleVideoTextureSurface(
+                                pipPlayer, miniPlayerManager.cachedUiState?.currentQuality ?: 0,
+                            )
+                            Box(Modifier.fillMaxSize()) {
+                            key(pipPlayer, useTextureSurface) {
                             AndroidView(
                                 factory = { viewContext ->
-                                    PlayerView(viewContext).apply {
+                                    com.android.purebilibili.feature.video.ui.components.createVideoPlayerView(viewContext, useTextureSurface).apply {
                                         player = pipPlayer
                                         useController = false
-                                        setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
+                                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                        setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
                                     }
                                 },
                                 update = { playerView -> playerView.player = pipPlayer },
+                                onRelease = { view -> view.player = null },
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .background(Color.Black)
                             )
+                            }
+                            com.android.purebilibili.feature.video.ui.overlay.PlayerBufferingIndicator(
+                                player = pipPlayer, modifier = Modifier.align(Alignment.Center),
+                            )
+                            }
                         }
                     }
-                    //  小窗播放器覆盖层 (非 PiP 模式下显示)
-                    if (playbackOverlayState.showMiniPlayerOverlay) {
+                    //  小窗播放器覆盖层 (非 PiP 模式下显示；PIP 期间保持挂载但内容
+                    //  为空占位，避免退出 PIP 时重放飞入动画)
+                    if (!showFullscreen &&
+                        (playbackOverlayState.showMiniPlayerOverlay ||
+                            playbackOverlayState.showDedicatedPipPlayer)
+                    ) {
                         MiniPlayerOverlay(
                             miniPlayerManager = miniPlayerManager,
+                            suppressContentForPip = playbackOverlayState.showDedicatedPipPlayer,
                             onPictureInPictureClick = if (
                                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
                                 miniPlayerManager.shouldEnterPip()
@@ -1389,12 +1977,28 @@ open class MainActivity : AppCompatActivity() {
                                     pendingNavigationRoute =
                                         ScreenRoutes.Live.createRoute(roomId, liveTitle, liveUname)
                                 } else {
-                                    //  [修改] 导航回详情页，而不是只显示全屏播放器
+                                    // 展开按钮 / 双击：进全屏覆盖层，全屏里退出即回小窗。
+                                    showFullscreen = true
+                                }
+                            },
+                            onOpenDetailClick = {
+                                if (miniPlayerManager.isLiveMode) {
+                                    val roomId = miniPlayerManager.currentRoomId
+                                    val liveTitle = miniPlayerManager.currentTitle
+                                    val liveUname = miniPlayerManager.currentLiveUname
+                                    miniPlayerManager.exitMiniMode(animate = false)
+                                    pendingNavigationRoute =
+                                        ScreenRoutes.Live.createRoute(roomId, liveTitle, liveUname)
+                                } else {
+                                    // 「返回播放详情」：回详情页，不强制全屏
                                     miniPlayerManager.currentBvid?.let { bvid ->
                                         miniPlayerManager.isNavigatingToVideo = true
                                         miniPlayerManager.exitMiniMode(animate = false)
-                                        val cid = miniPlayerManager.currentCid
-                                        pendingNavigationRoute = resolveMiniPlayerExpandVideoRoute(bvid = bvid, cid = cid)
+                                        pendingNavigationRoute = resolveMainActivityVideoRoute(
+                                            bvid = bvid,
+                                            cid = miniPlayerManager.currentCid,
+                                            startFullscreen = false,
+                                        )
                                     }
                                 }
                             }
@@ -1424,7 +2028,13 @@ open class MainActivity : AppCompatActivity() {
                     }
                     
                     //  护眼模式覆盖层（最顶层，应用于所有内容）
-                    EyeProtectionOverlay()
+                    EyeProtectionOverlay(
+                        playbackActive = isInVideoDetail ||
+                            showFullscreen ||
+                            miniPlayerManager.isPlaying ||
+                            isPipRenderingActive
+                    )
+                    PluginEffectHintHost()
                     
                     // [New] Custom Splash Wallpaper Overlay
                     val readCustomSplashPrefs = remember { shouldReadCustomSplashPreferences() }
@@ -1455,32 +2065,33 @@ open class MainActivity : AppCompatActivity() {
                         )
                     }
                     var showSplash by remember { mutableStateOf(showCustomSplashInitially) }
-                    LaunchedEffect(showSplash) {
-                        isAppScreenshotBlockedBySplash = showSplash
+                    var showMaidStartup by remember { mutableStateOf(maidStartupEnabled) }
+                    LaunchedEffect(showSplash, showMaidStartup) {
+                        isAppScreenshotBlockedBySplash = showSplash || showMaidStartup
                     }
-                    // [Optimization] If we delayed enough in splash screen, we might want to skip custom splash or show it briefly?
-                    // Logic: If user uses custom splash, system splash shows icon, then custom splash shows wallpaper.
-                    // If we use setKeepOnScreenCondition, system splash (icon) stays longer.
-                    // This is acceptable behavior: Icon -> Wallpaper (if enabled) -> App.
-                    // Or if custom wallpaper is enabled, maybe we shouldn't delay system splash?
-                    // User request: "当用户看见遮罩的时候，异步加载首页视频". Mask usually means System Splash (Icon) OR Custom Wallpaper.
-                    // Implementing delay on System Splash ensures data is likely ready when ANY content shows.
-
+                    // Preserve normal handoff timing, but never let a missing native exit
+                    // callback keep the custom wallpaper over the home screen indefinitely.
+                    // The deadline starts once and is not reset by exit-state changes.
                     LaunchedEffect(showCustomSplashInitially) {
                         if (showCustomSplashInitially) {
-                            showSplash = true
+                            val nativeSplashExited = withTimeoutOrNull(splashExitWaitTimeoutMs()) {
+                                androidx.compose.runtime.snapshotFlow { systemSplashExited }
+                                    .first { it }
+                                true
+                            } ?: false
+                            if (!nativeSplashExited) {
+                                Logger.w(TAG, "Custom splash exit wait timed out; dismissing startup overlays")
+                                // The maid also waits for native handoff before mounting its
+                                // player. Remove that waiting layer so it cannot block touches.
+                                showMaidStartup = false
+                            }
                             delay(customSplashHoldDurationMs())
-                            showSplash = false
-                        } else {
                             showSplash = false
                         }
                     }
                     val splashOverlayAlpha by animateFloatAsState(
                         targetValue = if (showSplash) 1f else 0f,
-                        animationSpec = tween(
-                            durationMillis = customSplashFadeDurationMs(),
-                            easing = AppMotionEasing.EmphasizedEnter
-                        ),
+                        animationSpec = emphasizedEnterTween(customSplashFadeDurationMs()),
                         label = "customSplashOverlayAlpha"
                     )
                     val splashFadeProgress = customSplashFadeProgress(splashOverlayAlpha)
@@ -1489,22 +2100,9 @@ open class MainActivity : AppCompatActivity() {
                     val splashTailScrimAlpha = customSplashOverlayScrimAlpha(splashFadeProgress)
 
                     if (customSplashShouldRender(showSplash, splashOverlayAlpha) && splashUri.isNotEmpty()) {
-                        val splashProbePainter = rememberAsyncImagePainter(model = splashUri)
-                        val splashAspectRatio by remember(splashProbePainter.state) {
-                            derivedStateOf {
-                                when (val state = splashProbePainter.state) {
-                                    is AsyncImagePainter.State.Success -> resolveDrawableAspectRatio(
-                                        width = state.result.drawable.intrinsicWidth,
-                                        height = state.result.drawable.intrinsicHeight
-                                    )
-                                    else -> null
-                                }
-                            }
-                        }
-                        val splashWallpaperLayout = remember(windowSizeClass.widthSizeClass, splashAspectRatio) {
+                        val splashWallpaperLayout = remember(windowSizeClass.widthSizeClass) {
                             resolveSplashWallpaperLayout(
-                                widthSizeClass = windowSizeClass.widthSizeClass,
-                                imageAspectRatio = splashAspectRatio
+                                widthSizeClass = windowSizeClass.widthSizeClass
                             )
                         }
                         Box(
@@ -1553,9 +2151,10 @@ open class MainActivity : AppCompatActivity() {
                                                 )
                                             )
                                     )
-                                    Card(
-                                        shape = RoundedCornerShape(26.dp),
-                                        elevation = CardDefaults.cardElevation(defaultElevation = 16.dp),
+                                    val posterCardCornerRadius =
+                                        AppShapes.containerCornerDp(ContainerLevel.Floating)
+                                    AppCard(
+                                        shape = AppCardShape.Semantic(ContainerLevel.Floating),
                                         modifier = Modifier
                                             .align(Alignment.Center)
                                             .graphicsLayer(
@@ -1563,7 +2162,7 @@ open class MainActivity : AppCompatActivity() {
                                                 scaleY = 1f + (splashFadeProgress * 0.015f)
                                             )
                                             .fillMaxWidth(
-                                                if (windowSizeClass.widthSizeClass == WindowWidthSizeClass.Expanded) {
+                                                if (windowSizeClass.widthSizeClass >= WindowWidthSizeClass.Expanded) {
                                                     0.34f
                                                 } else {
                                                     0.48f
@@ -1571,6 +2170,10 @@ open class MainActivity : AppCompatActivity() {
                                             )
                                             .widthIn(min = 190.dp, max = 340.dp)
                                             .aspectRatio(9f / 16f)
+                                            .shadow(
+                                                elevation = 16.dp,
+                                                shape = RoundedCornerShape(posterCardCornerRadius),
+                                            )
                                     ) {
                                         AsyncImage(
                                             model = splashUri,
@@ -1596,6 +2199,59 @@ open class MainActivity : AppCompatActivity() {
                             )
                         }
                     }
+
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = showMaidStartup,
+                        enter = androidx.compose.animation.EnterTransition.None,
+                        exit = androidx.compose.animation.fadeOut(
+                            animationSpec = com.android.purebilibili.core.ui.motion.AppMotionTokens.standardSpec()
+                        )
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(
+                                    if (showCustomSplashInitially) Color.Transparent
+                                    else MaterialTheme.colorScheme.background
+                                )
+                                .clickable(
+                                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                    indication = null,
+                                    onClick = {}
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            val maidStartupSize = minOf(
+                                240.dp,
+                                (com.android.purebilibili.core.util.LocalAppWindowAdaptiveInfo.current
+                                    .windowSizeClass.heightDp - 96.dp).coerceAtLeast(80.dp)
+                            )
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                if (systemSplashExited) {
+                                    com.android.purebilibili.core.ui.BlueSnowMaidAnimation(
+                                        animation = com.android.purebilibili.core.ui.MaidAnimation.WELCOME,
+                                        modifier = Modifier.size(maidStartupSize),
+                                        onFinished = { showMaidStartup = false }
+                                    )
+                                } else {
+                                    if (com.android.purebilibili.core.ui.LocalMaidLottieAnimationEnabled.current) {
+                                        Image(
+                                            painter = androidx.compose.ui.res.painterResource(com.android.bilipai.brandmotion.R.drawable.bilipai_maid_static),
+                                            contentDescription = "蓝雪女仆",
+                                            modifier = Modifier.size(maidStartupSize)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    BrandSuccessFeedbackHost(
+                        bottomContentInset = brandFeedbackBottomInset,
+                        extraBottomClearance = if (showAudioNowPlaying) 64.dp else 0.dp,
+                        enabled = systemSplashExited && !showSplash && !showMaidStartup &&
+                            !isPipRenderingActive && !isFullscreenPlayerLocked && appScreenshotRegionBitmap == null
+                    )
 
                     appScreenshotRegionBitmap?.let { bitmap ->
                         AppScreenshotRegionOverlay(
@@ -1646,6 +2302,14 @@ open class MainActivity : AppCompatActivity() {
                     )
 
                     startupUpdateCheckResult?.let { info ->
+                        AppUpdateDialogHost(
+                            update = info,
+                            onDismissRequest = { startupUpdateCheckResult = null },
+                        )
+                    }
+
+                    if (false) {
+                    startupUpdateCheckResult?.let { info ->
                         val resolvedReleaseNotes = remember(info.releaseNotes) {
                             resolveUpdateReleaseNotesText(info.releaseNotes)
                         }
@@ -1675,54 +2339,55 @@ open class MainActivity : AppCompatActivity() {
                             )
                         }
                         val releaseNotesScrollState = rememberScrollState()
-                        IOSAlertDialog(
+                        AppAlertDialog(
                             onDismissRequest = { startupUpdateCheckResult = null },
                             title = {
-                                Text(
+                                AppText(
                                     text = "发现新版本 v${info.latestVersion}",
                                     color = dialogTextColors.titleColor
                                 )
                             },
                             text = {
                                 Column(modifier = Modifier.fillMaxWidth()) {
-                                    Text(
+                                    AppText(
                                         text = "当前版本 v${info.currentVersion}",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = dialogTextColors.currentVersionColor
                                     )
                                     preferredAsset?.let { asset ->
                                         Spacer(modifier = Modifier.height(6.dp))
-                                        Text(
+                                        AppText(
                                             text = "安装包：${asset.name}",
                                             style = MaterialTheme.typography.bodySmall,
                                             color = dialogTextColors.currentVersionColor
                                         )
                                     }
                                     Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
+                                    AppText(
                                         text = "Release 锁定：${if (info.releaseIsImmutable) "Immutable" else "可变"}",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = dialogTextColors.currentVersionColor
                                     )
-                                    Text(
+                                    AppText(
                                         text = "源码提交：$releaseCommit",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = dialogTextColors.currentVersionColor
                                     )
-                                    Text(
+                                    AppText(
                                         text = "构建来源：$releaseWorkflowSubtitle",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = dialogTextColors.currentVersionColor
                                     )
-                                    Text(
+                                    AppText(
                                         text = "Provenance：$releaseVerificationEvidence",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = dialogTextColors.currentVersionColor
                                     )
                                     if (startupUpdateDownloadState.status != AppUpdateDownloadStatus.IDLE) {
                                         Spacer(modifier = Modifier.height(6.dp))
-                                        Text(
+                                        AppText(
                                             text = when (startupUpdateDownloadState.status) {
+                                                AppUpdateDownloadStatus.QUEUED -> "等待网络后开始下载"
                                                 AppUpdateDownloadStatus.DOWNLOADING ->
                                                     "下载中 ${(startupUpdateDownloadState.progress * 100).toInt()}%"
                                                 AppUpdateDownloadStatus.COMPLETED -> "下载完成，正在准备安装"
@@ -1735,7 +2400,7 @@ open class MainActivity : AppCompatActivity() {
                                         )
                                     }
                                     Spacer(modifier = Modifier.height(8.dp))
-                                    Text(
+                                    AppText(
                                         text = resolvedReleaseNotes,
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = dialogTextColors.releaseNotesColor,
@@ -1747,7 +2412,7 @@ open class MainActivity : AppCompatActivity() {
                                 }
                             },
                             confirmButton = {
-                                IOSDialogAction(onClick = {
+                                AppDialogAction(onClick = {
                                     val downloadedFile = startupUpdateDownloadState.filePath
                                         ?.takeIf { startupUpdateDownloadState.status == AppUpdateDownloadStatus.COMPLETED }
                                         ?.let { path -> File(path) }
@@ -1755,18 +2420,18 @@ open class MainActivity : AppCompatActivity() {
 
                                     if (downloadedFile != null) {
                                         installDownloadedAppUpdate(context, downloadedFile)
-                                        return@IOSDialogAction
+                                        return@AppDialogAction
                                     }
 
                                     val asset = preferredAsset
                                     if (asset == null) {
                                         startupUpdateCheckResult = null
                                         uriHandler.openUri(info.releaseUrl)
-                                        return@IOSDialogAction
+                                        return@AppDialogAction
                                     }
 
                                     if (startupUpdateDownloadState.status == AppUpdateDownloadStatus.DOWNLOADING) {
-                                        return@IOSDialogAction
+                                        return@AppDialogAction
                                     }
 
                                     scope.launch {
@@ -1792,7 +2457,7 @@ open class MainActivity : AppCompatActivity() {
                                         }
                                     }
                                 }) {
-                                    Text(
+                                    AppText(
                                         when {
                                             preferredAsset == null -> "前往下载"
                                             startupUpdateDownloadState.status == AppUpdateDownloadStatus.DOWNLOADING ->
@@ -1804,12 +2469,13 @@ open class MainActivity : AppCompatActivity() {
                                 }
                             },
                             dismissButton = {
-                                IOSDialogAction(onClick = {
+                                AppDialogAction(onClick = {
                                     startupUpdateCheckResult = null
                                     startupUpdateDownloadState = AppUpdateDownloadState()
-                                }) { Text("稍后") }
+                                }) { AppText("稍后") }
                             }
                         )
+                    }
                     }
 
                     if (
@@ -1818,7 +2484,7 @@ open class MainActivity : AppCompatActivity() {
                             hasPromptBeenHandled = hasHandledCrashPrompt
                         )
                     ) {
-                        IOSAlertDialog(
+                        AppAlertDialog(
                             onDismissRequest = {
                                 hasHandledCrashPrompt = true
                                 if (shouldClearPendingCrashLogAfterAction(CrashLogPromptAction.DISMISS)) {
@@ -1827,50 +2493,88 @@ open class MainActivity : AppCompatActivity() {
                                 }
                             },
                             title = {
-                                Text(text = "检测到上次闪退日志")
+                                AppText(text = "检测到上次闪退日志")
                             },
                             text = {
-                                Text(
-                                    text = "应用已自动保存一份崩溃快照，并同步导出到 Download/BiliPai/logs/last_crash_log.txt。现在可以直接分享给开发者排查，也可以先关闭提示。"
+                                AppText(
+                                    text = "应用已在私有目录保存一份脱敏后的崩溃快照，不会自动上传或写入公共下载目录。现在可以主动分享给开发者排查，也可以关闭提示。"
                                 )
                             },
                             confirmButton = {
-                                IOSDialogAction(onClick = {
+                                AppDialogAction(onClick = {
                                     hasHandledCrashPrompt = true
                                     Logger.sharePendingCrashSnapshot(context)
                                     if (shouldClearPendingCrashLogAfterAction(CrashLogPromptAction.SHARE)) {
                                         Logger.clearPendingCrashSnapshot(context)
                                         pendingCrashSnapshotPath = null
                                     }
-                                }) { Text("分享") }
+                                }) { AppText("分享") }
                             },
                             dismissButton = {
-                                IOSDialogAction(onClick = {
+                                AppDialogAction(onClick = {
                                     hasHandledCrashPrompt = true
                                     if (shouldClearPendingCrashLogAfterAction(CrashLogPromptAction.DISMISS)) {
                                         Logger.clearPendingCrashSnapshot(context)
                                         pendingCrashSnapshotPath = null
                                     }
-                                }) { Text("关闭") }
+                                }) { AppText("关闭") }
                             }
                         )
                     }
 
                     }
+                    }
+                }
+                }
+                }
                 }
             }
             }
         }
     }
 
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (
+            event.keyCode == android.view.KeyEvent.KEYCODE_ESCAPE &&
+            !event.isCtrlPressed && !event.isAltPressed && !event.isMetaPressed
+        ) {
+            if (event.action == android.view.KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                onBackPressedDispatcher.onBackPressed()
+            }
+            return true
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        windowMetrics = WindowMetricsCalculator.getOrCreate().computeMaximumWindowMetrics(this)
+        if (startupRecoveryRedirected) return
+        refreshWindowMetrics()
         refreshSystemThemeSnapshot(reason = "configuration")
     }
 
     override fun onStart() {
         super.onStart()
+        if (startupRecoveryRedirected) return
+        // 会话级重置：每次页面重新可见都视为新会话，清掉跨会话累积的降级记账，
+        // 避免一次偶发掉帧把后续几十次进入都锁在 Reduced 档位（「越进越卡」）。
+        AppRuntimeVisualGuardTracker.beginSession(runtimeVisualGuardSession)
+        val existingJankStats = runtimeJankStats
+        if (existingJankStats != null) {
+            existingJankStats.isTrackingEnabled = true
+        } else {
+            runtimeJankStats = runCatching {
+                JankStats.createAndTrack(window) { frameData ->
+                    AppRuntimeVisualGuardTracker.onFrame(
+                        session = runtimeVisualGuardSession,
+                        frameData = frameData,
+                        nowMs = SystemClock.uptimeMillis(),
+                    )
+                }
+            }.onFailure { throwable ->
+                Logger.w(TAG, "无法启动页面转场性能采样", throwable)
+            }.getOrNull()
+        }
         if (shouldLogWarmResume(hasCompletedInitialResume, isChangingConfigurations)) {
             Logger.d(
                 TAG,
@@ -1879,11 +2583,44 @@ open class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onStop() {
+        if (startupRecoveryRedirected) {
+            super.onStop()
+            return
+        }
+        StartupRecovery.onMainStopped(this)
+        AppRuntimeVisualGuardTracker.discardActiveWindow(runtimeVisualGuardSession)
+        runtimeJankStats?.isTrackingEnabled = false
+        super.onStop()
+    }
+
+    /**
+     * 📈 向系统上报 TTFD：以首屏（首页）数据就绪为准，最多等 5 秒兜底。
+     * 供 Perfetto trace、宏基准 TTFD 断言与 Play Vitals 启动指标使用；只在首次 resume 后上报一次。
+     */
+    private fun maybeReportFullyDrawn() {
+        if (ttfdReported) return
+        ttfdReported = true
+        lifecycleScope.launch {
+            withTimeoutOrNull(5_000L) {
+                while (!VideoRepository.isHomeDataReady()) delay(50)
+            }
+            runCatching { reportFullyDrawn() }
+        }
+    }
+
     override fun onResume() {
         super.onResume()
+        if (startupRecoveryRedirected) return
+        maybeReportFullyDrawn()
+        refreshAndroid17HandoffAvailability()
         refreshSystemThemeSnapshot(reason = "resume")
         miniPlayerManager.clearUserLeaveHint()
-        miniPlayerManager.clearPlaybackRoutePipState()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode) {
+            miniPlayerManager.updateSystemPipActive(true)
+        } else {
+            miniPlayerManager.clearPlaybackRoutePipState()
+        }
         miniPlayerManager.clearPlaybackNotificationIfIdleOnResume()
         if (
             shouldRestorePlaybackRouteStateOnResume(
@@ -1904,11 +2641,21 @@ open class MainActivity : AppCompatActivity() {
         if (!hasCompletedInitialResume) {
             hasCompletedInitialResume = true
         }
+        StartupRecovery.onMainResumed(this)
     }
-    
+
+    override fun onPause() {
+        if (!startupRecoveryRedirected) {
+            StartupRecovery.onMainPaused(this)
+        }
+        super.onPause()
+    }
+
     //  用户按 Home 键或切换应用时触发
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
+        if (startupRecoveryRedirected) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode) return
         
         Logger.d(
             TAG,
@@ -1917,16 +2664,12 @@ open class MainActivity : AppCompatActivity() {
         miniPlayerManager.markUserLeaveHint()
         miniPlayerManager.refreshMediaSessionBinding()
         
-        val stopPlaybackOnExit = SettingsManager.getStopPlaybackOnExitSync(this)
+        miniPlayerManager.updatePlaybackRoutePipRequest(false)
         val audioModeAutoPipEnabled = SettingsManager.getAudioModeAutoPipEnabledSync(this)
         //  [重构] 使用新的模式判断方法
         val shouldEnterPip = miniPlayerManager.shouldEnterPip()
         val currentMode = miniPlayerManager.getCurrentMode()
-        val isActuallyPlaying = miniPlayerManager.isPlaying || (miniPlayerManager.player?.isPlaying == true)
-        val isPlaybackRouteActive = isPlaybackRouteActive(
-            isInVideoDetail = isInVideoDetail,
-            isInAudioMode = isInAudioModeRoute
-        )
+        val isActuallyPlaying = miniPlayerManager.player?.isPlaying == true
         val shouldTriggerPip = shouldTriggerPlaybackRoutePip(
             isInVideoDetail = isInVideoDetail,
             isInAudioMode = isInAudioModeRoute,
@@ -1935,7 +2678,7 @@ open class MainActivity : AppCompatActivity() {
             shouldEnterPip = shouldEnterPip,
             isActuallyPlaying = isActuallyPlaying
         )
-        miniPlayerManager.updatePlaybackRoutePipRequest(shouldTriggerPip)
+        // Pending state is set only immediately before a supported platform request.
 
         Logger.d(
             TAG,
@@ -1943,42 +2686,25 @@ open class MainActivity : AppCompatActivity() {
         )
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && shouldTriggerPip) {
-            try {
-                Logger.d(TAG, " 尝试进入 PiP 模式...")
-                
-                val pipParams = PictureInPictureParams.Builder()
-                    .setAspectRatio(Rational(16, 9))
-                    .setActions(
-                        buildPipPlaybackRemoteActions(
-                            context = this,
-                            player = miniPlayerManager.player
-                        )
-                    )
-                
-                // Android 12+: 启用自动进入和无缝调整
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    pipParams.setAutoEnterEnabled(true)
-                    pipParams.setSeamlessResizeEnabled(true)
-                }
-                
-                enterPictureInPictureMode(pipParams.build())
-                Logger.d(TAG, " 成功进入 PiP 模式")
-            } catch (e: Exception) {
-                miniPlayerManager.updatePlaybackRoutePipRequest(false)
-                Logger.e(TAG, " 进入 PiP 失败", e)
-            }
+            enterMiniPlayerPictureInPicture()
         } else {
             Logger.d(TAG, "⏳ 未满足 PiP 条件: API>=${Build.VERSION_CODES.O}=${Build.VERSION.SDK_INT >= Build.VERSION_CODES.O}, shouldTriggerPip=$shouldTriggerPip")
         }
     }
 
     private fun enterMiniPlayerPictureInPicture() {
+        miniPlayerManager.updatePlaybackRoutePipRequest(false)
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        if (!miniPlayerManager.shouldEnterPip() || miniPlayerManager.player == null) return
-        miniPlayerManager.updatePlaybackRoutePipRequest(true)
+        if (isInPictureInPictureMode) return
+        if (!miniPlayerManager.shouldEnterPip() || miniPlayerManager.player?.isPlaying != true) return
         try {
             val params = PictureInPictureParams.Builder()
-                .setAspectRatio(Rational(16, 9))
+                .setAspectRatio(
+                    resolveSafeAndroidPipRational(
+                        videoWidth = miniPlayerManager.videoWidth,
+                        videoHeight = miniPlayerManager.videoHeight
+                    )
+                )
                 .setActions(
                     buildPipPlaybackRemoteActions(
                         context = this,
@@ -1986,12 +2712,23 @@ open class MainActivity : AppCompatActivity() {
                     )
                 )
                 .apply {
+                    if (miniPlayerManager.isMiniMode) {
+                        miniPlayerManager.miniPlayerSourceBoundsPx?.let { setSourceRectHint(it) }
+                    }
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        setAutoEnterEnabled(
+                            !isInAudioModeRoute && miniPlayerManager.player?.isPlaying == true
+                        )
                         setSeamlessResizeEnabled(true)
                     }
                 }
                 .build()
-            enterPictureInPictureMode(params)
+            miniPlayerManager.updatePlaybackRoutePipRequest(true)
+            val entered = enterPictureInPictureMode(params)
+            if (!entered) {
+                miniPlayerManager.updatePlaybackRoutePipRequest(false)
+                Logger.w(TAG, "系统拒绝进入画中画")
+            }
         } catch (error: Exception) {
             miniPlayerManager.updatePlaybackRoutePipRequest(false)
             Logger.e(TAG, "小窗切换画中画失败", error)
@@ -2001,15 +2738,30 @@ open class MainActivity : AppCompatActivity() {
     //  PiP 模式变化回调
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        if (startupRecoveryRedirected) return
         isInPipMode = isInPictureInPictureMode
         miniPlayerManager.updateSystemPipActive(isInPictureInPictureMode)
         Logger.d(TAG, " PiP 模式变化: $isInPictureInPictureMode")
     }
     
-    //  [新增] 处理 singleTop 模式下的新 Intent
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putParcelable(STATE_MAIN_ACTIVITY_INTENT, intent)
+        super.onSaveInstanceState(outState)
+    }
+
+    // Every launcher, link and media entry reuses the canonical singleTask host.
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (!intent.hasExtra(EXTRA_LAUNCHER_COMPONENT)) {
+            getIntent()?.getStringExtra(EXTRA_LAUNCHER_COMPONENT)?.let {
+                intent.putExtra(EXTRA_LAUNCHER_COMPONENT, it)
+            }
+        }
         setIntent(intent)
+        if (startupRecoveryRedirected) {
+            redirectToStartupRecovery()
+            return
+        }
         handleIntent(intent)
     }
     
@@ -2030,6 +2782,52 @@ open class MainActivity : AppCompatActivity() {
      */
     private fun handleIntent(intent: Intent?) {
         if (intent == null) return
+
+        PlaybackHandoffCodec.fromIntent(intent)?.let { payload ->
+            pendingNavigationRoute = PlaybackHandoffCodec.toRoute(payload)
+            Logger.d(TAG, "🔄 Received Android 17 playback handoff")
+            return
+        }
+
+        if (intent.getBooleanExtra(EXTRA_OPEN_ACTIVE_PLAYBACK, false)) {
+            val activePlayer = miniPlayerManager.player
+            val activeBvid = miniPlayerManager.currentBvid
+            val activeCid = miniPlayerManager.currentCid
+            val activePositionMs = activePlayer?.currentPosition
+                ?.coerceAtLeast(0L)
+                ?: miniPlayerManager.currentPosition.coerceAtLeast(0L)
+            val activePlaybackRoute = resolveActivePlaybackReturnRoute(
+                isActive = miniPlayerManager.isActive && activePlayer != null,
+                bvid = activeBvid,
+                cid = activeCid,
+                currentPositionMs = activePositionMs,
+            )
+            if (activePlaybackRoute != null) {
+                // ON_PAUSE saved the position at the moment the app left the foreground. Refresh
+                // that cache before navigation so an emergency re-prepare cannot seek back to it
+                // after background playback has continued on the same ExoPlayer.
+                if (activePlayer != null && activeBvid != null &&
+                    com.android.purebilibili.feature.video.playback.session.PlayerHistorySessions
+                        .forPlayer(activePlayer).canWriteHistory(activeBvid, activeCid)
+                ) {
+                    PlaybackProgressManager.getInstance(this).savePosition(
+                        bvid = activeBvid,
+                        cid = activeCid,
+                        positionMs = activePositionMs,
+                        durationMs = activePlayer.duration.coerceAtLeast(0L),
+                    )
+                }
+                if (!isInVideoDetail) {
+                    pendingNavigationRoute = activePlaybackRoute
+                }
+                Logger.d(
+                    TAG,
+                    "🎵 Restore active playback from system media entry: " +
+                        "bvid=$activeBvid, cid=$activeCid, position=$activePositionMs"
+                )
+                return
+            }
+        }
 
         intent.getStringExtra(EXTRA_PENDING_NAVIGATION_ROUTE)
             ?.takeIf { it.isNotBlank() }
@@ -2100,9 +2898,16 @@ open class MainActivity : AppCompatActivity() {
             return
         }
 
-        resolveIntentLinkFallbackRoute(rawInput)?.let { route ->
-            Logger.d(TAG, "🌐 入口链接先回退到 WebView: $route")
-            pendingNavigationRoute = route
+        // b23.tv 短链必须等异步展开出原生目标，不能先落 Web 兜底——
+        // 否则 Web 路由被组合层抢先消费，原生视频页永远进不来。
+        val containsShortLink = BilibiliUrlParser.extractUrls(rawInput)
+            .any { it.contains("b23.tv", ignoreCase = true) } ||
+            rawInput.trim().startsWith("b23.tv/", ignoreCase = true)
+        if (!containsShortLink) {
+            resolveIntentLinkFallbackRoute(rawInput)?.let { route ->
+                Logger.d(TAG, "🌐 入口链接先回退到 WebView: $route")
+                pendingNavigationRoute = route
+            }
         }
 
         lifecycleScope.launch {
@@ -2142,6 +2947,17 @@ open class MainActivity : AppCompatActivity() {
     }
     
     override fun onDestroy() {
+        if (startupRecoveryRedirected) {
+            super.onDestroy()
+            return
+        }
+        PlaybackHandoffRegistry.setAvailabilityListener(null)
+        if (Build.VERSION.SDK_INT >= 37 && android17HandoffEnabled) {
+            setHandoffEnabled(false, null)
+            android17HandoffEnabled = false
+        }
+        runtimeJankStats?.isTrackingEnabled = false
+        runtimeJankStats = null
         super.onDestroy()
     }
 }

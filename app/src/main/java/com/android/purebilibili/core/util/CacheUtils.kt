@@ -1,19 +1,27 @@
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package com.android.purebilibili.core.util
 
 import android.content.Context
-import coil.annotation.ExperimentalCoilApi
-import coil.imageLoader
+import coil3.annotation.ExperimentalCoilApi
+import coil3.imageLoader
 import com.android.purebilibili.core.cache.PlayUrlCache
 import com.android.purebilibili.core.cooldown.PlaybackCooldownManager
 import com.android.purebilibili.core.player.PlaybackMediaCache
+import com.android.purebilibili.core.store.FavoriteFolderCoverCache
 import com.android.purebilibili.core.store.FollowingCacheStore
+import com.android.purebilibili.core.store.SettingsManager
 import com.android.purebilibili.data.repository.DanmakuRepository
 import com.android.purebilibili.data.repository.VideoRepository
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.first
 import java.io.File
 
 enum class CacheClearTarget {
@@ -23,6 +31,39 @@ enum class CacheClearTarget {
     SUBTITLE_DANMAKU,
     TEMP_FILES_AND_LOGS,
     APP_METADATA
+}
+
+/** 保持清理顺序；只有操作实际返回后才发布该类别的完成进度。 */
+internal suspend fun runCacheClearSteps(
+    targets: Set<CacheClearTarget>,
+    onProgress: suspend (CacheUtils.CleanupProgress) -> Unit,
+    clear: suspend (CacheClearTarget) -> Unit
+) {
+    val ordered = listOf(
+        CacheClearTarget.IMAGE_PREVIEW, CacheClearTarget.PLAYBACK_QUALITY,
+        CacheClearTarget.SUBTITLE_DANMAKU, CacheClearTarget.NETWORK,
+        CacheClearTarget.TEMP_FILES_AND_LOGS, CacheClearTarget.APP_METADATA
+    ).filter { it in targets }
+    ordered.forEachIndexed { index, target ->
+        currentCoroutineContext().ensureActive()
+        onProgress(CacheUtils.CleanupProgress(index, ordered.size, target))
+        clear(target)
+        currentCoroutineContext().ensureActive()
+        onProgress(CacheUtils.CleanupProgress(index + 1, ordered.size, target))
+    }
+}
+
+internal fun shouldAutomaticallyClearCache(
+    interval: SettingsManager.AutoCacheClearInterval,
+    lastClearAtMillis: Long,
+    nowMillis: Long,
+    reclaimableDiskBytes: Long,
+    thresholdBytes: Long
+): Boolean {
+    val intervalDue = interval != SettingsManager.AutoCacheClearInterval.NEVER &&
+        (lastClearAtMillis <= 0L || nowMillis - lastClearAtMillis >= interval.days * 24L * 60L * 60L * 1000L)
+    val thresholdReached = thresholdBytes > 0L && reclaimableDiskBytes >= thresholdBytes
+    return intervalDue || thresholdReached
 }
 
 /**
@@ -38,6 +79,38 @@ enum class CacheClearTarget {
 object CacheUtils {
 
     private const val TAG = "CacheUtils"
+    private const val DAY_MILLIS = 24L * 60L * 60L * 1000L
+
+    suspend fun clearCacheAutomaticallyIfDue(
+        context: Context,
+        nowMillis: Long = System.currentTimeMillis()
+    ): Boolean {
+        val interval = SettingsManager.getAutoCacheClearInterval(context).first()
+        val thresholdGb = SettingsManager.getAutoCacheClearThresholdGb(context).first()
+        val lastClearAt = SettingsManager.getLastAutoCacheClearAt(context)
+        val intervalDue = interval != SettingsManager.AutoCacheClearInterval.NEVER &&
+            (lastClearAt <= 0L || nowMillis - lastClearAt >= interval.days * DAY_MILLIS)
+        val thresholdBytes = thresholdGb.toLong() * 1024L * 1024L * 1024L
+        val reclaimableDiskBytes = getCacheBreakdown(context).reclaimableDiskSize
+        val thresholdReached = reclaimableDiskBytes >= thresholdBytes
+        if (!shouldAutomaticallyClearCache(
+                interval = interval,
+                lastClearAtMillis = lastClearAt,
+                nowMillis = nowMillis,
+                reclaimableDiskBytes = reclaimableDiskBytes,
+                thresholdBytes = thresholdBytes
+            )
+        ) return false
+        Logger.i(
+            TAG,
+            "Auto cache clear triggered: intervalDue=$intervalDue, " +
+                "thresholdReached=$thresholdReached, diskBytes=$reclaimableDiskBytes, " +
+                "thresholdGb=$thresholdGb"
+        )
+        val result = clearCache(context, CacheClearTarget.entries.toSet())
+        if (result.isSuccess) SettingsManager.setLastAutoCacheClearAt(context, nowMillis)
+        return result.isSuccess
+    }
 
     /**
      * 缓存详情数据类
@@ -54,9 +127,11 @@ object CacheUtils {
         val imageCache: Long get() = imageDiskCache + imageMemoryCache
         val memoryCache: Long get() = imageMemoryCache + playUrlMemoryCache + subtitleDanmakuMemoryCache
         val networkCache: Long get() = httpCache + playbackMediaCache
-        val totalSize: Long get() = imageDiskCache + networkCache + otherCache + memoryCache
+        /** 与清理操作一致的、实际可回收磁盘字节数；不混入运行时内存估算。 */
+        val reclaimableDiskSize: Long get() = imageDiskCache + networkCache + otherCache
+        val totalSize: Long get() = reclaimableDiskSize + memoryCache
         
-        fun format(): String = formatSize(totalSize.toDouble())
+        fun format(): String = formatSize(reclaimableDiskSize.toDouble())
         
         fun formatBreakdown(): String = buildString {
             append("图片: ${formatSize(imageCache.toDouble())}")
@@ -143,63 +218,77 @@ object CacheUtils {
         clearCache(context, CacheClearTarget.entries.toSet())
     }
 
+    /** 已完成的清理类别数；不将估算字节数当作删除进度。回调在调用方指定的调度器上执行。 */
+    data class CleanupProgress(
+        val completedTargets: Int,
+        val totalTargets: Int,
+        val target: CacheClearTarget
+    )
+
     suspend fun clearCache(
         context: Context,
-        targets: Set<CacheClearTarget>
+        targets: Set<CacheClearTarget>,
+        onProgress: suspend (CleanupProgress) -> Unit = {}
     ): Result<Unit> = withContext(Dispatchers.IO) {
-        runCatching {
-            if (CacheClearTarget.IMAGE_PREVIEW in targets) {
-                context.imageLoader.memoryCache?.clear()
-                context.imageLoader.diskCache?.clear()
-                Logger.d(TAG, " Image preview cache cleared")
-            }
+        try {
+            runCacheClearSteps(targets, onProgress) { target ->
+                when (target) {
+                CacheClearTarget.IMAGE_PREVIEW -> {
+                    context.imageLoader.memoryCache?.clear()
+                    context.imageLoader.diskCache?.clear()
+                    Logger.d(TAG, " Image preview cache cleared")
+                }
 
-            if (CacheClearTarget.PLAYBACK_QUALITY in targets) {
-                PlayUrlCache.clear()
-                PlaybackCooldownManager.clearAll()
-                Logger.d(TAG, " Playback quality cache cleared")
-            }
+                CacheClearTarget.PLAYBACK_QUALITY -> {
+                    PlayUrlCache.clear()
+                    VideoRepository.clearVideoDetailCaches()
+                    PlaybackCooldownManager.clearAll()
+                    Logger.d(TAG, " Playback quality cache cleared")
+                }
 
-            if (CacheClearTarget.SUBTITLE_DANMAKU in targets) {
-                VideoRepository.clearSubtitleCueCache()
-                DanmakuRepository.clearDanmakuCache()
-                Logger.d(TAG, " Subtitle and danmaku cache cleared")
-            }
+                CacheClearTarget.SUBTITLE_DANMAKU -> {
+                    VideoRepository.clearSubtitleCueCache()
+                    DanmakuRepository.clearDanmakuCache()
+                    Logger.d(TAG, " Subtitle and danmaku cache cleared")
+                }
 
-            if (CacheClearTarget.NETWORK in targets) {
-                try {
+                CacheClearTarget.NETWORK -> {
                     com.android.purebilibili.core.network.NetworkModule.okHttpClient.cache?.evictAll()
-                    PlaybackMediaCache.clear(context)
+                    PlaybackMediaCache.clear(context).getOrThrow()
                     Logger.d(TAG, " Network cache cleared")
-                } catch (e: Exception) {
-                    Logger.w(TAG, "OkHttp cache clear failed: ${e.message}")
                 }
-            }
 
-            if (CacheClearTarget.TEMP_FILES_AND_LOGS in targets) {
-                val excludePatterns = buildList {
-                    if (CacheClearTarget.IMAGE_PREVIEW !in targets) add("image_cache")
-                    if (CacheClearTarget.NETWORK !in targets) {
-                        add("okhttp")
-                        add("http_cache")
-                        add("playback_media_cache")
+                CacheClearTarget.TEMP_FILES_AND_LOGS -> {
+                    val excludePatterns = buildList {
+                        if (CacheClearTarget.IMAGE_PREVIEW !in targets) add("image_cache")
+                        if (CacheClearTarget.NETWORK !in targets) {
+                            add("okhttp")
+                            add("http_cache")
+                            add("playback_media_cache")
+                        }
                     }
+                    context.cacheDir?.let { cacheDir ->
+                        check(clearDirContentsSelective(cacheDir, excludePatterns = excludePatterns)) { "部分临时文件无法清理" }
+                    }
+                    context.externalCacheDir?.let { check(clearDirContents(it)) { "部分外部缓存无法清理" } }
+                    Logger.clearPrivateLogArtifacts(context)
+                    Logger.d(TAG, " Temp files and log artifacts cleared")
                 }
-                context.cacheDir?.let { cacheDir ->
-                    clearDirContentsSelective(cacheDir, excludePatterns = excludePatterns)
-                }
-                context.externalCacheDir?.let { clearDirContents(it) }
-                Logger.clearPrivateLogArtifacts(context)
-                Logger.d(TAG, " Temp files and log artifacts cleared")
-            }
 
-            if (CacheClearTarget.APP_METADATA in targets) {
-                FollowingCacheStore.clear(context)
-                com.android.purebilibili.core.network.WbiKeyManager.invalidateCache()
-                Logger.d(TAG, " App metadata cache cleared")
+                CacheClearTarget.APP_METADATA -> {
+                    FollowingCacheStore.clear(context)
+                    FavoriteFolderCoverCache.clear(context)
+                    com.android.purebilibili.core.network.WbiKeyManager.invalidateCache()
+                    Logger.d(TAG, " App metadata cache cleared")
+                }
+                }
             }
-        }.onFailure { e ->
-            Logger.e(TAG, "Error clearing cache", e)
+            Result.success(Unit)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            Logger.e(TAG, "Error clearing cache", error)
+            Result.failure(error)
         }
     }
 
@@ -212,6 +301,7 @@ object CacheUtils {
         // 内存缓存
         context.imageLoader.memoryCache?.clear()
         PlayUrlCache.clear()
+        VideoRepository.clearVideoDetailCaches()
         VideoRepository.clearSubtitleCueCache()
         DanmakuRepository.clearDanmakuCache()
         emit(ClearProgress(20, "内存缓存已清除"))
@@ -288,6 +378,7 @@ object CacheUtils {
         val memorySize = breakdown.memoryCache
         context.imageLoader.memoryCache?.clear()
         PlayUrlCache.clear()
+        VideoRepository.clearVideoDetailCaches()
         VideoRepository.clearSubtitleCueCache()
         DanmakuRepository.clearDanmakuCache()
         clearedSize += memorySize
@@ -324,6 +415,7 @@ object CacheUtils {
         
         // 应用缓存
         FollowingCacheStore.clear(context)
+        FavoriteFolderCoverCache.clear(context)
         com.android.purebilibili.core.network.WbiKeyManager.invalidateCache()
         PlaybackCooldownManager.clearAll()
         Logger.clearPrivateLogArtifacts(context)
@@ -350,12 +442,12 @@ object CacheUtils {
      * 清空目录内容（保留目录本身）
      */
     private fun clearDirContents(dir: File?): Boolean {
-        if (dir == null || !dir.exists()) return false
+        if (dir == null || !dir.exists()) return true
         return try {
             dir.walkTopDown()
                 .filter { it != dir }  // 排除根目录
                 .sortedByDescending { it.absolutePath.length }  // 深度优先删除
-                .forEach { it.delete() }
+                .forEach { check(it.delete() || !it.exists()) { "无法删除缓存文件：${it.name}" } }
             true
         } catch (e: Exception) {
             Logger.w(TAG, "Error clearing directory: ${dir.path}")
@@ -367,7 +459,7 @@ object CacheUtils {
      *  选择性清空目录（排除指定模式的子目录）
      */
     private fun clearDirContentsSelective(dir: File, excludePatterns: List<String>): Boolean {
-        if (!dir.exists()) return false
+        if (!dir.exists()) return true
         return try {
             dir.walkTopDown()
                 .filter { file ->
@@ -376,7 +468,12 @@ object CacheUtils {
                     }
                 }
                 .sortedByDescending { it.absolutePath.length }
-                .forEach { it.delete() }
+                .forEach { file ->
+                    // 含保留目录的祖先不能被删除；文件删除失败则向调用方报告。
+                    if (!file.isDirectory || file.listFiles()?.isEmpty() == true) {
+                        check(file.delete() || !file.exists()) { "无法删除缓存文件：${file.name}" }
+                    }
+                }
             true
         } catch (e: Exception) {
             Logger.w(TAG, "Error clearing directory selectively: ${dir.path}")

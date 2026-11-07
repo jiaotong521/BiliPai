@@ -1,7 +1,6 @@
 package com.android.purebilibili.feature.home.components
 
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.util.lerp
 import com.android.purebilibili.core.store.BottomBarLiquidGlassPreset
 
@@ -36,7 +35,8 @@ internal fun resolveBottomBarGlassMaterialSpec(
     scrollProgress: Float = if (isScrolling) 1f else 0f,
     glassEnabled: Boolean,
     motionProgress: Float,
-    pressProgress: Float
+    pressProgress: Float,
+    liquidGlassTuning: LiquidGlassTuning = resolveLiquidGlassTuning(progress = 0.5f)
 ): BottomBarGlassMaterialSpec {
     if (!glassEnabled) {
         return BottomBarGlassMaterialSpec(
@@ -53,11 +53,13 @@ internal fun resolveBottomBarGlassMaterialSpec(
         )
     }
     return when (preset) {
-        BottomBarLiquidGlassPreset.BILIPAI_TUNED -> bilipaiTunedBottomBarGlassMaterial()
+        BottomBarLiquidGlassPreset.BILIPAI_TUNED ->
+            biliPaiTunedBottomBarGlassMaterial(liquidGlassTuning)
         BottomBarLiquidGlassPreset.IOS26_REFINED -> ios26BottomBarGlassMaterial(
             motionProgress = motionProgress,
             pressProgress = pressProgress,
-            scrollProgress = scrollProgress
+            scrollProgress = scrollProgress,
+            liquidGlassTuning = liquidGlassTuning
         )
     }
 }
@@ -66,24 +68,24 @@ internal fun resolveBottomBarGlassMaterialContainerColor(
     surfaceColor: Color,
     preset: BottomBarLiquidGlassPreset,
     glassEnabled: Boolean,
-    fallbackAlpha: Float
+    fallbackAlpha: Float,
+    liquidGlassTuning: LiquidGlassTuning = resolveLiquidGlassTuning(progress = 0.5f)
 ): Color {
     if (!glassEnabled) return surfaceColor.copy(alpha = fallbackAlpha)
-    val isDarkSurface = surfaceColor.luminance() < 0.5f
-    val alpha = when (preset) {
-        BottomBarLiquidGlassPreset.BILIPAI_TUNED -> if (isDarkSurface) 0.30f else 0.38f
-        BottomBarLiquidGlassPreset.IOS26_REFINED -> 0.40f
-    }
-    return surfaceColor.copy(alpha = alpha)
+    // Upstream uses the theme surface at 40% in the balanced material; keep the slider's
+    // requested opacity without applying another preset-specific reduction.
+    return surfaceColor.copy(alpha = liquidGlassTuning.surfaceAlpha.coerceIn(0f, 1f))
 }
 
-private fun bilipaiTunedBottomBarGlassMaterial(): BottomBarGlassMaterialSpec =
+private fun biliPaiTunedBottomBarGlassMaterial(
+    tuning: LiquidGlassTuning
+): BottomBarGlassMaterialSpec =
     BottomBarGlassMaterialSpec(
-        blurRadiusDp = 4f,
+        blurRadiusDp = tuning.backdropBlurRadius,
         vibrancy = true,
-        shellRefractionHeightDp = 24f,
-        shellRefractionAmountDp = 24f,
-        shellChromaticAberration = 0f,
+        shellRefractionHeightDp = tuning.refractionHeight * tuning.contentDistortionScale,
+        shellRefractionAmountDp = tuning.refractionAmount * tuning.contentDistortionScale,
+        shellChromaticAberration = tuning.shellChromaticAberrationAmount,
         foregroundTint = Color.Transparent,
         highlightWidthScale = 1f,
         shadowAlphaScale = 1f,
@@ -98,16 +100,19 @@ internal fun resolveBottomBarMaterialScrollAnimationDurationMillis(
 private fun ios26BottomBarGlassMaterial(
     motionProgress: Float,
     pressProgress: Float,
-    scrollProgress: Float
+    scrollProgress: Float,
+    liquidGlassTuning: LiquidGlassTuning
 ): BottomBarGlassMaterialSpec {
-    // iOS26 在底栏实际走 Miuix/KSU drawBackdrop 链；这条链不消费 shellShader。
-    // 因此壳层主材质必须使用 KSU 可见的 vibrancy + blur + lens 组合，否则只剩淡底色和弱内圈。
+    // iOS26 在底栏实际走 Miuix/BiliPai drawBackdrop 链；这条链不消费 shellShader。
+    // 因此壳层主材质必须使用 BiliPai 可见的 vibrancy + blur + lens 组合，否则只剩淡底色和弱内圈。
     val scrollLift = scrollProgress.coerceIn(0f, 1f)
     return BottomBarGlassMaterialSpec(
-        blurRadiusDp = 4f,
+        blurRadiusDp = liquidGlassTuning.backdropBlurRadius,
         vibrancy = true,
-        shellRefractionHeightDp = 24f,
-        shellRefractionAmountDp = 24f,
+        shellRefractionHeightDp = liquidGlassTuning.refractionHeight *
+            liquidGlassTuning.contentDistortionScale,
+        shellRefractionAmountDp = liquidGlassTuning.refractionAmount *
+            liquidGlassTuning.contentDistortionScale,
         shellChromaticAberration = 0f,
         foregroundTint = Color.Transparent,
         highlightWidthScale = 1f,

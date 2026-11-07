@@ -2,9 +2,43 @@ package com.android.purebilibili.feature.video.policy
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class VideoDetailScrollCoordinatorTest {
+
+    @Test
+    fun collapseJankSignalOnlyTracksRealOffsetMovement() {
+        assertTrue(
+            shouldTrackVideoDetailCollapseMotion(
+                inlinePortraitScrollEnabled = true,
+                previousOffsetPx = -80f,
+                currentOffsetPx = -96f,
+            )
+        )
+        assertFalse(
+            shouldTrackVideoDetailCollapseMotion(
+                inlinePortraitScrollEnabled = true,
+                previousOffsetPx = -96f,
+                currentOffsetPx = -96f,
+            )
+        )
+        assertFalse(
+            shouldTrackVideoDetailCollapseMotion(
+                inlinePortraitScrollEnabled = true,
+                previousOffsetPx = -96f,
+                currentOffsetPx = -96.5f,
+            )
+        )
+        assertFalse(
+            shouldTrackVideoDetailCollapseMotion(
+                inlinePortraitScrollEnabled = false,
+                previousOffsetPx = -80f,
+                currentOffsetPx = -96f,
+            )
+        )
+    }
 
     @Test
     fun preScroll_doesNothingWhenInlineCollapseDisabled() {
@@ -58,6 +92,114 @@ class VideoDetailScrollCoordinatorTest {
         )
 
         assertNull(update)
+    }
+
+    @Test
+    fun preScroll_doesNothingWhenLayoutAlreadyCollapsedByIntroThreshold() {
+        val update = reduceVideoDetailPreScroll(
+            currentOffsetPx = 0f,
+            deltaPx = -40f,
+            minOffsetPx = -320f,
+            inlinePortraitScrollEnabled = true,
+            isPortraitFullscreen = false,
+            layoutAlreadyCollapsed = true,
+        )
+        assertNull(update)
+        assertFalse(
+            shouldSkipGesturePlayerCollapseForLayout(
+                compactForIntroScroll = true,
+                compactForCommentTab = false,
+            )
+        )
+        assertFalse(
+            shouldSkipGesturePlayerCollapseForLayout(
+                compactForIntroScroll = false,
+                compactForCommentTab = false,
+            )
+        )
+    }
+
+    @Test
+    fun postScroll_doesNothingWhenLayoutAlreadyCollapsed() {
+        val update = reduceVideoDetailPostScroll(
+            currentOffsetPx = -80f,
+            deltaPx = 25f,
+            minOffsetPx = -320f,
+            inlinePortraitScrollEnabled = true,
+            isPortraitFullscreen = false,
+            layoutAlreadyCollapsed = true,
+        )
+        assertNull(update)
+    }
+
+    @Test
+    fun postScroll_restoresPortraitPlayerAfterIntroThreshold() {
+        val update = reduceVideoDetailPostScroll(
+            currentOffsetPx = -320f,
+            deltaPx = 48f,
+            minOffsetPx = -320f,
+            inlinePortraitScrollEnabled = true,
+            isPortraitFullscreen = false,
+            layoutAlreadyCollapsed = false,
+        )
+
+        assertEquals(-272f, update?.nextOffsetPx)
+        assertEquals(48f, update?.consumedDeltaPx)
+    }
+
+    @Test
+    fun restoredCompactCommentsAllowTheNextCollapseGesture() {
+        assertTrue(
+            shouldSkipGesturePlayerCollapseForLayout(
+                compactForIntroScroll = false,
+                compactForCommentTab = true,
+            )
+        )
+        val skipCollapse = shouldSkipGesturePlayerCollapseForLayout(
+            compactForIntroScroll = false,
+            compactForCommentTab = true,
+            restoreRequested = true,
+        )
+        assertFalse(skipCollapse)
+        val update = reduceVideoDetailPreScroll(
+            currentOffsetPx = 0f,
+            deltaPx = -40f,
+            minOffsetPx = -320f,
+            inlinePortraitScrollEnabled = true,
+            isPortraitFullscreen = false,
+            layoutAlreadyCollapsed = skipCollapse,
+        )
+        assertEquals(-40f, update?.nextOffsetPx)
+    }
+
+    @Test
+    fun pausedCommentHide_continuesPastCompactFoldableLayoutAndRestoresAtTop() {
+        val skipCollapse = shouldSkipGesturePlayerCollapseForLayout(
+            compactForIntroScroll = false,
+            compactForCommentTab = true,
+            hidePausedPlayerForComments = true,
+        )
+        assertFalse(skipCollapse)
+        val collapsed = reduceVideoDetailPreScroll(
+            currentOffsetPx = -360f,
+            deltaPx = -300f,
+            minOffsetPx = -600f,
+            inlinePortraitScrollEnabled = true,
+            isPortraitFullscreen = false,
+            layoutAlreadyCollapsed = skipCollapse,
+        )
+        assertEquals(-600f, collapsed?.nextOffsetPx)
+        assertEquals(-240f, collapsed?.consumedDeltaPx)
+        val restored = reduceVideoDetailPostScroll(
+            currentOffsetPx = -600f,
+            deltaPx = 600f,
+            minOffsetPx = -600f,
+            inlinePortraitScrollEnabled = true,
+            isPortraitFullscreen = false,
+            layoutAlreadyCollapsed = skipCollapse,
+        )
+        assertEquals(0f, restored?.nextOffsetPx)
+        assertEquals(600f, restored?.consumedDeltaPx)
     }
 
     @Test

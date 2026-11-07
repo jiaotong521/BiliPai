@@ -1,9 +1,14 @@
 // 文件路径: feature/bangumi/ui/list/BangumiListComponents.kt
 package com.android.purebilibili.feature.bangumi.ui.list
 
+import com.android.purebilibili.core.ui.components.wallpaperAwareMediaCardBackground
+import com.android.purebilibili.core.ui.AppContentColors
+import com.android.purebilibili.core.ui.components.AppText
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import com.android.purebilibili.core.ui.components.AppLazyVerticalGrid as LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.*
 import com.android.purebilibili.core.ui.AppShapes
 import com.android.purebilibili.core.ui.AppSurfaceTokens
@@ -20,11 +25,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
-import com.android.purebilibili.core.theme.iOSYellow
+import coil3.compose.AsyncImage
 import com.android.purebilibili.core.util.FormatUtils
 import com.android.purebilibili.data.model.response.BangumiItem
 import com.android.purebilibili.data.model.response.BangumiSearchItem
+import com.android.purebilibili.core.ui.AdaptiveLoadingIndicator
+import com.android.purebilibili.core.ui.components.AppSurface
+import com.android.purebilibili.core.ui.components.AppTextButton
+import com.android.purebilibili.feature.bangumi.resolveBangumiCoverBadgeColors
 
 /**
  * 番剧卡片组件 - 用于列表/网格显示
@@ -53,7 +61,7 @@ fun BangumiCard(
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
             )
-            
+
             // 渐变遮罩
             Box(
                 modifier = Modifier
@@ -65,7 +73,7 @@ fun BangumiCard(
                         )
                     )
             )
-            
+
             // 角标（会员专享等）
             if (item.badge.isNotEmpty()) {
                 BangumiBadge(
@@ -75,7 +83,7 @@ fun BangumiCard(
                         .padding(4.dp)
                 )
             }
-            
+
             // 底部信息
             Column(
                 modifier = Modifier
@@ -84,33 +92,33 @@ fun BangumiCard(
             ) {
                 // 评分
                 if (item.score.isNotEmpty() && item.score != "0") {
-                    Text(
+                    AppText(
                         text = item.score,
-                        color = iOSYellow,
-                        fontSize = 12.sp,
+                        color = AppContentColors.rating(),
+                        style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold
                     )
                 }
-                
+
                 // 更新状态
                 item.newEp?.indexShow?.let { indexShow ->
-                    Text(
+                    AppText(
                         text = indexShow,
                         color = Color.White,
-                        fontSize = 10.sp
+                        style = MaterialTheme.typography.labelSmall
                     )
                 }
             }
         }
-        
+
         // 标题
-        Text(
+        AppText(
             text = item.title,
             modifier = Modifier.padding(top = 6.dp),
+            minLines = 2,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
-            fontSize = 12.sp,
-            lineHeight = 16.sp
+            style = MaterialTheme.typography.bodySmall
         )
     }
 }
@@ -129,7 +137,7 @@ fun BangumiSearchCard(
             .fillMaxWidth()
             .clip(AppShapes.container(ContainerLevel.Chip))
             .clickable(onClick = onClick)
-            .background(AppSurfaceTokens.cardContainer())
+            .wallpaperAwareMediaCardBackground(AppSurfaceTokens.cardContainer(), AppShapes.container(ContainerLevel.Chip))
             .padding(12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -146,7 +154,7 @@ fun BangumiSearchCard(
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
             )
-            
+
             // 角标
             item.badges?.firstOrNull()?.let { badge ->
                 BangumiBadge(
@@ -157,55 +165,55 @@ fun BangumiSearchCard(
                 )
             }
         }
-        
+
         // 信息
         Column(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             // 标题
-            Text(
+            AppText(
                 text = item.orgTitle.ifEmpty { item.title.replace("<em class=\"keyword\">", "").replace("</em>", "") },
-                fontSize = 14.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
-            
+
             // 类型
             if (item.seasonTypeName.isNotEmpty()) {
-                Text(
+                AppText(
                     text = item.seasonTypeName,
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AppContentColors.secondaryText()
                 )
             }
-            
+
             // 评分
             item.mediaScore?.let { score ->
                 if (score.score > 0) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
+                        AppText(
                             text = String.format("%.1f", score.score),
-                            color = iOSYellow,
-                            fontSize = 12.sp,
+                            color = AppContentColors.rating(),
+                            style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold
                         )
-                        Text(
+                        AppText(
                             text = " · ${score.userCount}人评分",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 11.sp
+                            color = AppContentColors.secondaryText(),
+                            style = MaterialTheme.typography.labelSmall
                         )
                     }
                 }
             }
-            
+
             // 集数
             if (item.indexShow.isNotEmpty()) {
-                Text(
+                AppText(
                     text = item.indexShow,
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AppContentColors.secondaryText()
                 )
             }
         }
@@ -239,7 +247,7 @@ fun BangumiSearchCardGrid(
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
             )
-            
+
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -250,7 +258,7 @@ fun BangumiSearchCardGrid(
                         )
                     )
             )
-            
+
             // 角标
             item.badges?.firstOrNull()?.let { badge ->
                 BangumiBadge(
@@ -260,7 +268,7 @@ fun BangumiSearchCardGrid(
                         .padding(4.dp)
                 )
             }
-            
+
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
@@ -269,49 +277,48 @@ fun BangumiSearchCardGrid(
                 // 评分
                 item.mediaScore?.let { score ->
                     if (score.score > 0) {
-                        Text(
+                        AppText(
                             text = String.format("%.1f", score.score),
-                            color = iOSYellow,
-                            fontSize = 12.sp,
+                            color = AppContentColors.rating(),
+                            style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold
                         )
                     }
                 }
-                
+
                 // 集数
                 if (item.indexShow.isNotEmpty()) {
-                    Text(
+                    AppText(
                         text = item.indexShow,
                         color = Color.White,
-                        fontSize = 10.sp
+                        style = MaterialTheme.typography.labelSmall
                     )
                 }
             }
         }
-        
+
         // 标题 (移除高亮标签)
-        Text(
+        AppText(
             text = item.title.replace(Regex("<[^>]+>"), ""),
             modifier = Modifier.padding(top = 6.dp),
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
-            fontSize = 12.sp,
-            lineHeight = 16.sp
+            style = MaterialTheme.typography.bodySmall
         )
         val hitEpisode = item.episodes?.firstOrNull { it.id > 0L }
         if (hitEpisode != null && onEpisodeClick != null) {
-            TextButton(
+            AppTextButton(
                 onClick = onEpisodeClick,
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 36.dp),
                 contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
             ) {
-                Text(
+                AppText(
                     text = item.buttonText.ifBlank { "播匹配分集" },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    fontSize = 11.sp
+                    style = MaterialTheme.typography.labelSmall
                 )
             }
         }
@@ -325,18 +332,37 @@ fun BangumiSearchCardGrid(
 fun BangumiBadge(
     text: String,
     modifier: Modifier = Modifier,
-    containerColor: Color = MaterialTheme.colorScheme.primary
+    containerColor: Color = AppContentColors.accent()
 ) {
-    Surface(
+    val brandColors = when (text.trim()) {
+        "限免", "免费" -> com.android.purebilibili.feature.bangumi.bangumiBrandBadgeColors(text)
+        "预告" -> com.android.purebilibili.core.theme.AdaptiveAccentColors(Color.Black.copy(alpha = 0.54f), Color.White)
+        else -> null
+    }
+    val colorScheme = MaterialTheme.colorScheme
+    val badgeColors = remember(
+        containerColor,
+        colorScheme.onPrimary,
+        colorScheme.surface,
+        colorScheme.onSurface,
+    ) {
+        resolveBangumiCoverBadgeColors(
+            primary = containerColor,
+            onPrimary = colorScheme.onPrimary,
+            surface = colorScheme.surface,
+            onSurface = colorScheme.onSurface,
+        )
+    }
+    AppSurface(
         modifier = modifier,
-        color = containerColor,
+        color = brandColors?.backgroundColor ?: badgeColors.containerColor,
         shape = AppShapes.container(ContainerLevel.Tag)
     ) {
-        Text(
+        AppText(
             text = text,
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-            color = Color.White,
-            fontSize = 10.sp
+            color = brandColors?.contentColor ?: badgeColors.contentColor,
+            style = MaterialTheme.typography.labelSmall
         )
     }
 }
@@ -354,7 +380,7 @@ fun BangumiGrid(
     contentPadding: PaddingValues = PaddingValues(12.dp)
 ) {
     val gridState = rememberLazyGridState()
-    
+
     // 加载更多检测
     LaunchedEffect(gridState) {
         snapshotFlow {
@@ -367,7 +393,7 @@ fun BangumiGrid(
             }
         }
     }
-    
+
     LazyVerticalGrid(
         columns = GridCells.Adaptive(minSize = 100.dp),
         state = gridState,
@@ -382,7 +408,7 @@ fun BangumiGrid(
                 onClick = { onItemClick(item) }
             )
         }
-        
+
         // 加载更多指示器
         if (hasMore) {
             item(span = { GridItemSpan(maxLineSpan) }) {
@@ -392,8 +418,8 @@ fun BangumiGrid(
                         .padding(16.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
+                    AdaptiveLoadingIndicator(
+                        size = 24.dp,
                         strokeWidth = 2.dp
                     )
                 }

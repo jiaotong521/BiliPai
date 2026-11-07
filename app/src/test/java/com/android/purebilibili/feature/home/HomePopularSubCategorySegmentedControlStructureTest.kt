@@ -15,12 +15,18 @@ class HomePopularSubCategorySegmentedControlStructureTest {
 
         assertTrue(source.contains("BottomBarLiquidSegmentedControl("))
         assertTrue(source.contains("PopularSubCategorySegmentedControl("))
-        assertTrue(source.contains("dragSelectionEnabled = false"))
+        assertTrue(source.contains("dragSelectionEnabled = labels.size > 1"))
         assertTrue(source.contains("liquidGlassEffectsEnabled = true"))
+        assertTrue(source.contains("tapPressRefractionEnabled = true"))
+        assertTrue(source.contains("miuixBackdrop = popularBackdrop"))
         assertTrue(source.contains("preferInlineContentStyle = true"))
-        assertTrue(source.contains("height = 48.dp"))
-        assertTrue(source.contains("indicatorHeight = 46.dp"))
-        assertTrue(source.contains(".padding(horizontal = 8.dp, vertical = 0.dp)"))
+        assertTrue(source.contains("height = AppSpacingTokens.TripleExtraLarge"))
+        assertTrue(source.contains("roundMatchedLiquidIndicatorHeightDp("))
+        assertTrue(
+            source.contains(
+                ".padding(horizontal = AppSpacingTokens.Small, vertical = AppSpacingTokens.None)"
+            )
+        )
         assertFalse(source.contains("PopularSubCategory.entries.forEach { subCategory ->\n                            FilterChip("))
     }
 

@@ -11,6 +11,7 @@ import org.json.JSONObject
 import org.json.JSONTokener
 import java.net.HttpURLConnection
 import java.net.URL
+import java.time.Instant
 
 data class AppUpdateAsset(
     val name: String,
@@ -96,26 +97,25 @@ internal data class AppUpdateReleaseCandidate(
 
 object AppUpdateChecker {
     private const val RELEASES_API = "https://api.github.com/repos/jay3-yy/BiliPai/releases"
-    private const val REPOSITORY_BUILD_GRADLE_URL =
-        "https://raw.githubusercontent.com/jay3-yy/BiliPai/main/app/build.gradle.kts"
-    private const val REPOSITORY_URL = "https://github.com/jay3-yy/BiliPai"
     private const val CONNECT_TIMEOUT_MS = 6000
     private const val READ_TIMEOUT_MS = 8000
     private val releaseJson = Json { ignoreUnknownKeys = true }
 
-    suspend fun check(currentVersion: String): Result<AppUpdateCheckResult> = withContext(Dispatchers.IO) {
+    suspend fun check(
+        currentVersion: String,
+        currentVersionCode: Int,
+        includePrerelease: Boolean = false
+    ): Result<AppUpdateCheckResult> = withContext(Dispatchers.IO) {
         runCatching {
-            val releaseCandidate = fetchRemoteText(RELEASES_API, required = false)
-                ?.let { body -> selectLatestReleaseCandidate(body, currentVersion) }
-            val repositoryCandidate = fetchRemoteText(REPOSITORY_BUILD_GRADLE_URL, required = false)
-                ?.let { body -> parseRepositoryVersionCandidate(body) }
-                ?.takeIf { candidate ->
-                    !candidate.isPrerelease || isPrereleaseVersion(currentVersion)
-                }
-            val release = selectPreferredUpdateCandidate(
-                releaseCandidate = releaseCandidate,
-                repositoryCandidate = repositoryCandidate
-            ) ?: throw IllegalStateException("未获取到有效版本信息")
+            val release = fetchRemoteText(RELEASES_API, required = false)
+                ?.let { selectLatestReleaseCandidate(it, includePrerelease = includePrerelease) }
+                ?: throw IllegalStateException(
+                    if (includePrerelease) {
+                        "未获取到包含安装包的测试版 Release"
+                    } else {
+                        "未获取到包含安装包的稳定版 Release"
+                    }
+                )
 
             val latestTag = release.tagName
             val latestVersion = normalizeVersion(latestTag)
@@ -141,7 +141,12 @@ object AppUpdateChecker {
                     fetchRemoteText(metadataUrl, required = false)
                 }
                 ?.let(::parseVerificationMetadata)
-            val updateAvailable = isRemoteNewer(currentVersion, latestVersion)
+            val updateAvailable = shouldOfferUpdate(
+                currentVersion = currentVersion,
+                currentVersionCode = currentVersionCode,
+                latestVersion = latestVersion,
+                buildMetadata = buildMetadata
+            )
             val message = if (updateAvailable) {
                 "发现新版本 v$latestVersion"
             } else {
@@ -190,83 +195,28 @@ object AppUpdateChecker {
         }
     }
 
-    internal fun normalizeVersion(version: String): String {
-        return version
-            .trim()
-            .removePrefix("v")
-            .removePrefix("V")
-            .trim()
-    }
+    internal fun normalizeVersion(version: String): String = com.android.purebilibili.data.repository.ReleaseVersionPolicy.normalizeVersion(version)
+    internal fun isRemoteNewer(localVersion: String, remoteVersion: String): Boolean = com.android.purebilibili.data.repository.ReleaseVersionPolicy.isRemoteNewer(localVersion, remoteVersion)
 
-    internal fun isRemoteNewer(localVersion: String, remoteVersion: String): Boolean {
-        return compareVersions(
-            localVersion = normalizeVersion(localVersion),
-            remoteVersion = normalizeVersion(remoteVersion)
-        ) < 0
-    }
-
-    internal fun parseVersionParts(version: String): List<Int> {
-        if (version.isBlank()) return emptyList()
-        return version
-            .split('.')
-            .mapNotNull { part -> part.toIntOrNull() }
-    }
-
-    private data class ParsedVersion(
-        val numericParts: List<Int>,
-        val stabilityRank: Int,
-        val qualifierNumber: Int
-    )
-
-    private fun parseComparableVersion(version: String): ParsedVersion {
-        val normalized = normalizeVersion(version)
-        val match = Regex(
-            pattern = """^(\d+(?:\.\d+)*)(?:[\s._-]*(alpha|beta|rc)[\s._-]*(\d+)?)?$""",
-            option = RegexOption.IGNORE_CASE
-        ).matchEntire(normalized)
-        if (match != null) {
-            val numeric = parseVersionParts(match.groupValues[1])
-            val qualifier = match.groupValues[2].lowercase()
-            val qualifierNumber = match.groupValues[3].toIntOrNull() ?: 0
-            val stabilityRank = when (qualifier) {
-                "alpha" -> 0
-                "beta" -> 1
-                "rc" -> 2
-                else -> 3
-            }
-            return ParsedVersion(
-                numericParts = numeric,
-                stabilityRank = stabilityRank,
-                qualifierNumber = qualifierNumber
-            )
+    internal fun shouldOfferUpdate(
+        currentVersion: String,
+        currentVersionCode: Int,
+        latestVersion: String,
+        buildMetadata: AppReleaseBuildMetadata?
+    ): Boolean {
+        val remoteVersionCode = buildMetadata?.versionCode ?: 0
+        if (currentVersionCode > 0 && remoteVersionCode > 0) {
+            return remoteVersionCode > currentVersionCode
         }
 
-        val numericPrefix = normalized
-            .takeWhile { it.isDigit() || it == '.' }
-            .trimEnd('.')
-        return ParsedVersion(
-            numericParts = parseVersionParts(numericPrefix),
-            stabilityRank = 3,
-            qualifierNumber = 0
-        )
+        val currentEpoch = parseVersionParts(normalizeVersion(currentVersion)).firstOrNull()
+        val latestEpoch = parseVersionParts(normalizeVersion(latestVersion)).firstOrNull()
+        return currentEpoch != null &&
+            currentEpoch == latestEpoch &&
+            isRemoteNewer(currentVersion, latestVersion)
     }
 
-    private fun compareVersions(localVersion: String, remoteVersion: String): Int {
-        val local = parseComparableVersion(localVersion)
-        val remote = parseComparableVersion(remoteVersion)
-        val maxSize = maxOf(local.numericParts.size, remote.numericParts.size)
-        for (index in 0 until maxSize) {
-            val localPart = local.numericParts.getOrElse(index) { 0 }
-            val remotePart = remote.numericParts.getOrElse(index) { 0 }
-            if (localPart != remotePart) {
-                return localPart.compareTo(remotePart)
-            }
-        }
-        if (local.stabilityRank != remote.stabilityRank) {
-            return local.stabilityRank.compareTo(remote.stabilityRank)
-        }
-        return local.qualifierNumber.compareTo(remote.qualifierNumber)
-    }
+    internal fun parseVersionParts(version: String): List<Int> = com.android.purebilibili.data.repository.ReleaseVersionPolicy.parseVersionParts(version)
 
     private fun isPrereleaseVersion(version: String): Boolean {
         val normalized = normalizeVersion(version).lowercase()
@@ -275,62 +225,27 @@ object AppUpdateChecker {
 
     internal fun selectLatestReleaseCandidate(
         rawReleaseJson: String,
-        currentVersion: String
+        includePrerelease: Boolean = false
     ): AppUpdateReleaseCandidate? {
         val releasesJson = runCatching {
             releaseJson.parseToJsonElement(rawReleaseJson).jsonArray
         }.getOrNull() ?: return null
 
-        val allowPrerelease = isPrereleaseVersion(currentVersion)
-        return releasesJson
+        val candidates = releasesJson
             .mapNotNull { releaseElement ->
                 parseReleaseCandidateElement(releaseElement)
             }
-            .filter { !it.isPrerelease || allowPrerelease }
-            .maxWithOrNull { left, right ->
-                compareVersions(
-                    localVersion = normalizeVersion(left.tagName),
-                    remoteVersion = normalizeVersion(right.tagName)
-                )
+            .filter { (includePrerelease || !it.isPrerelease) && it.assets.any(AppUpdateAsset::isApk) }
+
+        return candidates
+            .mapNotNull { candidate ->
+                candidate.publishedAt
+                    ?.let { publishedAt -> runCatching { Instant.parse(publishedAt) }.getOrNull() }
+                    ?.let { publishedAt -> candidate to publishedAt }
             }
-    }
-
-    internal fun parseRepositoryVersionCandidate(
-        rawBuildGradle: String
-    ): AppUpdateReleaseCandidate? {
-        val versionName = Regex("""versionName\s*=\s*"([^"]+)"""")
-            .find(rawBuildGradle)
-            ?.groupValues
-            ?.getOrNull(1)
-            ?.trim()
-            .orEmpty()
-        if (versionName.isBlank()) return null
-        return AppUpdateReleaseCandidate(
-            tagName = versionName,
-            releaseUrl = REPOSITORY_URL,
-            releaseNotes = "当前版本来自仓库默认分支，尚未创建 GitHub Release。",
-            publishedAt = null,
-            assets = emptyList(),
-            isPrerelease = isPrereleaseVersion(versionName)
-        )
-    }
-
-    internal fun selectPreferredUpdateCandidate(
-        releaseCandidate: AppUpdateReleaseCandidate?,
-        repositoryCandidate: AppUpdateReleaseCandidate?
-    ): AppUpdateReleaseCandidate? {
-        if (releaseCandidate == null) return repositoryCandidate
-        if (repositoryCandidate == null) return releaseCandidate
-        return if (
-            compareVersions(
-                localVersion = normalizeVersion(releaseCandidate.tagName),
-                remoteVersion = normalizeVersion(repositoryCandidate.tagName)
-            ) >= 0
-        ) {
-            releaseCandidate
-        } else {
-            repositoryCandidate
-        }
+            .maxByOrNull { (_, publishedAt) -> publishedAt }
+            ?.first
+            ?: candidates.firstOrNull()
     }
 
     private fun parseReleaseCandidateElement(

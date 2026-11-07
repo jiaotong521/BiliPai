@@ -1,54 +1,35 @@
 package com.android.purebilibili.core.store
 
-import com.android.purebilibili.core.theme.UiPreset
+import com.android.purebilibili.core.theme.AppUiStyle
 
 /**
- * Legacy gate used by bottom-bar liquid glass: the per-surface toggle must be on,
- * and MD3 also needs the global android-native reuse switch.
- */
-internal fun resolveEffectiveLiquidGlassEnabled(
-    requestedEnabled: Boolean,
-    uiPreset: UiPreset,
-    androidNativeLiquidGlassEnabled: Boolean = false
-): Boolean {
-    if (!requestedEnabled) return false
-    return uiPreset == UiPreset.IOS || androidNativeLiquidGlassEnabled
-}
-
-/**
- * Global liquid-glass reuse master switch ("安卓原生液态玻璃").
+ * Global liquid-glass reuse master switch ("安卓液态玻璃").
  * When enabled, every reusable chrome surface shares the bottom-bar liquid material.
  */
 internal fun resolveGlobalLiquidGlassReuseEnabled(
     androidNativeLiquidGlassEnabled: Boolean
 ): Boolean = androidNativeLiquidGlassEnabled
 
-/**
- * Effective enablement for any chrome surface that can reuse bottom-bar liquid glass.
- *
- * - Global reuse ON → force enabled (master switch for top dock / search / bottom bar /
- *   segmented controls / comment tabs, etc.)
- * - Global reuse OFF → keep the legacy per-surface + preset gate
- */
+internal enum class LiquidGlassReuseSurface {
+    HOME_BOTTOM_BAR,
+    COMMENT_BOTTOM_BAR,
+    HOME_TOP_DOCK,
+    HOME_SEARCH,
+}
+
+internal fun resolveLiquidGlassReuseParticipates(
+    surface: LiquidGlassReuseSurface,
+    androidNativeLiquidGlassEnabled: Boolean,
+): Boolean = resolveGlobalLiquidGlassReuseEnabled(androidNativeLiquidGlassEnabled)
+
+/** Effective enablement for reusable chrome. The global switch is the sole entry point. */
+@Suppress("UNUSED_PARAMETER")
 internal fun resolveSharedLiquidGlassChromeEnabled(
     individualEnabled: Boolean,
-    uiPreset: UiPreset,
+    uiStyle: AppUiStyle,
     androidNativeLiquidGlassEnabled: Boolean
-): Boolean {
-    if (resolveGlobalLiquidGlassReuseEnabled(androidNativeLiquidGlassEnabled)) {
-        return true
-    }
-    return resolveEffectiveLiquidGlassEnabled(
-        requestedEnabled = individualEnabled,
-        uiPreset = uiPreset,
-        androidNativeLiquidGlassEnabled = false
-    )
-}
+): Boolean = resolveGlobalLiquidGlassReuseEnabled(androidNativeLiquidGlassEnabled)
 
 internal fun resolveEffectiveHomeSettings(
     homeSettings: HomeSettings,
-    uiPreset: UiPreset
-): HomeSettings = when (uiPreset) {
-    UiPreset.IOS,
-    UiPreset.MD3 -> homeSettings
-}
+): HomeSettings = homeSettings

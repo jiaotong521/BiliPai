@@ -14,18 +14,20 @@ import kotlin.test.assertTrue
 class MusicPlayerVisualPolicyTest {
 
     @Test
+    fun `cover flow fades distant covers completely while preserving focus`() {
+        assertEquals(1f, resolveMusicCoverFlowItemAlpha(0f))
+        assertTrue(resolveMusicCoverFlowItemAlpha(1f) > resolveMusicCoverFlowItemAlpha(2f))
+        assertTrue(resolveMusicCoverFlowItemAlpha(2.5f) < resolveMusicCoverFlowItemAlpha(2f))
+        assertEquals(0f, resolveMusicCoverFlowItemAlpha(3f))
+        assertEquals(0f, resolveMusicCoverFlowItemAlpha(8f))
+    }
+
+
+    @Test
     fun `pager indicator follows drag and stays inside two segments`() {
         assertEquals(0f, resolveMusicPagerIndicatorPosition(0, -0.4f))
         assertEquals(0.35f, resolveMusicPagerIndicatorPosition(0, 0.35f))
         assertEquals(1f, resolveMusicPagerIndicatorPosition(1, 0.4f))
-    }
-
-    @Test
-    fun `glass fallback remains legible without refraction`() {
-        val fallback = resolveMusicGlassFallbackStyle()
-
-        assertTrue(fallback.backgroundAlphaPercent >= 46)
-        assertTrue(fallback.borderAlphaPercent >= 22)
     }
 
     @Test
@@ -44,6 +46,42 @@ class MusicPlayerVisualPolicyTest {
             assertEquals(mode, resolveMusicPlayMode(resolveMusicPlayModeIndex(mode)))
         }
         assertEquals(PlayMode.SEQUENTIAL, resolveMusicPlayMode(-1))
+    }
+
+    @Test
+    fun `secondary transport maps shuffle and repeat glyphs`() {
+        assertEquals(
+            MusicSecondaryTransportState(shuffleEnabled = false, repeatGlyph = MusicRepeatGlyph.OFF),
+            resolveMusicSecondaryTransport(PlayMode.SEQUENTIAL)
+        )
+        assertEquals(
+            MusicSecondaryTransportState(shuffleEnabled = true, repeatGlyph = MusicRepeatGlyph.ALL),
+            resolveMusicSecondaryTransport(PlayMode.SHUFFLE)
+        )
+        assertEquals(
+            MusicSecondaryTransportState(shuffleEnabled = false, repeatGlyph = MusicRepeatGlyph.ONE),
+            resolveMusicSecondaryTransport(PlayMode.REPEAT_ONE)
+        )
+        assertEquals(
+            MusicSecondaryTransportState(shuffleEnabled = false, repeatGlyph = MusicRepeatGlyph.ALL),
+            resolveMusicSecondaryTransport(PlayMode.REPEAT_ALL)
+        )
+    }
+
+    @Test
+    fun `shuffle and repeat toggles follow bbplayer icon actions`() {
+        assertEquals(PlayMode.SHUFFLE, resolvePlayModeAfterShuffleToggle(PlayMode.SEQUENTIAL))
+        assertEquals(PlayMode.SEQUENTIAL, resolvePlayModeAfterShuffleToggle(PlayMode.SHUFFLE))
+        assertEquals(PlayMode.REPEAT_ONE, resolvePlayModeAfterRepeatToggle(PlayMode.SEQUENTIAL))
+        assertEquals(PlayMode.REPEAT_ALL, resolvePlayModeAfterRepeatToggle(PlayMode.REPEAT_ONE))
+        assertEquals(PlayMode.SEQUENTIAL, resolvePlayModeAfterRepeatToggle(PlayMode.REPEAT_ALL))
+        assertEquals(PlayMode.REPEAT_ONE, resolvePlayModeAfterRepeatToggle(PlayMode.SHUFFLE))
+        assertEquals(
+            MusicSecondaryTransportState(shuffleEnabled = true, repeatGlyph = MusicRepeatGlyph.ONE),
+            resolveMusicSecondaryTransport(PlayMode.REPEAT_ONE, shuffleEnabled = true)
+        )
+        assertEquals(PlayMode.SEQUENTIAL, resolveRepeatModeAfterToggle(PlayMode.REPEAT_ALL))
+        assertEquals(PlayMode.REPEAT_ONE, resolveRepeatModeAfterToggle(PlayMode.SHUFFLE))
     }
 
     @Test
@@ -104,7 +142,7 @@ class MusicPlayerVisualPolicyTest {
             resolveMusicLyricFocusStyle(lineIndex = 4, currentIndex = 4, blurEnabled = true)
         )
         assertEquals(
-            MusicLyricFocusStyle(blurRadiusDp = 2, alphaPercent = 46),
+            MusicLyricFocusStyle(blurRadiusDp = 1, alphaPercent = 62),
             resolveMusicLyricFocusStyle(lineIndex = 5, currentIndex = 4, blurEnabled = true)
         )
         assertEquals(
@@ -114,14 +152,71 @@ class MusicPlayerVisualPolicyTest {
     }
 
     @Test
+    fun `immersive lyric focus uses stronger alpha contrast and lighter blur`() {
+        assertEquals(
+            MusicLyricFocusStyle(blurRadiusDp = 0, alphaPercent = 100),
+            resolveMusicLyricFocusStyle(
+                lineIndex = 4,
+                currentIndex = 4,
+                blurEnabled = true,
+                immersive = true,
+            )
+        )
+        assertEquals(
+            MusicLyricFocusStyle(blurRadiusDp = 0, alphaPercent = 48),
+            resolveMusicLyricFocusStyle(
+                lineIndex = 5,
+                currentIndex = 4,
+                blurEnabled = true,
+                immersive = true,
+            )
+        )
+        assertEquals(
+            MusicLyricFocusStyle(blurRadiusDp = 5, alphaPercent = 14),
+            resolveMusicLyricFocusStyle(
+                lineIndex = 8,
+                currentIndex = 4,
+                blurEnabled = true,
+                immersive = true,
+            )
+        )
+        assertEquals(0.38f, resolveMusicLyricFocusFraction(immersive = true))
+        assertEquals(0.30f, resolveMusicLyricFocusFraction(immersive = false))
+    }
+
+    @Test
     fun `lyric blur falls back to opacity when renderer or motion policy disables it`() {
         assertFalse(resolveMusicLyricsBlurEnabled(sdkInt = 30, effectsEnabled = true, reduceMotion = false))
         assertTrue(resolveMusicLyricsBlurEnabled(sdkInt = 31, effectsEnabled = true, reduceMotion = false))
         assertFalse(resolveMusicLyricsBlurEnabled(sdkInt = 35, effectsEnabled = false, reduceMotion = false))
         assertFalse(resolveMusicLyricsBlurEnabled(sdkInt = 35, effectsEnabled = true, reduceMotion = true))
         assertEquals(
-            MusicLyricFocusStyle(blurRadiusDp = 0, alphaPercent = 46),
+            MusicLyricFocusStyle(blurRadiusDp = 0, alphaPercent = 62),
             resolveMusicLyricFocusStyle(lineIndex = 5, currentIndex = 4, blurEnabled = false)
         )
+    }
+
+    @Test
+    fun `apple music cover scale relaxes while paused`() {
+        assertEquals(1.0f, resolveAppleMusicCoverScale(isPlaying = true, reduceMotion = false))
+        assertEquals(0.88f, resolveAppleMusicCoverScale(isPlaying = false, reduceMotion = false))
+        assertEquals(0.88f, resolveAppleMusicCoverScale(isPlaying = false, reduceMotion = true))
+        assertEquals(16f, resolveAppleMusicCoverShadowElevation(1f))
+        assertEquals(11.52f, resolveAppleMusicCoverShadowElevation(0f), 0.001f)
+    }
+
+    @Test
+    fun `cover flow entrance stabilizes center before opening neighboring covers`() {
+        assertEquals(0.25f, resolveMusicCoverFlowItemEntranceProgress(0.25f, 0f))
+        assertEquals(0f, resolveMusicCoverFlowItemEntranceProgress(0.25f, 2f))
+        assertTrue(resolveMusicCoverFlowItemEntranceProgress(0.5f, 1f) > 0f)
+        assertEquals(1f, resolveMusicCoverFlowItemEntranceProgress(1f, 2f))
+    }
+
+    @Test
+    fun `cover flow reflection waits until covers are seated`() {
+        assertEquals(0f, resolveMusicCoverFlowShadowEntranceProgress(0.58f))
+        assertTrue(resolveMusicCoverFlowShadowEntranceProgress(0.8f) in 0f..1f)
+        assertEquals(1f, resolveMusicCoverFlowShadowEntranceProgress(1f))
     }
 }

@@ -1,13 +1,18 @@
 package com.android.purebilibili.feature.video.screen
 
+import com.android.purebilibili.core.ui.AppContentColors
+
+import androidx.compose.foundation.verticalScroll
 import android.app.Activity
 import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
+import com.android.purebilibili.core.util.applyPlayerRequestedOrientation
 import android.content.res.Configuration
 import android.os.Build
 import android.util.Rational
+import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,13 +25,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.AlertDialog
+import com.android.purebilibili.core.ui.AppAlertDialog
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.CircularProgressIndicator
+import com.android.purebilibili.core.ui.components.AppOutlinedTextField
+import com.android.purebilibili.core.ui.components.AppSurface
+import com.android.purebilibili.core.ui.components.AppText
+import com.android.purebilibili.core.ui.components.AppTextButton
+import com.android.purebilibili.core.ui.AdaptiveLoadingIndicator
+import com.android.purebilibili.core.ui.components.AppDurationPicker
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -35,6 +41,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
@@ -46,13 +53,16 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.Player
 import com.android.purebilibili.core.store.HomeSettings
 import com.android.purebilibili.core.store.SettingsManager
-import com.android.purebilibili.core.theme.UiPreset
+import com.android.purebilibili.core.ui.rememberAppPlayerChromeProfile
+import com.android.purebilibili.feature.audio.player.AudioNowPlayingSession
 import com.android.purebilibili.feature.video.player.PlayMode
 import com.android.purebilibili.feature.video.state.rememberVideoPlayerState
 import com.android.purebilibili.feature.video.viewmodel.VideoPlaybackUiState
 import com.android.purebilibili.feature.video.viewmodel.VideoPlaybackViewModel
 import com.android.purebilibili.feature.video.viewmodel.toEngagementSeed
 import com.android.purebilibili.feature.video.viewmodel.toSupplementSeed
+import com.android.purebilibili.core.ui.AppShapes
+import com.android.purebilibili.core.ui.ContainerLevel
 
 internal fun resolveAudioPlayModeLabel(mode: PlayMode): String = when (mode) {
     PlayMode.SEQUENTIAL -> "顺序播放"
@@ -62,9 +72,9 @@ internal fun resolveAudioPlayModeLabel(mode: PlayMode): String = when (mode) {
 }
 
 internal fun shouldUseAudioModeLiquidPlayModeControl(
-    uiPreset: UiPreset,
+    supportsIndependentLiquidGlass: Boolean,
     androidNativeLiquidGlassEnabled: Boolean
-): Boolean = uiPreset != UiPreset.MD3 || androidNativeLiquidGlassEnabled
+): Boolean = androidNativeLiquidGlassEnabled
 
 internal enum class AudioModePlayPauseAction {
     PAUSE,
@@ -82,7 +92,8 @@ internal fun resolveAudioModePlayPauseAction(
     return when (playbackState) {
         Player.STATE_ENDED -> AudioModePlayPauseAction.RESTART_FROM_BEGINNING
         Player.STATE_IDLE -> AudioModePlayPauseAction.PREPARE_AND_RESUME
-        Player.STATE_READY, Player.STATE_BUFFERING -> AudioModePlayPauseAction.RESUME
+        Player.STATE_BUFFERING -> if (playWhenReady) AudioModePlayPauseAction.PAUSE else AudioModePlayPauseAction.RESUME
+        Player.STATE_READY -> AudioModePlayPauseAction.RESUME
         else -> if (playWhenReady) AudioModePlayPauseAction.PAUSE else AudioModePlayPauseAction.RESUME
     }
 }
@@ -205,16 +216,35 @@ fun AudioModeScreen(
         val originalOrientation = activity?.requestedOrientation
             ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         onDispose {
-            if (activity?.requestedOrientation != originalOrientation) {
-                activity?.requestedOrientation = originalOrientation
-            }
+            activity?.applyPlayerRequestedOrientation(originalOrientation)
         }
     }
     val homeSettings by SettingsManager.getHomeSettings(context).collectAsStateWithLifecycle(
         initialValue = HomeSettings(),
         context = kotlin.coroutines.EmptyCoroutineContext
     )
-    var cachedSuccessState by remember { mutableStateOf<VideoPlaybackUiState.Success?>(null) }
+    val playerChromeProfile = rememberAppPlayerChromeProfile()
+    val liquidPlayModeControlEnabled = shouldUseAudioModeLiquidPlayModeControl(
+        supportsIndependentLiquidGlass =
+            playerChromeProfile.effects.supportsIndependentLiquidGlass,
+        androidNativeLiquidGlassEnabled = homeSettings.otherGlassEnabled,
+    )
+    val shouldCreateStandalonePlayer = remember(initialBvid) {
+        shouldCreateAudioModeStandalonePlayer(
+            hasPlayer = viewModel.currentPlayer != null,
+            initialBvid = initialBvid
+        )
+    }
+    var cachedSuccessState by remember(initialBvid, initialCid) {
+        mutableStateOf<VideoPlaybackUiState.Success?>(null)
+    }
+    var initialSourceResolved by remember(initialBvid, initialCid) { mutableStateOf(initialBvid.isBlank()) }
+    // 本页是否已经发起（或由独立播放器发起）入口内容加载。
+    var entryLoadRequested by remember(initialBvid, initialCid) {
+        mutableStateOf(shouldCreateStandalonePlayer)
+    }
+    // 入口加载之后是否观察到过 Loading；只有此时到达的成功态才属于本次会话。
+    var sawLoadingSinceEntry by remember(initialBvid, initialCid) { mutableStateOf(false) }
 
     LaunchedEffect(subjectSnapshot, uiState) {
         val subject = subjectSnapshot ?: return@LaunchedEffect
@@ -230,16 +260,49 @@ fun AudioModeScreen(
         )
     }
 
-    LaunchedEffect(uiState) {
-        if (uiState is VideoPlaybackUiState.Success) cachedSuccessState = uiState as VideoPlaybackUiState.Success
-    }
-    val displayState = (uiState as? VideoPlaybackUiState.Success) ?: cachedSuccessState
-    val shouldCreateStandalonePlayer = remember(initialBvid) {
-        shouldCreateAudioModeStandalonePlayer(
-            hasPlayer = viewModel.currentPlayer != null,
-            initialBvid = initialBvid
+    LaunchedEffect(initialBvid, initialCid, initialResumePositionMs, shouldCreateStandalonePlayer) {
+        if (shouldCreateStandalonePlayer || initialBvid.isBlank()) return@LaunchedEffect
+        entryLoadRequested = true
+        // 本页建立时可能已有别的曲目在加载（例如队列里的「下一首」已经发起请求）：
+        // 此时再发入口请求会取消并覆盖那次加载，把播放拉回入口曲目；交给首屏门控
+        // 等这次加载落地即可。
+        val currentState = viewModel.uiState.value
+        val inFlightBvid = viewModel.detailState.value.requestBvid
+        if (shouldSkipAudioModeEntryLoadForInFlightSwitch(
+                isLoading = currentState is VideoPlaybackUiState.Loading,
+                inFlightBvid = inFlightBvid,
+                requestedBvid = initialBvid,
+            )
+        ) {
+            return@LaunchedEffect
+        }
+        viewModel.loadVideo(
+            bvid = initialBvid,
+            cid = initialCid,
+            autoPlay = true,
+            fallbackResumePositionMs = initialResumePositionMs
         )
     }
+    LaunchedEffect(uiState, initialBvid, initialCid, entryLoadRequested) {
+        if (entryLoadRequested && uiState is VideoPlaybackUiState.Loading) {
+            sawLoadingSinceEntry = true
+        }
+        val success = uiState as? VideoPlaybackUiState.Success ?: return@LaunchedEffect
+        if (!initialSourceResolved) {
+            initialSourceResolved = shouldResolveAudioModeInitialSource(
+                requestedBvid = initialBvid,
+                requestedCid = initialCid,
+                loadedBvid = success.info.bvid,
+                loadedCid = success.info.cid,
+                entryLoadRequested = entryLoadRequested,
+                sawLoadingSinceEntry = sawLoadingSinceEntry,
+            )
+        }
+        if (initialSourceResolved) cachedSuccessState = success
+    }
+    val displayState = if (initialSourceResolved) {
+        (uiState as? VideoPlaybackUiState.Success) ?: cachedSuccessState
+    } else null
     val standalonePlayerState = if (shouldCreateStandalonePlayer) {
         rememberVideoPlayerState(
             context = context,
@@ -253,18 +316,27 @@ fun AudioModeScreen(
     }
     val player = standalonePlayerState?.player ?: viewModel.currentPlayer
 
-    LaunchedEffect(initialBvid, initialCid, initialResumePositionMs, shouldCreateStandalonePlayer) {
-        if (!shouldCreateStandalonePlayer && displayState == null && initialBvid.isNotBlank()) {
-            viewModel.loadVideo(
-                bvid = initialBvid,
-                cid = initialCid,
-                autoPlay = true,
-                fallbackResumePositionMs = initialResumePositionMs
-            )
-        }
+    // 复用旧 Success 进入（如小横条展开）时播放器可能已被释放：无 player 且入口
+    // 未携带 bvid 时，用缓存内容强制重载自愈，避免停留在只有封面的死页面。
+    LaunchedEffect(player, displayState, initialBvid) {
+        val success = displayState ?: return@LaunchedEffect
+        if (player != null || initialBvid.isNotBlank()) return@LaunchedEffect
+        val bvid = success.info.bvid
+        if (bvid.isBlank()) return@LaunchedEffect
+        viewModel.loadVideo(
+            bvid = bvid,
+            cid = success.info.cid,
+            force = true,
+            autoPlay = true,
+            fallbackResumePositionMs = success.startPosition,
+        )
     }
     DisposableEffect(viewModel) {
         viewModel.setAudioMode(true)
+        // 听视频没有画面入场过渡，媒体 prepare 不必等它；若沿用详情页入场时写入的
+        // "暂不许 prepare"，切歌请求会挂起在准备阶段，表现为一直加载、切换不完成。
+        viewModel.setPlaybackPreparationAllowed(true)
+        AudioNowPlayingSession.markListening()
         onDispose { viewModel.setAudioMode(false) }
     }
 
@@ -290,11 +362,12 @@ fun AudioModeScreen(
         onEnterPip = enterPip,
         sleepTimerMinutes = sleepTimerMinutes,
         titleOverride = titleOverride,
-        liquidGlassEffectsEnabled = homeSettings.androidNativeLiquidGlassEnabled,
+        liquidGlassEffectsEnabled = liquidPlayModeControlEnabled,
         onToggleOrientation = {
-            activity?.requestedOrientation = resolveAudioModeRequestedOrientation(isLandscape)
+            activity?.applyPlayerRequestedOrientation(resolveAudioModeRequestedOrientation(isLandscape))
         },
-        orientationActionLabel = orientationActionLabel
+        orientationActionLabel = orientationActionLabel,
+        engagementViewModel = engagementViewModel
     )
 }
 
@@ -305,15 +378,15 @@ private fun AudioModeInitialState(
     onBack: () -> Unit,
     onRetry: () -> Unit
 ) {
-    Box(modifier = Modifier.fillMaxSize()) {
-        TextButton(
+    Box(modifier = Modifier.fillMaxSize().background(com.android.purebilibili.feature.audio.lyrics.halcyon.PlayerPalette.Default.middle)) {
+        AppTextButton(
             onClick = onBack,
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .padding(top = 40.dp, start = 12.dp)
                 .height(48.dp)
         ) {
-            Text("返回")
+            AppText("返回", color = Color.White)
         }
         Column(
             modifier = Modifier.align(Alignment.Center).padding(horizontal = 32.dp),
@@ -322,17 +395,17 @@ private fun AudioModeInitialState(
         ) {
             when (state) {
                 is VideoPlaybackUiState.Error -> {
-                    Text("音频加载失败", style = MaterialTheme.typography.headlineSmall)
-                    Text(state.msg, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    AppText("音频加载失败", style = MaterialTheme.typography.headlineSmall, color = Color.White)
+                    AppText(state.msg, color = Color.White.copy(alpha = 0.72f))
                     if (state.canRetry) {
-                        TextButton(onClick = onRetry, modifier = Modifier.height(48.dp)) { Text("重试") }
+                        AppTextButton(onClick = onRetry, modifier = Modifier.height(48.dp)) { AppText("重试", color = Color.White) }
                     }
                 }
                 else -> {
-                    CircularProgressIndicator()
-                    Text(title)
+                    AdaptiveLoadingIndicator()
+                    AppText(title, color = Color.White)
                     if (title != "正在加载音频") {
-                        Text("正在加载音频", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        AppText("正在加载音频", color = Color.White.copy(alpha = 0.72f))
                     }
                 }
             }
@@ -343,6 +416,8 @@ private fun AudioModeInitialState(
 @Composable
 internal fun AudioModeSleepTimerDialog(
     currentMinutes: Int?,
+    sleepAfterCurrent: Boolean = false,
+    onSleepAfterCurrent: (() -> Unit)? = null,
     onDismiss: () -> Unit,
     onSelectPreset: (Int?) -> Unit,
     onConfirmCustom: (Int) -> Unit
@@ -354,27 +429,35 @@ internal fun AudioModeSleepTimerDialog(
     val showCustomError = customInput.isNotBlank() && parsedCustomMinutes == null
     val presetOptions = listOf<Int?>(null, 15, 30, 60, 90)
 
-    AlertDialog(
+    AppAlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("定时关闭") },
+        title = { AppText("定时关闭") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Text(
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                AppText(
                     text = "选择常用时长，或输入分钟数 / 小时:分钟，例如 90、1:30。",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 13.sp
+                    color = AppContentColors.secondaryText(),
+                    style = MaterialTheme.typography.bodySmall
                 )
+                if (onSleepAfterCurrent != null) {
+                    AppTextButton(onClick = onSleepAfterCurrent) {
+                        AppText(if (sleepAfterCurrent) "取消播完当前首后停止" else "播完当前首后停止")
+                    }
+                }
                 Row(
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     presetOptions.forEach { minutes ->
-                        val isSelected = currentMinutes == minutes
-                        Surface(
+                        val isSelected = !sleepAfterCurrent && currentMinutes == minutes
+                        AppSurface(
                             onClick = { onSelectPreset(minutes) },
-                            shape = RoundedCornerShape(16.dp),
+                            shape = AppShapes.container(ContainerLevel.Card),
                             color = if (isSelected) {
-                                MaterialTheme.colorScheme.primary
+                                AppContentColors.accent()
                             } else {
                                 MaterialTheme.colorScheme.surfaceVariant
                             }
@@ -383,31 +466,36 @@ internal fun AudioModeSleepTimerDialog(
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(
+                                AppText(
                                     text = formatAudioModeSleepTimerButtonLabel(minutes),
-                                    fontSize = 13.sp,
+                                    style = MaterialTheme.typography.labelMedium,
                                     color = if (isSelected) {
-                                        MaterialTheme.colorScheme.onPrimary
+                                        AppContentColors.onAccent()
                                     } else {
-                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                        AppContentColors.secondaryText()
                                     }
                                 )
                             }
                         }
                     }
                 }
-                OutlinedTextField(
+                AppDurationPicker(
+                    minutes = parsedCustomMinutes ?: 0,
+                    onMinutesChange = { customInput = it.toString() },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                AppOutlinedTextField(
                     value = customInput,
                     onValueChange = { customInput = it.take(8) },
                     singleLine = true,
-                    label = { Text("自定义时间") },
-                    placeholder = { Text("例如 45 或 1:30") },
+                    label = { AppText("自定义时间") },
+                    placeholder = { AppText("例如 45 或 1:30") },
                     isError = showCustomError,
                     supportingText = {
                         if (showCustomError) {
-                            Text("请输入正整数分钟，或 小时:分钟，分钟需在 0-59。")
+                            AppText("请输入正整数分钟，或 小时:分钟，分钟需在 0-59。")
                         } else if (parsedCustomMinutes != null) {
-                            Text("将于 ${formatAudioModeSleepTimerButtonLabel(parsedCustomMinutes)}后暂停播放")
+                            AppText("将于 ${formatAudioModeSleepTimerButtonLabel(parsedCustomMinutes)}后暂停播放")
                         }
                     },
                     keyboardOptions = KeyboardOptions(
@@ -419,11 +507,11 @@ internal fun AudioModeSleepTimerDialog(
             }
         },
         confirmButton = {
-            TextButton(
+            AppTextButton(
                 onClick = { parsedCustomMinutes?.let(onConfirmCustom) },
                 enabled = parsedCustomMinutes != null
-            ) { Text("应用") }
+            ) { AppText("应用") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+        dismissButton = { AppTextButton(onClick = onDismiss) { AppText("取消") } }
     )
 }

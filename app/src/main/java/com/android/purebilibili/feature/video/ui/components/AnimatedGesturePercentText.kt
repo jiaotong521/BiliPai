@@ -19,15 +19,18 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.BlurredEdgeTreatment
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RenderEffect
+import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
-import androidx.compose.material3.Text
+import com.android.purebilibili.core.ui.components.AppText
 import com.android.purebilibili.core.ui.motion.AppMotionEasing
+import com.android.purebilibili.core.ui.motion.emphasizedEnterTween
+import com.android.purebilibili.core.ui.motion.emphasizedExitTween
 import com.android.purebilibili.core.util.HapticType
 import com.android.purebilibili.core.util.rememberHapticFeedback
 import kotlinx.coroutines.launch
@@ -70,15 +73,16 @@ fun shouldTriggerGesturePercentHaptic(
 }
 
 internal object GesturePercentMotionDefaults {
-    const val InitialBlurRadiusDp = 10f
-    const val InitialAlpha = 0.42f
-    const val BlurHoldDurationMillis = 40
-    const val BlurResetDurationMillis = 260
-    const val AlphaResetDurationMillis = 220
-    const val EnterFadeDurationMillis = 220
-    const val ExitFadeDurationMillis = 140
-    const val SlideSpringDampingRatio = 0.82f
-    const val SlideSpringStiffness = 520f
+    // Keep blur subtle so rapid volume/brightness ticks stay readable.
+    const val InitialBlurRadiusDp = 5f
+    const val InitialAlpha = 0.78f
+    const val BlurHoldDurationMillis = 0
+    const val BlurResetDurationMillis = 90
+    const val AlphaResetDurationMillis = 80
+    const val EnterFadeDurationMillis = 100
+    const val ExitFadeDurationMillis = 70
+    const val SlideSpringDampingRatio = 0.88f
+    const val SlideSpringStiffness = 780f
 
     fun <T> slideSpring(): SpringSpec<T> = spring(
         dampingRatio = SlideSpringDampingRatio,
@@ -93,22 +97,27 @@ fun AnimatedGesturePercentText(
     fontSize: TextUnit,
     fontWeight: FontWeight,
     modifier: Modifier = Modifier,
-    label: String = "gesture-percent-blur-fade"
+    label: String = "gesture-percent-blur-fade",
+    enableHaptic: Boolean = true
 ) {
     val normalizedPercent = percent.coerceIn(0, 100)
     val blurAnim = remember { Animatable(0f) }
     val alphaAnim = remember { Animatable(1f) }
+    val blurEffectCache = remember { GesturePercentBlurEffectCache() }
     var initialized by remember { mutableStateOf(false) }
     var previousPercent by remember { mutableIntStateOf(normalizedPercent) }
-    val haptic = rememberHapticFeedback()
+    val haptic = rememberHapticFeedback(com.android.purebilibili.core.ui.AppHapticScene.PLAYER_GESTURES)
 
-    LaunchedEffect(normalizedPercent) {
+    LaunchedEffect(normalizedPercent, enableHaptic) {
         if (!initialized) {
             initialized = true
             previousPercent = normalizedPercent
             return@LaunchedEffect
         }
-        if (shouldTriggerGesturePercentHaptic(previousPercent, normalizedPercent)) {
+        if (
+            enableHaptic &&
+            shouldTriggerGesturePercentHaptic(previousPercent, normalizedPercent)
+        ) {
             haptic(HapticType.SELECTION)
         }
         previousPercent = normalizedPercent
@@ -126,10 +135,7 @@ fun AnimatedGesturePercentText(
         }
         alphaAnim.animateTo(
             targetValue = 1f,
-            animationSpec = tween(
-                durationMillis = GesturePercentMotionDefaults.AlphaResetDurationMillis,
-                easing = AppMotionEasing.EmphasizedEnter
-            )
+            animationSpec = emphasizedEnterTween(GesturePercentMotionDefaults.AlphaResetDurationMillis)
         )
     }
 
@@ -155,35 +161,46 @@ fun AnimatedGesturePercentText(
                 animationSpec = GesturePercentMotionDefaults.slideSpring(),
                 initialOffsetY = enterOffset
             ) + fadeIn(
-                animationSpec = tween(
-                    durationMillis = GesturePercentMotionDefaults.EnterFadeDurationMillis,
-                    easing = AppMotionEasing.EmphasizedEnter
-                )
+                animationSpec = emphasizedEnterTween(GesturePercentMotionDefaults.EnterFadeDurationMillis)
             ) togetherWith
                 slideOutVertically(
                     animationSpec = GesturePercentMotionDefaults.slideSpring(),
                     targetOffsetY = exitOffset
                 ) + fadeOut(
-                    animationSpec = tween(
-                        durationMillis = GesturePercentMotionDefaults.ExitFadeDurationMillis,
-                        easing = AppMotionEasing.EmphasizedExit
-                    )
+                    animationSpec = emphasizedExitTween(GesturePercentMotionDefaults.ExitFadeDurationMillis)
                 )) using
                 SizeTransform(clip = false)
         },
         label = label
     ) { targetPercent ->
-        Text(
+        AppText(
             text = "$targetPercent%",
             color = color,
             fontSize = fontSize,
             fontWeight = fontWeight,
             modifier = modifier
-                .alpha(alphaAnim.value)
-                .blur(
-                    radius = blurAnim.value.dp,
-                    edgeTreatment = BlurredEdgeTreatment.Unbounded
-                )
+                // Keep alpha outside the unbounded blur, as in the original modifier chain.
+                // Animation ticks update layers without recomposing the text.
+                .graphicsLayer { alpha = alphaAnim.value }
+                .graphicsLayer {
+                    renderEffect = blurEffectCache.resolve(blurAnim.value.dp.toPx())
+                    clip = false
+                }
         )
+    }
+}
+
+/** UI-thread cache shared by incoming and outgoing digits; zero radius removes the effect. */
+private class GesturePercentBlurEffectCache {
+    private var radiusPx = Float.NaN
+    private var effect: RenderEffect? = null
+
+    fun resolve(radius: Float): RenderEffect? {
+        if (radius <= 0f) return null
+        if (radius != radiusPx) {
+            effect = BlurEffect(radius, radius, TileMode.Decal)
+            radiusPx = radius
+        }
+        return effect
     }
 }

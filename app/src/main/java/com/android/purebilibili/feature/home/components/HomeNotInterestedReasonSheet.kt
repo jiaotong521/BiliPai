@@ -1,5 +1,10 @@
 package com.android.purebilibili.feature.home.components
 
+import com.android.purebilibili.core.ui.AppContentColors
+import com.android.purebilibili.core.ui.components.AppHorizontalDivider
+
+import com.android.purebilibili.core.ui.AppSpacingTokens
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,17 +13,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import com.android.purebilibili.core.ui.components.AppText
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.android.purebilibili.core.ui.IOSModalBottomSheet
+import com.android.purebilibili.core.ui.AppModalBottomSheet
 import com.android.purebilibili.data.model.response.RecommendationFeedbackReason
 import com.android.purebilibili.data.model.response.RecommendationFeedbackType
 import com.android.purebilibili.data.model.response.VideoItem
@@ -31,26 +35,38 @@ fun HomeNotInterestedReasonSheet(
     onReasonSelected: (RecommendationFeedbackReason) -> Unit,
     onDismissRequest: () -> Unit
 ) {
-    IOSModalBottomSheet(onDismissRequest = onDismissRequest) {
+    AppModalBottomSheet(onDismissRequest = onDismissRequest) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                // M3 ModalBottomSheet 路径的 modalWindowInsets 已消费导航栏 insets（此处为 0）；
+                // 这层 padding 是给 CenteredDialog/平板限宽弹层路径兜底的，勿删。
                 .navigationBarsPadding()
-                .padding(bottom = 12.dp)
+                .padding(bottom = AppSpacingTokens.Medium)
         ) {
-            Text(
+            AppText(
                 text = "选择不感兴趣的原因",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                modifier = Modifier.padding(horizontal = AppSpacingTokens.Large + AppSpacingTokens.ExtraSmall, vertical = AppSpacingTokens.Small)
             )
-            Text(
+            AppText(
+                text = if (video.recommendationFeedback?.supportsServerSync == true && reasons.any { (it.id ?: 0L) > 0L }) {
+                    "选择后移除视频并提交反馈，推荐调整可能需要时间。"
+                } else {
+                    "当前来源仅支持本地屏蔽，不会同步推荐偏好；关闭可取消。"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = AppContentColors.secondaryText(),
+                modifier = Modifier.padding(horizontal = AppSpacingTokens.Large + AppSpacingTokens.ExtraSmall, vertical = AppSpacingTokens.ExtraSmall)
+            )
+            AppText(
                 text = video.title,
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = AppContentColors.secondaryText(),
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
+                modifier = Modifier.padding(horizontal = AppSpacingTokens.Large + AppSpacingTokens.ExtraSmall, vertical = AppSpacingTokens.ExtraSmall)
             )
 
             ReasonGroup(
@@ -74,36 +90,36 @@ private fun ReasonGroup(
     onReasonSelected: (RecommendationFeedbackReason) -> Unit
 ) {
     if (reasons.isEmpty()) return
-    Text(
+    AppText(
         text = title,
         style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(start = 20.dp, top = 16.dp, end = 20.dp, bottom = 4.dp)
+        color = AppContentColors.accent(),
+        modifier = Modifier.padding(start = AppSpacingTokens.Large + AppSpacingTokens.ExtraSmall, top = AppSpacingTokens.Large, end = AppSpacingTokens.Large + AppSpacingTokens.ExtraSmall, bottom = AppSpacingTokens.ExtraSmall)
     )
     reasons.forEachIndexed { index, reason ->
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 52.dp)
+                .heightIn(min = AppSpacingTokens.TripleExtraLarge + AppSpacingTokens.ExtraSmall)
                 .clickable { onReasonSelected(reason) }
-                .padding(horizontal = 20.dp, vertical = 12.dp),
+                .padding(horizontal = AppSpacingTokens.Large + AppSpacingTokens.ExtraSmall, vertical = AppSpacingTokens.Medium),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
+            AppText(
                 text = reason.name,
                 style = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier.weight(1f)
             )
-            Spacer(modifier = Modifier.padding(horizontal = 4.dp))
-            Text(
+            Spacer(modifier = Modifier.padding(horizontal = AppSpacingTokens.ExtraSmall))
+            AppText(
                 text = "选择",
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = AppContentColors.secondaryText()
             )
         }
         if (index != reasons.lastIndex) {
-            HorizontalDivider(
-                modifier = Modifier.padding(horizontal = 20.dp),
+            AppHorizontalDivider(
+                modifier = Modifier.padding(horizontal = AppSpacingTokens.Large + AppSpacingTokens.ExtraSmall),
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
             )
         }

@@ -4,25 +4,32 @@ internal data class ImportedLoginCookies(
     val sessData: String,
     val csrf: String?,
     val buvid3: String?,
-    val dedeUserId: String?
+    val dedeUserId: String?,
+    val values: Map<String, String>
 ) {
-    fun toCookieHeader(): String = buildList {
-        add("SESSDATA=$sessData")
-        csrf?.takeIf { it.isNotBlank() }?.let { add("bili_jct=$it") }
-        dedeUserId?.takeIf { it.isNotBlank() }?.let { add("DedeUserID=$it") }
-        buvid3?.takeIf { it.isNotBlank() }?.let { add("buvid3=$it") }
-    }.joinToString(separator = "; ")
+    fun toCookieHeader(): String = values.entries.joinToString(separator = "; ") { (name, value) ->
+        "$name=$value"
+    }
 }
 
 internal fun parseLoginCookieHeader(rawCookieHeader: String): ImportedLoginCookies? {
     val values = rawCookieHeader
         .lineSequence()
-        .flatMap { it.split(';').asSequence() }
+        .flatMap { line ->
+            line.trim()
+                .removePrefix("Cookie:")
+                .removePrefix("cookie:")
+                .removePrefix("Set-Cookie:")
+                .removePrefix("set-cookie:")
+                .split(';')
+                .asSequence()
+        }
         .map { it.trim() }
         .mapNotNull { segment ->
             val separator = segment.indexOf('=')
             if (separator <= 0) null else {
-                segment.substring(0, separator).trim() to segment.substring(separator + 1).trim()
+                segment.substring(0, separator).trim() to
+                    segment.substring(separator + 1).trim().removeSurrounding("\"")
             }
         }
         .toMap()
@@ -34,6 +41,7 @@ internal fun parseLoginCookieHeader(rawCookieHeader: String): ImportedLoginCooki
         sessData = sessData,
         csrf = values["bili_jct"],
         buvid3 = values["buvid3"],
-        dedeUserId = values["DedeUserID"]
+        dedeUserId = values["DedeUserID"],
+        values = values
     )
 }

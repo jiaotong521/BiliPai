@@ -16,10 +16,41 @@ import kotlin.test.assertTrue
 class VideoInfoDisplayPolicyTest {
 
     @Test
+    fun ownerStats_placesCountsBeforeLabels() {
+        assertEquals(listOf("9粉丝", "2视频"), resolveVideoDetailOwnerStatsLabels(9, 2))
+    }
+
+    @Test
+    fun ownerStats_preservesZeroAndHidesUnknownCounts() {
+        assertEquals(listOf("0粉丝", "0视频"), resolveVideoDetailOwnerStatsLabels(0, 0))
+        assertEquals(listOf("2视频"), resolveVideoDetailOwnerStatsLabels(null, 2))
+        assertEquals(listOf("9粉丝"), resolveVideoDetailOwnerStatsLabels(9, -1))
+        assertEquals(emptyList(), resolveVideoDetailOwnerStatsLabels(null, null))
+        assertEquals(emptyList(), resolveVideoDetailOwnerStatsLabels(-1, -1))
+    }
+
+    @Test
     fun videoInfoInitialExpanded_whenDescriptionOrTagsExist() {
-        assertTrue(resolveVideoInfoInitialExpandedState(hasDescription = true, hasTags = false))
-        assertTrue(resolveVideoInfoInitialExpandedState(hasDescription = false, hasTags = true))
+        assertTrue(
+            resolveVideoInfoInitialExpandedState(
+                hasDescription = true,
+                hasTags = false,
+                defaultExpanded = true
+            )
+        )
+        assertTrue(
+            resolveVideoInfoInitialExpandedState(
+                hasDescription = false,
+                hasTags = true,
+                defaultExpanded = true
+            )
+        )
         assertFalse(resolveVideoInfoInitialExpandedState(hasDescription = false, hasTags = false))
+    }
+
+    @Test
+    fun videoInfoInitialExpanded_defaultsToCollapsedWhenPreferenceIsUnset() {
+        assertFalse(resolveVideoInfoInitialExpandedState(hasDescription = true, hasTags = true))
     }
 
     @Test
@@ -190,6 +221,23 @@ class VideoInfoDisplayPolicyTest {
     }
 
     @Test
+    fun publishTimeRow_dropsDuplicatedDateRelativeForCurrentAffairsVideos() {
+        // 发布超过一周后相对值退化为日期形态（如 02-20），与精确时间重复：
+        // 时政强调行仅保留精确时间，不再双段拼接。
+        assertEquals(
+            "发布时间 2024-02-20 04:00",
+            resolvePublishTimeRowText(
+                pubdate = 1_708_401_600L,
+                partitionName = "资讯",
+                title = "例行发布会速报",
+                nowMs = 1_709_265_600_000L,
+                locale = Locale.US,
+                timeZone = TimeZone.getTimeZone("UTC")
+            )
+        )
+    }
+
+    @Test
     fun publishTimeRow_usesRelativeOnlyTextForOrdinaryVideos() {
         assertEquals(
             "发布于 2小时前",
@@ -281,5 +329,29 @@ class VideoInfoDisplayPolicyTest {
                 timeZone = TimeZone.getTimeZone("UTC")
             )
         )
+    }
+
+    @Test
+    fun shouldUseCompactUpInfoLayout_whenWidthBelowThreshold() {
+        assertTrue(shouldUseCompactUpInfoLayout(180))
+        assertTrue(shouldUseCompactUpInfoLayout(240))
+        assertTrue(shouldUseCompactUpInfoLayout(319))
+        assertFalse(shouldUseCompactUpInfoLayout(320))
+        assertFalse(shouldUseCompactUpInfoLayout(412))
+        assertFalse(shouldUseCompactUpInfoLayout(0))
+        assertFalse(shouldUseCompactUpInfoLayout(-1))
+    }
+
+    @Test
+    fun sponsorLabel_stacksAboveTitleOnlyWhenLong() {
+        assertFalse(shouldStackSponsorLabelAboveTitle("恰饭"))
+        assertFalse(shouldStackSponsorLabelAboveTitle("赞助/恰饭"))
+        assertFalse(shouldStackSponsorLabelAboveTitle(""))
+
+        val longLabel = "过场/开场动画/音乐:非音乐部分/赞助/恰饭/离题闲聊/玩笑"
+        assertTrue(longLabel.length > 10)
+        assertTrue(shouldStackSponsorLabelAboveTitle(longLabel))
+        assertTrue(shouldStackSponsorLabelAboveTitle("12345678901"))
+        assertFalse(shouldStackSponsorLabelAboveTitle("1234567890"))
     }
 }

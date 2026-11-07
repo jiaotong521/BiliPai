@@ -1,5 +1,6 @@
 package com.android.purebilibili.data.repository
 
+import com.android.purebilibili.data.model.response.DashVideo
 import com.android.purebilibili.data.model.response.Page
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -7,6 +8,27 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class VideoLoadPolicyTest {
+
+    @Test
+    fun `initial low quality targets do not probe premium tiers`() {
+        assertEquals(32, resolveInitialStartQuality(32))
+        assertEquals(16, resolveInitialStartQuality(16))
+        assertEquals(129, resolveInitialStartQuality(64))
+        assertEquals(129, resolveInitialStartQuality(129))
+        assertEquals(129, resolveInitialStartQuality(null))
+        assertEquals(129, resolveInitialStartQuality(-1))
+    }
+
+    @Test
+    fun `risk response includes code zero voucher and explicit risk errors`() {
+        assertTrue(isPlayUrlRiskControlResponse(0, hasVoucher = true))
+        listOf(-351, -352, -412).forEach { code ->
+            assertTrue(isPlayUrlRiskControlResponse(code, hasVoucher = false))
+        }
+        assertFalse(isPlayUrlRiskControlResponse(0, hasVoucher = false))
+        assertFalse(isPlayUrlRiskControlResponse(-101, hasVoucher = false))
+    }
+
 
     @Test
     fun `resolveVideoInfoLookup prefers bv id`() {
@@ -23,6 +45,13 @@ class VideoLoadPolicyTest {
     }
 
     @Test
+    fun `resolveVideoInfoLookup parses bare numeric id when aid missing`() {
+        val input = resolveVideoInfoLookupInput(rawBvid = "1129813966", aid = 0L)
+
+        assertEquals(VideoInfoLookupInput(bvid = "", aid = 1129813966L), input)
+    }
+
+    @Test
     fun `resolveVideoInfoLookup falls back to explicit aid`() {
         val input = resolveVideoInfoLookupInput(rawBvid = "", aid = 1756441068L)
 
@@ -30,63 +59,11 @@ class VideoLoadPolicyTest {
     }
 
     @Test
-    fun `resolveInitialStartQuality uses stable quality for non vip auto highest`() {
-        val quality = resolveInitialStartQuality(
-            targetQuality = 127,
-            isAutoHighestQuality = true,
-            isLogin = true,
-            isVip = false,
-            auto1080pEnabled = true
-        )
-
-        assertEquals(80, quality)
-    }
-
-    @Test
-    fun `resolveInitialStartQuality keeps stable first request for vip auto highest`() {
-        val quality = resolveInitialStartQuality(
-            targetQuality = 127,
-            isAutoHighestQuality = true,
-            isLogin = true,
-            isVip = true,
-            auto1080pEnabled = true
-        )
-
-        assertEquals(120, quality)
-    }
-
-    @Test
-    fun `resolveInitialStartQuality respects explicit low preference`() {
-        val quality = resolveInitialStartQuality(
-            targetQuality = 32,
-            isAutoHighestQuality = false,
-            isLogin = false,
-            isVip = false,
-            auto1080pEnabled = false
-        )
-
-        assertEquals(32, quality)
-    }
-
-    @Test
-    fun `resolveInitialStartQuality respects explicit premium preference for vip`() {
-        val quality = resolveInitialStartQuality(
-            targetQuality = 120,
-            isAutoHighestQuality = false,
-            isLogin = true,
-            isVip = true,
-            auto1080pEnabled = true
-        )
-
-        assertEquals(120, quality)
-    }
-
-    @Test
-    fun `shouldSkipPlayUrlCache only skips auto highest when vip`() {
+    fun `shouldSkipPlayUrlCache only skips non default audio language`() {
         assertFalse(
             shouldSkipPlayUrlCache(
                 isAutoHighestQuality = true,
-                isVip = false,
+                isVip = true,
                 audioLang = null
             )
         )
@@ -94,29 +71,18 @@ class VideoLoadPolicyTest {
             shouldSkipPlayUrlCache(
                 isAutoHighestQuality = true,
                 isVip = true,
-                audioLang = null
+                audioLang = "ai-zh"
             )
         )
     }
 
     @Test
-    fun `buildDashAttemptQualities includes premium fallbacks for high target`() {
-        assertEquals(listOf(120, 116, 112, 80), buildDashAttemptQualities(120))
-        assertEquals(listOf(80), buildDashAttemptQualities(80))
-    }
-
-    @Test
-    fun `buildDashAttemptQualities walks premium 1080p tiers before plain 1080p`() {
-        assertEquals(listOf(120, 116, 112, 80), buildDashAttemptQualities(120))
-        assertEquals(listOf(116, 112, 80), buildDashAttemptQualities(116))
-        assertEquals(listOf(112, 80), buildDashAttemptQualities(112))
-    }
-
-    @Test
-    fun `resolveDashRetryDelays allows one retry for standard qualities`() {
-        assertEquals(listOf(0L), resolveDashRetryDelays(120))
-        assertEquals(listOf(0L, 450L), resolveDashRetryDelays(80))
-        assertEquals(listOf(0L, 450L), resolveDashRetryDelays(64))
+    fun `failed web requests never walk quality tiers or retry empty payloads`() {
+        listOf(129, 127, 126, 125, 120, 116, 112, 100, 80, 64, 32).forEach { quality ->
+            assertEquals(listOf(quality), buildDashAttemptQualities(quality))
+            assertEquals(listOf(0L), resolveDashRetryDelays(quality, isPrimaryAttempt = true))
+            assertFalse(shouldRetryOnlyTransientEmptyDashResponse(quality, isPrimaryAttempt = true))
+        }
     }
 
     @Test
@@ -202,7 +168,7 @@ class VideoLoadPolicyTest {
     }
 
     @Test
-    fun `shouldTryAppApiForTargetQuality stays disabled for PiliPlus parity playback strategy`() {
+    fun `shouldTryAppApiForTargetQuality stays disabled for BiliPai parity playback strategy`() {
         assertFalse(shouldTryAppApiForTargetQuality(targetQn = 80, hasSessionCookie = false))
         assertFalse(shouldTryAppApiForTargetQuality(targetQn = 80, hasSessionCookie = true))
         assertFalse(shouldTryAppApiForTargetQuality(64))
@@ -225,6 +191,18 @@ class VideoLoadPolicyTest {
                 targetQn = 80,
                 returnedQuality = 64,
                 dashVideoIds = listOf(64, 32)
+            )
+        )
+    }
+
+    @Test
+    fun `playback transition accepts another playable tier when next part lacks current quality`() {
+        assertTrue(
+            shouldAcceptAppApiResultForTargetQuality(
+                requestKind = PlayUrlRequestKind.PLAYBACK_TRANSITION,
+                targetQn = 125,
+                returnedQuality = 120,
+                dashVideoIds = listOf(126, 120, 116, 80)
             )
         )
     }
@@ -274,15 +252,12 @@ class VideoLoadPolicyTest {
     }
 
     @Test
-    fun `buildDirectedTrafficWbiOverrides returns android app params in directed traffic mode`() {
+    fun `directed traffic never changes the web request platform`() {
         val overrides = buildDirectedTrafficWbiOverrides(
             directedTrafficEnabled = true,
             isOnMobileData = true
         )
-        assertEquals("android", overrides["platform"])
-        assertEquals("android", overrides["mobi_app"])
-        assertEquals("android", overrides["device"])
-        assertEquals("8130300", overrides["build"])
+        assertTrue(overrides.isEmpty())
 
         assertTrue(
             buildDirectedTrafficWbiOverrides(
@@ -310,6 +285,10 @@ class VideoLoadPolicyTest {
         assertEquals("pre-load", params["gaia_source"])
         assertEquals("true", params["isGaiaAvoided"])
         assertEquals("1315873", params["web_location"])
+        assertEquals("[]", params["dm_img_list"])
+        assertTrue(params["dm_img_str"].orEmpty().isNotBlank())
+        assertTrue(params["dm_cover_img_str"].orEmpty().isNotBlank())
+        assertEquals("{\"ds\":[],\"wh\":[0,0,0],\"of\":[0,0,0]}", params["dm_img_inter"])
         assertEquals("ja", params["cur_language"])
         assertFalse(params.containsKey("try_look"))
         assertFalse(params.containsKey("session"))
@@ -352,17 +331,17 @@ class VideoLoadPolicyTest {
     }
 
     @Test
-    fun `buildLoggedInPlaybackFallbackOrder keeps WBI main path but preserves auth recovery chain`() {
+    fun `logged in playback stays on one web authorization path`() {
         assertEquals(
-            listOf(PlayUrlSource.DASH, PlayUrlSource.APP, PlayUrlSource.LEGACY, PlayUrlSource.GUEST),
+            listOf(PlayUrlSource.DASH),
             buildLoggedInPlaybackFallbackOrder()
         )
     }
 
     @Test
-    fun `buildGuestPlaybackFallbackOrder keeps legacy fallback when WBI returns empty payload`() {
+    fun `guest playback stays on one web request path`() {
         assertEquals(
-            listOf(PlayUrlSource.DASH, PlayUrlSource.LEGACY),
+            listOf(PlayUrlSource.DASH),
             buildGuestPlaybackFallbackOrder()
         )
     }
@@ -375,6 +354,18 @@ class VideoLoadPolicyTest {
                 targetQn = 120,
                 returnedQuality = 80,
                 dashVideoIds = listOf(80, 64)
+            )
+        )
+    }
+
+    @Test
+    fun `explicit 4K does not trust response quality without exact playable dash track`() {
+        assertFalse(
+            shouldAcceptAppApiResultForTargetQuality(
+                requestKind = PlayUrlRequestKind.EXPLICIT,
+                targetQn = 120,
+                returnedQuality = 120,
+                dashVideoIds = listOf(116, 112, 80)
             )
         )
     }
@@ -451,6 +442,102 @@ class VideoLoadPolicyTest {
     @Test
     fun `shouldRefreshVipStatusOnVideoLoad keeps first frame path lean`() {
         assertFalse(shouldRefreshVipStatusOnVideoLoad())
+    }
+
+    @Test
+    fun `exact premium track must have a playable url`() {
+        assertFalse(
+            hasExactPlayableRequestedTrack(
+                requestedTargetQn = 125,
+                dashVideos = listOf(
+                    DashVideo(id = 125),
+                    DashVideo(id = 120, baseUrl = "https://example.com/sdr.m4s")
+                )
+            )
+        )
+        assertTrue(
+            hasExactPlayableRequestedTrack(
+                requestedTargetQn = 125,
+                dashVideos = listOf(
+                    DashVideo(id = 125, backupUrl = listOf("https://example.com/hdr.m4s"))
+                )
+            )
+        )
+    }
+
+    @Test
+    fun `only explicit premium requests use strict quality lookup`() {
+        assertTrue(isStrictPremiumQualityRequest(PlayUrlRequestKind.EXPLICIT, 125))
+        assertTrue(isStrictPremiumQualityRequest(PlayUrlRequestKind.EXPLICIT, 126))
+        assertTrue(isStrictPremiumQualityRequest(PlayUrlRequestKind.EXPLICIT, 127))
+        assertTrue(isStrictPremiumQualityRequest(PlayUrlRequestKind.EXPLICIT, 120))
+        assertTrue(isStrictPremiumQualityRequest(PlayUrlRequestKind.EXPLICIT, 100))
+        assertTrue(isStrictPremiumQualityRequest(PlayUrlRequestKind.EXPLICIT, 129))
+        assertFalse(isStrictPremiumQualityRequest(PlayUrlRequestKind.INITIAL, 125))
+    }
+
+    @Test
+    fun `explicit premium result requires the exact playable dash track`() {
+        assertFalse(
+            shouldAcceptAppApiResultForTargetQuality(
+                requestKind = PlayUrlRequestKind.EXPLICIT,
+                targetQn = 125,
+                returnedQuality = 125,
+                dashVideoIds = listOf(120, 80)
+            )
+        )
+        assertTrue(
+            shouldAcceptAppApiResultForTargetQuality(
+                requestKind = PlayUrlRequestKind.EXPLICIT,
+                targetQn = 125,
+                returnedQuality = 120,
+                dashVideoIds = listOf(125, 120)
+            )
+        )
+    }
+
+    @Test
+    fun `HDR auto upgrade requires an eligible untouched playback`() {
+        val eligible = shouldScheduleHdrAutoUpgrade(
+            isInitialRequest = true,
+            isAutoHighestQuality = true,
+            isVip = true,
+            isMobileData = false,
+            hasAccessToken = true,
+            currentPlayableDashVideoIds = listOf(120, 80),
+            userHasExplicitQualitySelection = false,
+            upgradeAlreadyAttempted = false
+        )
+        val alreadyHasHdr = shouldScheduleHdrAutoUpgrade(
+            isInitialRequest = true,
+            isAutoHighestQuality = true,
+            isVip = true,
+            isMobileData = false,
+            hasAccessToken = true,
+            currentPlayableDashVideoIds = listOf(125, 120),
+            userHasExplicitQualitySelection = false,
+            upgradeAlreadyAttempted = false
+        )
+        val explicitlySelected = shouldScheduleHdrAutoUpgrade(
+            isInitialRequest = true,
+            isAutoHighestQuality = true,
+            isVip = true,
+            isMobileData = false,
+            hasAccessToken = true,
+            currentPlayableDashVideoIds = listOf(120, 80),
+            userHasExplicitQualitySelection = true,
+            upgradeAlreadyAttempted = false
+        )
+
+        assertTrue(eligible)
+        assertFalse(alreadyHasHdr)
+        assertFalse(explicitlySelected)
+    }
+
+    @Test
+    fun `premium upgrade selection must keep the exact requested quality`() {
+        assertTrue(isExactRequestedQualitySelected(requestedTargetQn = 125, actualQuality = 125))
+        assertFalse(isExactRequestedQualitySelected(requestedTargetQn = 125, actualQuality = 120))
     }
 
     @Test

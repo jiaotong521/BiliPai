@@ -3,8 +3,10 @@ package com.android.purebilibili.feature.list
 import java.io.File
 import com.android.purebilibili.core.store.HomeHeaderBlurMode
 import com.android.purebilibili.core.store.HomeSettings
-import com.android.purebilibili.core.theme.AndroidNativeVariant
-import com.android.purebilibili.core.theme.UiPreset
+import com.android.purebilibili.core.ui.AppSemanticIconFamily
+import com.android.purebilibili.core.ui.AppTopChromePolicy
+import com.android.purebilibili.core.ui.AppTopTabPresentation
+import com.android.purebilibili.core.ui.CompactCapsuleChromeSpec
 import androidx.compose.ui.unit.dp
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -12,29 +14,142 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class CommonListAppearancePolicyTest {
+    @Test
+    fun historyLiquidReuse_usesTransparentFloatingHeaderChrome() {
+        assertTrue(
+            shouldUseFloatingCommonListHeaderChrome(
+                isHistoryPage = true,
+                globalLiquidGlassReuseEnabled = true,
+            )
+        )
+        assertFalse(
+            shouldUseFloatingCommonListHeaderChrome(
+                isHistoryPage = true,
+                globalLiquidGlassReuseEnabled = false,
+            )
+        )
+        assertFalse(
+            shouldUseFloatingCommonListHeaderChrome(
+                isHistoryPage = false,
+                globalLiquidGlassReuseEnabled = true,
+            )
+        )
+        assertTrue(
+            shouldUseFloatingCommonListHeaderChrome(
+                isHistoryPage = false,
+                isFavoritePage = true,
+                globalLiquidGlassReuseEnabled = true,
+            )
+        )
+        assertFalse(
+            shouldUseFloatingCommonListHeaderChrome(
+                isHistoryPage = false,
+                isFavoritePage = true,
+                globalLiquidGlassReuseEnabled = false,
+            )
+        )
+    }
 
     @Test
-    fun md3FollowPreset_keepsHeaderBlurForCommonList() {
+    fun collapsibleListModesCollapseTitleDownToStatusBarInset() {
+        assertEquals(
+            0f,
+            resolveCommonListHeaderMaxCollapsePxForMode(
+                collapseMode = com.android.purebilibili.core.store.CommonListHeaderCollapseMode.ALWAYS_VISIBLE,
+                fixedTopBarHeightPx = 96,
+                statusBarHeightPx = 24f,
+            ),
+        )
+        assertEquals(
+            72f,
+            resolveCommonListHeaderMaxCollapsePxForMode(
+                collapseMode = com.android.purebilibili.core.store.CommonListHeaderCollapseMode.SHOW_ON_REVERSE_SCROLL,
+                fixedTopBarHeightPx = 96,
+                statusBarHeightPx = 24f,
+            ),
+        )
+        assertEquals(
+            72f,
+            resolveCommonListHeaderMaxCollapsePxForMode(
+                collapseMode = com.android.purebilibili.core.store.CommonListHeaderCollapseMode.SHOW_AT_TOP_ONLY,
+                fixedTopBarHeightPx = 96,
+                statusBarHeightPx = 24f,
+            ),
+        )
+    }
+
+    @Test
+    fun historyHeaderCollapse_movesTitleBarAndPinsBothFloatingDocks() {
+        assertEquals(
+            180f,
+            resolveCommonListHeaderMaxCollapsePx(
+                headerHeightPx = 320,
+                pinnedDockHeightPx = 92,
+                topInsetPx = 48f,
+                retainPinnedDock = true,
+            ),
+        )
+        assertEquals(
+            320f,
+            resolveCommonListHeaderMaxCollapsePx(
+                headerHeightPx = 320,
+                pinnedDockHeightPx = 92,
+                topInsetPx = 48f,
+                retainPinnedDock = false,
+            ),
+        )
+
+        val source = listOf(
+            File("app/src/main/java/com/android/purebilibili/feature/list/CommonListScreen.kt"),
+            File("src/main/java/com/android/purebilibili/feature/list/CommonListScreen.kt")
+        ).first { it.exists() }.readText()
+        assertTrue(source.contains("(fixedTopBarHeightPx.toFloat() - statusBarHeightPx).coerceAtLeast(0f)"))
+        assertTrue(source.contains("placeables.first().placeRelative(0, titleOffset)"))
+        assertTrue(source.contains("var y = floatingDockTop"))
+        assertTrue(source.contains("if (constraints.hasBoundedWidth)"))
+        assertTrue(source.contains("maxWidth = boundedMaxWidth"))
+        assertEquals(
+            -96,
+            resolveHistoryTitleOffsetPx(
+                headerOffsetPx = -48f,
+                maxCollapsePx = 48f,
+                titleHeightPx = 96,
+            ),
+        )
+    }
+
+
+    @Test
+    fun commonListGridWidth_preservesPhoneDensityAndTabletReadability() {
+        assertEquals(170.dp, resolveCommonListGridMinColumnWidth(isExpandedScreen = false))
+        assertEquals(240.dp, resolveCommonListGridMinColumnWidth(isExpandedScreen = true))
+    }
+
+    @Test
+    fun favoritePreviewWidth_isOwnedByLayoutPolicy() {
+        assertEquals(112.dp, resolveFavoriteSubscribedFolderPreviewWidth())
+    }
+
+    @Test
+    fun followPreset_keepsHeaderBlurForCommonList() {
         val enabled = resolveCommonListHeaderBlurEnabled(
             homeSettings = HomeSettings(
                 headerBlurMode = HomeHeaderBlurMode.FOLLOW_PRESET
             ),
-            uiPreset = UiPreset.MD3
         )
 
         assertTrue(enabled)
     }
 
     @Test
-    fun iosFollowPreset_keepsHeaderBlurForCommonList() {
+    fun alwaysOff_disablesHeaderBlurForCommonList() {
         val enabled = resolveCommonListHeaderBlurEnabled(
             homeSettings = HomeSettings(
-                headerBlurMode = HomeHeaderBlurMode.FOLLOW_PRESET
+                headerBlurMode = HomeHeaderBlurMode.ALWAYS_OFF
             ),
-            uiPreset = UiPreset.IOS
         )
 
-        assertTrue(enabled)
+        assertFalse(enabled)
     }
 
     @Test
@@ -48,7 +163,7 @@ class CommonListAppearancePolicyTest {
                 showHomeCoverGlassBadges = true,
                 showHomeInfoGlassBadges = true
             ),
-            uiPreset = UiPreset.MD3
+            liquidGlassEnabled = false,
         )
 
         assertFalse(appearance.glassEnabled)
@@ -93,23 +208,16 @@ class CommonListAppearancePolicyTest {
         assertTrue(source.contains("surfaceType = BlurSurfaceType.HEADER"))
     }
 
-    @Test
-    fun historyAndFavoriteHeaderCollapse_usesScrollableInsetAndThemeColors() {
-        val source = listOf(
-            File("app/src/main/java/com/android/purebilibili/feature/list/CommonListScreen.kt"),
-            File("src/main/java/com/android/purebilibili/feature/list/CommonListScreen.kt")
-        ).first { it.exists() }.readText()
-
-        assertTrue(source.contains("historyViewModel != null || favoriteViewModel != null"))
-        assertTrue(source.contains("scrollUnderHeader = commonListHeaderCollapseEnabled"))
-        assertTrue(source.contains("selectedContainerColor = MaterialTheme.colorScheme.primaryContainer"))
-        assertTrue(source.contains("selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer"))
-    }
 
     @Test
-    fun iosFavoriteHeaderLayout_prefersCompactSearchAndChips() {
+    fun movingCapsuleFavoriteHeaderLayout_prefersCompactSearchAndChips() {
         val layout = resolveCommonListFavoriteHeaderLayout(
-            uiPreset = UiPreset.IOS
+            topChromePolicy = testTopChromePolicy(
+                presentation = AppTopTabPresentation.MOVING_CAPSULE,
+                primaryHeightDp = 44,
+                chipHeightDp = 36,
+                compactChipHeightDp = 32,
+            ),
         )
 
         assertEquals(44, layout.searchBarHeightDp)
@@ -121,10 +229,14 @@ class CommonListAppearancePolicyTest {
     }
 
     @Test
-    fun md3FavoriteHeaderLayout_staysCompactWithoutBecomingTiny() {
+    fun materialUnderlineFavoriteHeaderLayout_staysCompactWithoutBecomingTiny() {
         val layout = resolveCommonListFavoriteHeaderLayout(
-            uiPreset = UiPreset.MD3,
-            androidNativeVariant = AndroidNativeVariant.MATERIAL3
+            topChromePolicy = testTopChromePolicy(
+                presentation = AppTopTabPresentation.MATERIAL_UNDERLINE,
+                primaryHeightDp = 56,
+                chipHeightDp = 32,
+                compactChipHeightDp = 28,
+            ),
         )
 
         assertEquals(56, layout.searchBarHeightDp)
@@ -133,5 +245,31 @@ class CommonListAppearancePolicyTest {
         assertEquals(32, layout.folderChipMinHeightDp)
         assertTrue(layout.headerBackgroundAlphaMultiplier < 1f)
     }
+
+    private fun testTopChromePolicy(
+        presentation: AppTopTabPresentation,
+        primaryHeightDp: Int,
+        chipHeightDp: Int,
+        compactChipHeightDp: Int,
+    ) = AppTopChromePolicy(
+        tabPresentation = presentation,
+        iconFamily = AppSemanticIconFamily.MATERIAL,
+        compactChromeSpec = CompactCapsuleChromeSpec(
+            primaryHeightDp = primaryHeightDp,
+            secondaryButtonSizeDp = 48,
+            chipHeightDp = chipHeightDp,
+            compactChipHeightDp = compactChipHeightDp,
+            primaryCornerRadiusDp = primaryHeightDp / 2,
+            secondaryButtonCornerRadiusDp = 24,
+            chipCornerRadiusDp = chipHeightDp / 2,
+            compactChipCornerRadiusDp = compactChipHeightDp / 2,
+            iconSizeDp = 20,
+            smallIconSizeDp = 16,
+            inputHorizontalPaddingDp = 12,
+            chipHorizontalPaddingDp = 12,
+            compactChipHorizontalPaddingDp = 10,
+            standardGapDp = 8,
+        ),
+    )
 
 }

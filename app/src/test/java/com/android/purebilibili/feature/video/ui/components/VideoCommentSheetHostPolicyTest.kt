@@ -1,11 +1,69 @@
 package com.android.purebilibili.feature.video.ui.components
 
+import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class VideoCommentSheetHostPolicyTest {
+
+    @Test
+    fun `main comment header occupies layout space above the scrolling list`() {
+        val source = File(
+            "src/main/java/com/android/purebilibili/feature/video/ui/components/VideoCommentSheetHost.kt"
+        ).readText()
+        val mainListSource = source
+            .substringAfter("internal fun VideoCommentMainList(")
+            .substringBefore("private fun VideoCommentBackToTopButton(")
+
+        val headerIndex = mainListSource.indexOf("CommentSortHeader(")
+        val listIndex = mainListSource.indexOf("LazyColumn(")
+        assertTrue(mainListSource.contains("Column(modifier = Modifier.fillMaxSize())"))
+        assertTrue(headerIndex >= 0 && headerIndex < listIndex)
+        assertFalse(mainListSource.contains(".zIndex("))
+    }
+
+    @Test
+    fun `thread detail return keeps the hoisted main comment list state`() {
+        val source = File(
+            "src/main/java/com/android/purebilibili/feature/video/ui/components/VideoCommentSheetHost.kt"
+        ).readText()
+
+        assertTrue(source.contains("val mainCommentListState = rememberLazyListState()"))
+        assertTrue(source.contains("listState = mainCommentListState"))
+        assertFalse(source.contains("mainListScrollToTopRequest"))
+    }
+
+    @Test
+    fun `predictive back pops conversation then thread then the sheet`() {
+        assertEquals(
+            VideoCommentPredictiveBackTarget.CLOSE_CONVERSATION,
+            resolveVideoCommentPredictiveBackTarget(
+                subReplyVisible = true,
+                conversationActive = true
+            )
+        )
+        assertEquals(
+            VideoCommentPredictiveBackTarget.CLOSE_THREAD,
+            resolveVideoCommentPredictiveBackTarget(
+                subReplyVisible = true,
+                conversationActive = false
+            )
+        )
+        assertEquals(
+            VideoCommentPredictiveBackTarget.DISMISS_SHEET,
+            resolveVideoCommentPredictiveBackTarget(
+                subReplyVisible = false,
+                conversationActive = false
+            )
+        )
+        assertEquals(0.4f, resolveVideoCommentPredictiveBackProgress(inProgress = true, progress = 0.4f))
+        assertEquals(0f, resolveVideoCommentPredictiveBackProgress(inProgress = false, progress = 0.4f))
+        assertEquals(40f, resolveCommentThreadPredictiveBackOffsetY(progress = 0.4f, heightPx = 100f))
+        assertEquals(1f, resolveCommentThreadCoveredBlurProgress(threadBackProgress = 0f))
+        assertEquals(0f, resolveCommentThreadCoveredBlurProgress(threadBackProgress = 1f))
+    }
 
     @Test
     fun `host should stay hidden when neither main sheet nor thread detail is visible`() {
@@ -98,6 +156,19 @@ class VideoCommentSheetHostPolicyTest {
         assertTrue(half.scrimAlpha < shown.scrimAlpha)
         assertEquals(0.5f, shown.scrimAlpha)
         assertFalse(shown.forceLowBlurBudget)
+    }
+
+    @Test
+    fun `overridden scrim alpha should suppress shadow while backdrop tap stays intercepted`() {
+        val shown = resolveVideoCommentSheetHostOverlayVisual(
+            mainSheetVisible = true,
+            presentationProgress = 1f,
+            maxScrimAlphaOverride = 0f
+        )
+        assertEquals(0f, shown.scrimAlpha)
+        // 点击背景关闭仍由 mainSheetVisible 控制，不受 scrim 覆盖影响。
+        assertTrue(shouldInterceptVideoCommentSheetHostBackdropTap(mainSheetVisible = true))
+        assertTrue(shouldDismissVideoCommentSheetHostOnBackdropTap(mainSheetVisible = true))
     }
 
     @Test

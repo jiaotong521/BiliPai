@@ -33,7 +33,11 @@ class AppNavigationNavigation3BridgeStructureTest {
         assertTrue(source.contains("BiliPaiReturnSessionState"))
         assertTrue(source.contains("navigation3ReturnSession"))
         assertTrue(source.contains("resolveBiliPaiNavSourceMetadata"))
-        assertTrue(source.contains("CardPositionManager.lastClickedVideoSourceKey == navigation3ReturnSession.lastVideoSourceKey"))
+        assertTrue(source.contains("captureVideoCardTransitionSession("))
+        assertTrue(source.contains("navigation3ReturnSession.transitionSession"))
+        assertTrue(source.contains("?.hasUsableSourceGeometry"))
+        assertFalse(source.contains("cardKey = CardPositionManager.lastClickedVideoSourceKey"))
+        assertFalse(source.contains("sessionKey = navigation3ReturnSession.lastVideoSourceKey"))
         assertTrue(source.contains("matchedVisibleCardRoute"))
         assertTrue(source.contains("navigation3ReturnSession.markReturning"))
         assertTrue(source.contains("navigation3ReturnSession.isQuickReturnFromDetail"))
@@ -58,6 +62,28 @@ class AppNavigationNavigation3BridgeStructureTest {
     }
 
     @Test
+    fun videoDetailTopBackUsesNavDisplayProgrammaticBackCoordinator() {
+        val source = appNavigationSource()
+        val videoDetailBranch = source
+            .substringAfter("BiliPaiNavEntryContentRole.VIDEO_DETAIL ->")
+            .substringBefore("BiliPaiNavEntryContentRole.ARTICLE_DETAIL ->")
+        val onBackBlock = videoDetailBranch
+            .substringAfter("onBack = {")
+            .substringBefore("onHomeClick = {")
+
+        assertTrue(
+            onBackBlock.contains("navigation3ProgrammaticBackDispatcher.dispatch()")
+        )
+        assertTrue(onBackBlock.contains("performSystemBackAction()"))
+        assertFalse(onBackBlock.contains("popVideoDetailWithSharedReturnState("))
+        assertTrue(
+            source.contains(
+                "programmaticBackDispatcher = navigation3ProgrammaticBackDispatcher"
+            )
+        )
+    }
+
+    @Test
     fun videoDetailHomeClickUsesPopToRootSoHorizontalReturnTransitionPlays() {
         val source = appNavigationSource()
         val videoDetailBranch = source
@@ -69,7 +95,7 @@ class AppNavigationNavigation3BridgeStructureTest {
 
         // 必须走 pop 路径才能触发 popTransitionSpec → 方向化横向过渡。
         assertTrue(onHomeClickBlock.contains("popBiliPaiNavKeyToRoot(navigation3BackStack)"))
-        assertTrue(onHomeClickBlock.contains("mainBottomPagerState.snapToPage"))
+        assertTrue(onHomeClickBlock.contains("mainBottomPagerState.switchToPage"))
         // 不再用 push 把 Home 叠到栈顶；避免 fade 兜底以及栈泄漏。
         assertFalse(onHomeClickBlock.contains("pushNavigation3Route(ScreenRoutes.Home.route)"))
     }
@@ -84,6 +110,36 @@ class AppNavigationNavigation3BridgeStructureTest {
             .substringAfter("onVideoClick = { vid, options ->")
 
         assertTrue(onVideoClickBlock.contains("sourceRoute = \"video/${'$'}{videoKey.bvid}\""))
+    }
+
+    @Test
+    fun portraitRedirectsResolveBeforeReservingNavigationDebounce() {
+        val videoNavigation = appNavigationSource()
+            .substringAfter("fun navigateToVideoRouteInNavigation3(")
+            .substringBefore("fun navigateToVideoInNavigation3(")
+        val debounceIndex = videoNavigation.indexOf("if (!canNavigate(false)) return")
+        assertTrue(debounceIndex > videoNavigation.indexOf("navigateToPortraitStoryInNavigation3(seed"))
+        assertTrue(debounceIndex > videoNavigation.indexOf("VideoRepository.isVerticalVideo(videoKey.bvid)"))
+        assertTrue(debounceIndex < videoNavigation.indexOf("pushNavigation3Key(key)"))
+        assertTrue(videoNavigation.contains("route = videoKey.copy("))
+    }
+
+    @Test
+    fun videoCardOpeningIsPrearmedBeforeTheDetailDestinationMounts() {
+        val source = appNavigationSource()
+        val prearmHelper = source
+            .substringAfter("fun prearmVideoCardOpening(")
+            .substringBefore("var lastVideoDetailOpenId")
+        val videoNavigation = source
+            .substringAfter("fun navigateToVideoRouteInNavigation3(")
+            .substringBefore("fun navigateToVideoInNavigation3(")
+
+        assertTrue(prearmHelper.contains("beginOpeningIfNeeded(session.sourceRoute)"))
+        assertTrue(videoNavigation.contains("prearmVideoCardOpening(transitionSession)"))
+        assertTrue(
+            videoNavigation.indexOf("prearmVideoCardOpening(transitionSession)") <
+                videoNavigation.indexOf("pushNavigation3Key(key)")
+        )
     }
 
     @Test
@@ -113,12 +169,18 @@ class AppNavigationNavigation3BridgeStructureTest {
     }
 
     @Test
-    fun videoBackPreviewDoesNotActivateTheTargetPlaybackSession() {
+    fun videoBackPreviewActivatesTargetPlaybackOnlyThroughTheExplicitBindPolicy() {
         val videoDetailBranch = appNavigationSource()
             .substringAfter("BiliPaiNavEntryContentRole.VIDEO_DETAIL ->")
             .substringBefore("BiliPaiNavEntryContentRole.ARTICLE_DETAIL ->")
 
-        assertTrue(videoDetailBranch.contains("isVisible = shouldActivateVideoDetailPlaybackSession("))
+        assertTrue(videoDetailBranch.contains("val videoDetailPlaybackSessionActive ="))
+        assertTrue(videoDetailBranch.contains("isVisible = videoDetailPlaybackSessionActive &&"))
+        assertTrue(videoDetailBranch.contains("isPlaybackSessionActive = videoDetailPlaybackSessionActive"))
+        assertTrue(videoDetailBranch.contains("bindLivePlayerForBackPreview = bindVideoBackPreviewPlayer"))
+        assertTrue(videoDetailBranch.contains("activateBackPreviewPlayback ="))
+        assertTrue(videoDetailBranch.contains("activateVideoBackPreviewPlayback"))
+        assertTrue(videoDetailBranch.contains("navigation3ReturnSession.isReturningFromDetail"))
         assertFalse(videoDetailBranch.contains("isVisible = true"))
     }
 
@@ -144,6 +206,8 @@ class AppNavigationNavigation3BridgeStructureTest {
         assertFalse(videoDetailBranch.contains("!shouldUseNativeVideoCardTransition(videoKey)"))
         assertFalse(videoDetailBranch.contains("!shouldUseNativeVideoBackgroundReturnEffect(videoKey)"))
         assertTrue(videoDetailBranch.contains("transitionEnabled = shouldEnableVideoDetailSharedTransition("))
+        assertTrue(videoDetailBranch.contains("shouldEnableVideoDetailSharedTransition("))
+        assertTrue(videoDetailBranch.contains("sourceRoute = videoKey.sourceRoute"))
         assertFalse(videoDetailBranch.contains("nativeVideoBackPreviewVideoKey == videoKey.bvid"))
         assertFalse(videoDetailBranch.contains("hideVideoDetailForNativeBackPreview"))
         assertFalse(source.contains("previewNativeVideoBackProgress("))
@@ -177,36 +241,6 @@ class AppNavigationNavigation3BridgeStructureTest {
         assertTrue(videoClickBlock.contains("sourceRoute = ScreenRoutes.Favorite.route"))
     }
 
-    @Test
-    fun videoReturnEntersMiniPlayerBeforePoppingDestination() {
-        val source = appNavigationSource()
-        val helperBlock = source
-            .substringAfter("fun popVideoDetailWithSharedReturnState(")
-            .substringBefore("val performSystemBackAction")
-        val prepareMiniPlayerIndex = helperBlock.indexOf("prepareVideoPlaybackForNavigationExit(videoKey)")
-        val popIndex = helperBlock.indexOf("popAction()")
-
-        assertTrue(prepareMiniPlayerIndex >= 0)
-        assertTrue(prepareMiniPlayerIndex < popIndex)
-        assertTrue(source.contains("manager.enterMiniMode()"))
-    }
-
-    @Test
-    fun systemBackPreparesVideoMiniPlayerBeforePoppingDestination() {
-        val source = appNavigationSource()
-        val navigateUpBlock = source
-            .substringAfter("AppSystemBackAction.NAVIGATE_UP ->")
-            .substringBefore("AppSystemBackAction.FINISH_ACTIVITY ->")
-        val helperBlock = source
-            .substringAfter("fun popVideoDetailWithSharedReturnState(")
-            .substringBefore("val performSystemBackAction")
-        val prepareIndex = helperBlock.indexOf("prepareVideoPlaybackForNavigationExit")
-        val popIndex = helperBlock.indexOf("popAction()")
-
-        assertTrue(navigateUpBlock.contains("popVideoDetailWithSharedReturnState("))
-        assertTrue(prepareIndex >= 0)
-        assertTrue(prepareIndex < popIndex)
-    }
 
     @Test
     fun seasonSeriesVideosUseMatchingSharedElementSourceRoute() {
@@ -215,12 +249,13 @@ class AppNavigationNavigation3BridgeStructureTest {
             .substringAfter("BiliPaiNavEntryContentRole.SEASON_SERIES_DETAIL ->")
             .substringBefore("BiliPaiNavEntryContentRole.BANGUMI ->")
 
+        assertTrue(detailBranch.contains("val seasonSeriesSourceRoute ="))
         assertTrue(
             detailBranch.contains(
-                "LocalVideoCardSharedElementSourceRoute provides seasonSeriesKey.toLegacyRoute()"
+                "LocalVideoCardSharedElementSourceRoute provides seasonSeriesSourceRoute"
             )
         )
-        assertTrue(detailBranch.contains("sourceRoute = seasonSeriesKey.toLegacyRoute()"))
+        assertTrue(detailBranch.contains("sourceRoute = seasonSeriesSourceRoute"))
     }
 
     @Test
@@ -270,28 +305,6 @@ class AppNavigationNavigation3BridgeStructureTest {
         assertTrue(source.contains("isQuickReturningFromVideoDetail = isQuickReturningFromVideoDetail"))
     }
 
-    @Test
-    fun classicBackMarksVideoReturnBeforePoppingNavigation3Stack() {
-        val source = appNavigationSource()
-
-        val markerIndex = source.indexOf("fun markNavigation3VideoReturnBeforeBackAction")
-        val navigateUpIndex = source.indexOf("AppSystemBackAction.NAVIGATE_UP ->")
-        val navigateUpBlock = source
-            .substringAfter("AppSystemBackAction.NAVIGATE_UP ->")
-            .substringBefore("AppSystemBackAction.FINISH_ACTIVITY ->")
-        val helperBlock = source
-            .substringAfter("fun popVideoDetailWithSharedReturnState(")
-            .substringBefore("val performSystemBackAction")
-        val markCallIndex = helperBlock.indexOf("markNavigation3VideoReturnBeforeBackAction(targetKey = targetKey)")
-        val prepareIndex = helperBlock.indexOf("prepareVideoPlaybackForNavigationExit(videoKey)")
-
-        assertTrue(markerIndex >= 0)
-        assertTrue(navigateUpIndex >= 0)
-        assertTrue(navigateUpBlock.contains("popVideoDetailWithSharedReturnState("))
-        assertTrue(markCallIndex in 0 until prepareIndex)
-        assertTrue(source.contains("isVideoDetailRoute(fromRoute)"))
-        assertTrue(source.contains("isVideoCardReturnTargetRoute(targetRoute)"))
-    }
 
     @Test
     fun appNavigationUsesUnifiedBackGestureDecision() {
@@ -321,7 +334,8 @@ class AppNavigationNavigation3BridgeStructureTest {
         assertTrue(source.contains("val predictiveBackEnabled = appNavigationSettings.predictiveBackEnabled"))
         assertTrue(source.contains("LocalPredictiveBackGestureEnabled provides predictiveBackEnabled"))
         assertTrue(source.contains("isQuickReturnFromDetail = navigation3ReturnSession.isQuickReturnFromDetail"))
-        assertTrue(source.contains("BiliPaiPredictiveBackAnimationStyle.DEFAULT"))
+        assertTrue(source.contains("BiliPaiPredictiveBackAnimationStyle.fromStorageValue("))
+        assertTrue(source.contains("appNavigationSettings.predictiveBackAnimationStyle"))
         assertFalse(source.contains("shouldUseClassicBackHandler"))
     }
 
@@ -421,25 +435,52 @@ class AppNavigationNavigation3BridgeStructureTest {
     @Test
     fun videoCardLaunchBottomBarUsesSimpleVisibilityOutsideBackdropSource() {
         val source = appNavigationSource()
+        val sharedChrome = listOf(
+            File("app/src/main/java/com/android/purebilibili/feature/home/components/BottomBarMatchedLiquidChrome.kt"),
+            File("src/main/java/com/android/purebilibili/feature/home/components/BottomBarMatchedLiquidChrome.kt")
+        ).first { it.exists() }.readText()
         val mainHostBranch = source
             .substringAfter("BiliPaiNavEntryContentRole.MAIN_HOST -> {")
             .substringBefore("BiliPaiNavEntryContentRole.HOME ->")
         val sourceContent = source
-            .substringAfter(".miuixLayerBackdrop(bottomBarBackdrop)")
+            .substringAfter(".then(bottomBarBackdropSource.modifier)")
             .substringBefore("} // End of Content Box")
         val bottomBarOverlay = source
-            .substringAfter("if (bottomBarMountGate && bottomBarVisibilityMode")
+            .substringAfter("if (bottomBarCanMount)")
             .substringBefore("MainHostTabBackHandler(")
 
-        assertTrue(mainHostBranch.contains("VideoCardTransitionBackgroundRouteContent(bottomPagerNavKeyForItem(currentBottomNavItem))"))
+        assertFalse(mainHostBranch.contains("VideoCardTransitionBackgroundRouteContent(bottomPagerNavKeyForItem(currentBottomNavItem))"))
+        assertTrue(source.contains("val activeMainHostRoute = currentBottomNavItem.route"))
+        assertFalse(source.contains("activeMainHostRoute = activeBottomTabRoute"))
         assertTrue(source.contains("val isVideoDetailDestination = isVideoDetailRoute(currentRoute)"))
-        assertTrue(source.contains("val bottomBarMountRoute = if (isVideoDetailDestination)"))
+        assertTrue(source.contains("val bottomBarMountRoute = resolveVideoCardTransitionChromeBottomBarRoute("))
         assertTrue(source.contains("activeRoute = bottomBarMountRoute"))
+        val showBottomBarBlock = source
+            .substringAfter("val showBottomBar = shouldShowBottomBarForNavigation(")
+            .substringBefore("val finalBottomBarVisible")
+        assertTrue(showBottomBarBlock.contains("activeRoute = bottomBarMountRoute"))
+        assertTrue(source.contains("shouldShowVideoCardTransitionSourceChrome("))
+        assertTrue(source.contains("shouldDriveVideoCardTransitionChromeByProgress("))
+        assertTrue(source.contains("isVideoCardTransitionBottomBarSource("))
+        assertTrue(source.contains("sourceIsBottomBarDestination = sourceIsBottomBarDestination"))
+        assertTrue(source.contains("resolveVideoCardTransitionChromeReveal("))
+        assertTrue(source.contains("videoCardTransitionChromeReveal("))
+        assertTrue(source.contains("resolveVideoCardTransitionChromeBottomBarRoute("))
+        assertTrue(source.contains("videoCardSourceChromeVisible"))
         assertTrue(source.contains("!isVideoDetailDestination"))
-        assertTrue(bottomBarOverlay.contains("visible = finalBottomBarVisible"))
-        assertTrue(bottomBarOverlay.contains("slideOutVertically("))
-        assertTrue(bottomBarOverlay.contains("scaleOut("))
-        assertTrue(bottomBarOverlay.contains("TransformOrigin(0.5f, 1f)"))
+        assertTrue(source.contains("bottomBarMountGate ||"))
+        assertTrue(source.contains("bottomBarVisibilityState.currentState ||"))
+        assertTrue(source.contains("val sideBarRouteGate = shouldShowBottomBarForNavigation("))
+        assertTrue(source.contains("windowSizeClass.shouldUseSideNavigation && sideBarMountGate"))
+        assertTrue(source.contains("transitionSession?.hostOriginInRoot"))
+        assertTrue(source.contains("hostOriginInRoot = navigationHostOriginInRoot"))
+        assertTrue(source.contains("val bottomBarReservesSpace = bottomBarCanMount"))
+        assertTrue(bottomBarOverlay.contains("visibleState = bottomBarVisibilityState"))
+        assertTrue(bottomBarOverlay.contains("BottomBarMatchedDockVisibility("))
+        assertTrue(bottomBarOverlay.contains("edge = BottomBarMatchedDockEdge.BOTTOM"))
+        assertTrue(sharedChrome.contains("slideOutVertically("))
+        assertTrue(sharedChrome.contains("scaleOut("))
+        assertTrue(sharedChrome.contains("TransformOrigin(0.5f, 1f)"))
         assertTrue(bottomBarOverlay.contains("miuixBackdrop = bottomBarBackdrop"))
         assertFalse(bottomBarOverlay.contains("videoCardTransitionBackgroundEffect("))
         assertFalse(source.contains("videoCardTransitionBackgroundProgress = videoCardTransitionBackgroundProgress"))
@@ -450,6 +491,36 @@ class AppNavigationNavigation3BridgeStructureTest {
         assertFalse(source.contains("bottomBarVideoCardLaunchFeedback"))
         assertFalse(source.contains("videoCardLaunchFeedback"))
         assertFalse(source.contains("shouldPlayBottomBarVideoCardLaunchFeedback"))
+    }
+
+    @Test
+    fun profileAndHistoryBottomBarReselectScrollToTop() {
+        val source = appNavigationSource()
+        assertTrue(source.contains("val historyScrollChannel"))
+        assertTrue(source.contains("val profileScrollChannel"))
+        assertTrue(source.contains("val liveScrollChannel"))
+        assertTrue(source.contains("val watchLaterScrollChannel"))
+        assertTrue(source.contains("BottomNavItem.HISTORY -> historyScrollChannel.trySend(Unit)"))
+        assertTrue(source.contains("BottomNavItem.PROFILE -> profileScrollChannel.trySend(Unit)"))
+        assertTrue(source.contains("BottomNavItem.LIVE -> liveScrollChannel.trySend(Unit)"))
+        assertTrue(source.contains("BottomNavItem.WATCHLATER -> watchLaterScrollChannel.trySend(Unit)"))
+        assertTrue(source.contains("scrollToTopChannel = historyScrollChannel"))
+        assertTrue(source.contains("scrollToTopChannel = profileScrollChannel"))
+        assertTrue(source.contains("scrollToTopChannel = liveScrollChannel"))
+        assertTrue(source.contains("scrollToTopChannel = watchLaterScrollChannel"))
+    }
+
+    @Test
+    fun navigationBackStackReplacementIsAtomicForNavDisplay() {
+        val source = appNavigationSource()
+        val replacement = source
+            .substringAfter("fun replaceNavigation3BackStack(keys: List<BiliPaiNavKey>)")
+            .substringBefore("val navigation3ProgrammaticBackDispatcher")
+
+        assertTrue(replacement.contains("Snapshot.withMutableSnapshot"))
+        assertTrue(replacement.contains("if (navigation3BackStack == replacementStack) return"))
+        assertTrue(replacement.contains("navigation3BackStack.clear()"))
+        assertTrue(replacement.contains("navigation3BackStack.addAll(replacementStack)"))
     }
 
     private fun appNavigationSource(): String {

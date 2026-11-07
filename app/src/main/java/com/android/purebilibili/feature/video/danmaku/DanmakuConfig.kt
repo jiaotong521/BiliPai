@@ -3,7 +3,8 @@ package com.android.purebilibili.feature.video.danmaku
 
 import android.content.Context
 import android.graphics.Typeface
-import com.bytedance.danmaku.render.engine.control.DanmakuConfig as EngineConfig
+import android.os.Build
+import com.android.purebilibili.danmaku.engine.DanmakuRenderConfig
 
 /**
  * 弹幕配置管理
@@ -22,7 +23,7 @@ class DanmakuConfig {
     // 字体缩放 (0.5 - 2.0)
     var fontScale = 1.0f
 
-    // 字重（1-9，映射到 normal/bold）
+    // 字重（1-9；Android 9+ 映射到 100-900，旧系统降级为 normal/bold）
     var fontWeight = 5
     
     // 滚动速度因子 (数值越大弹幕越慢)
@@ -31,7 +32,7 @@ class DanmakuConfig {
     // 明确的滚动时长（秒）
     var scrollDurationSeconds = 7.0f
     
-    // 显示区域比例 (0.25, 0.5, 0.75, 1.0)
+    // 显示区域比例 (0.125 至 1.0，每档增加 0.125)
     var displayAreaRatio = 0.5f
 
     // 行高倍率
@@ -39,7 +40,7 @@ class DanmakuConfig {
     
     // [问题9修复] 描边设置
     var strokeEnabled = true  // 默认开启描边
-    var strokeWidth = 1.5f  // 描边宽度（像素）
+    var strokeWidth = 1.5f  // 描边宽度（dp），与字号使用同一系统密度
 
     // 静态弹幕停留时长（秒）
     var staticDurationSeconds = 4.0f
@@ -55,7 +56,7 @@ class DanmakuConfig {
     
     // [新增] 合并重复弹幕
     var mergeDuplicates = true
-    var duplicateMergeWindowMs = 500
+    var duplicateMergeWindowMs = 15_000
     var duplicateMergeCountThreshold = 2
 
     // [新增] 类型屏蔽（与 B 站 blockxxx 语义对齐，true=显示/不屏蔽）
@@ -64,114 +65,76 @@ class DanmakuConfig {
     var allowBottom = true
     var allowColorful = true
     var allowSpecial = true
+    /** 智能云屏蔽等级 (0=关闭)；低于该权重且非自己发送的弹幕会被过滤 */
+    var weightFilterLevel = 0
     var blockedRules: List<String> = emptyList()
 
-    // [新增] 智能避脸：根据检测到的人脸动态调整弹幕可显示带
+    // 服务端遮罩开关；不参与显示区域与轨道预算计算。
     var smartOcclusionEnabled = false
-    var safeBandTopRatio = 0f
-    var safeBandBottomRatio = 1f
     
     // 顶部边距（像素）
     var topMarginPx = 0
+    /** 普通模式为顶部计数条预留空间；海量模式只叠加浮层，不改变轨道。 */
+    var hotBarReservedHeightPx = 0f
     
-    /**
-     * 应用配置到 DanmakuRenderEngine 的 DanmakuConfig
-     * 
-     * DanmakuRenderEngine 的配置结构:
-     * - config.text: TextConfig (size, color, strokeWidth, strokeColor)
-     * - config.scroll: ScrollLayerConfig (moveTime, lineHeight, lineMargin, margin)
-     * - config.common: CommonConfig (alpha, bufferSize, bufferDiscardRule)
-     */
-    fun applyTo(engineConfig: EngineConfig, viewWidth: Int = 0, viewHeight: Int = 0) {
-        engineConfig.apply {
-            // 通用配置 - 透明度 (0-255 Int)
-            common.alpha = (opacity * 255).toInt()
-            
-            // 文字配置 - 字体大小 (增大基准值以提高可见性)
-            text.size = 42f * fontScale
-            text.typeface = resolveDanmakuTypeface(fontWeight)
-            val layerLineHeightPx = resolveDanmakuLayerLineHeightPx(
-                fontSize = text.size,
-                lineHeightMultiplier = lineHeight
-            )
-            
-            // [问题9修复] 描边配置 - 提高弹幕可见性
-            if (strokeEnabled) {
-                text.strokeWidth = strokeWidth
-                text.strokeColor = android.graphics.Color.BLACK  // 黑色描边
-            } else {
-                text.strokeWidth = 0f
-            }
-            
-            // 滚动层配置
-            scroll.moveTime = resolveDanmakuScrollDurationMillis(
-                scrollDurationSeconds = scrollDurationSeconds,
-                speedFactor = speedFactor,
-                scrollFixedVelocity = scrollFixedVelocity,
-                viewportWidthPx = viewWidth
-            )
-            scroll.lineHeight = layerLineHeightPx
-
-            val activeBand = resolveActiveDisplayBand(displayAreaRatio)
-            val visibleHeightPx = if (viewHeight > 0) {
-                (viewHeight * activeBand.heightRatio).coerceAtLeast(0f)
-            } else {
-                0f
-            }
-
-            // [修复] 显示区域控制：通过 lineCount + marginTop 约束弹幕轨道
-            val maxLines = resolveDanmakuVisibleLineCount(
-                visibleHeightPx = visibleHeightPx,
-                areaRatioHint = activeBand.heightRatio,
-                fontSize = text.size,
-                strokeWidth = text.strokeWidth,
-                strokeEnabled = strokeEnabled,
-                lineHeight = lineHeight,
-                massiveMode = massiveMode
-            )
-            scroll.lineCount = maxLines
-
-            val topMargin = if (viewHeight > 0) (viewHeight * activeBand.topRatio) else 0f
-            val bottomInset = if (viewHeight > 0) (viewHeight * (1f - activeBand.bottomRatio)) else 0f
-            topMarginPx = topMargin.toInt()
-            scroll.marginTop = topMargin
-            top.marginTop = topMargin
-            bottom.marginBottom = bottomInset
-            top.lineHeight = layerLineHeightPx
-            bottom.lineHeight = layerLineHeightPx
-            val pinnedDuration = resolveDanmakuPinnedDurationMillis(staticDurationSeconds)
-            top.showTimeMin = pinnedDuration
-            top.showTimeMax = pinnedDuration
-            bottom.showTimeMin = pinnedDuration
-            bottom.showTimeMax = pinnedDuration
-
-            // 顶部/底部弹幕的轨道数量跟随可见区高度，避免挤占人脸区
-            val pinnedLineCount = (maxLines / 2).coerceAtLeast(1)
-            top.lineCount = pinnedLineCount
-            bottom.lineCount = pinnedLineCount
-            
-            android.util.Log.w(
-                "DanmakuConfig",
-                " Applied: opacity=$opacity, fontSize=${text.size}, moveTime=${scroll.moveTime}ms, " +
-                    "displayArea=$displayAreaRatio, band=${activeBand.topRatio}-${activeBand.bottomRatio}, " +
-                    "lineHeight=$lineHeight, lineHeightPx=$layerLineHeightPx, maxLines=$maxLines, staticMs=$pinnedDuration " +
-                    "(w=$viewWidth, h=$viewHeight, visiblePx=$visibleHeightPx, marginTop=$topMargin)"
-            )
+    /** Resolve app settings into the renderer-neutral configuration contract. */
+    fun resolveRenderConfig(viewport: DanmakuViewport, isFullscreen: Boolean): DanmakuRenderConfig {
+        val viewWidth = viewport.widthPx
+        val viewHeight = viewport.heightPx
+        val resolvedTextSize = resolveDanmakuTextSizePx(viewport.density, fontScale, isFullscreen)
+        val resolvedStrokeWidth = if (strokeEnabled) {
+            resolveDanmakuStrokeWidthPx(viewport.density, strokeWidth)
+        } else 0f
+        val layerLineHeightPx = resolveDanmakuLayerLineHeightPx(
+            fontSize = resolvedTextSize,
+            lineHeightMultiplier = lineHeight
+        )
+        val scrollDuration = resolveDanmakuScrollDurationMillis(
+            scrollDurationSeconds = scrollDurationSeconds,
+            speedFactor = speedFactor,
+            scrollFixedVelocity = scrollFixedVelocity,
+            viewportWidthPx = viewWidth
+        )
+        val areaRatio = displayAreaRatio.coerceIn(0.1f, 1f)
+        val hotBarSpace = resolveDanmakuHotBarReservedHeightPx(
+            hotBarReservedHeightPx, viewHeight, massiveMode
+        )
+        val topMargin = hotBarSpace
+        val visibleHeightPx = if (viewHeight > 0) {
+            (viewHeight * areaRatio - topMargin).coerceAtLeast(0f)
+        } else {
+            0f
         }
+        val maxLines = if (viewHeight > 0 && hotBarSpace > 0f && visibleHeightPx <= 0f) 0
+        else resolveDanmakuVisibleLineCount(
+            visibleHeightPx = visibleHeightPx,
+            areaRatioHint = areaRatio,
+            fontSize = resolvedTextSize,
+            strokeWidth = resolvedStrokeWidth,
+            strokeEnabled = strokeEnabled,
+            lineHeight = lineHeight,
+            massiveMode = massiveMode
+        )
+        val bottomInset = if (viewHeight > 0) viewHeight * (1f - areaRatio) else 0f
+        val pinnedDuration = resolveDanmakuPinnedDurationMillis(staticDurationSeconds)
+        topMarginPx = topMargin.toInt()
+
+        return DanmakuRenderConfig(
+            alpha = (opacity * 255).toInt(),
+            textSizePx = resolvedTextSize,
+            typeface = resolveDanmakuTypeface(fontWeight),
+            strokeWidthPx = resolvedStrokeWidth,
+            strokeColor = android.graphics.Color.BLACK,
+            scrollDurationMs = scrollDuration,
+            lineHeightPx = layerLineHeightPx,
+            lineMarginPx = 0f,
+            lineCount = maxLines,
+            topMarginPx = topMargin,
+            bottomMarginPx = bottomInset,
+            pinnedDurationMs = pinnedDuration
+        )
     }
 
-    private fun resolveActiveDisplayBand(defaultArea: Float): DanmakuDisplayBand {
-        val fallback = DanmakuDisplayBand(0f, defaultArea.coerceIn(0.25f, 1f))
-        if (!smartOcclusionEnabled) return fallback
-
-        val requested = DanmakuDisplayBand(
-            topRatio = safeBandTopRatio,
-            bottomRatio = safeBandBottomRatio
-        ).normalized()
-        if (requested.heightRatio < 0.12f) return fallback
-        return requested
-    }
-    
     companion object {
         /**
          * 获取状态栏高度（像素）
@@ -190,9 +153,38 @@ class DanmakuConfig {
 }
 
 internal fun resolveDanmakuTypeface(fontWeight: Int): Typeface {
-    val style = if (fontWeight >= 6) Typeface.BOLD else Typeface.NORMAL
-    return Typeface.create(Typeface.DEFAULT, style)
+    val normalizedWeight = fontWeight.coerceIn(1, 9) * 100
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        Typeface.create(Typeface.DEFAULT, normalizedWeight, false)
+    } else {
+        val familyName = when {
+            normalizedWeight <= 200 -> "sans-serif-thin"
+            normalizedWeight <= 300 -> "sans-serif-light"
+            normalizedWeight <= 400 -> "sans-serif"
+            normalizedWeight <= 600 -> "sans-serif-medium"
+            normalizedWeight <= 700 -> "sans-serif"
+            else -> "sans-serif-black"
+        }
+        val style = if (normalizedWeight == 700) Typeface.BOLD else Typeface.NORMAL
+        Typeface.create(familyName, style)
+    }
 }
+
+/** Logical-pixel baselines matching PiliPlus; neither depends on the picture box or app UI scale. */
+private const val DANMAKU_BASE_TEXT_SIZE_DP = 15f
+private const val DANMAKU_FULLSCREEN_TEXT_SIZE_DP = 18f
+
+internal fun resolveDanmakuTextSizePx(
+    density: Float,
+    fontScale: Float,
+    isFullscreen: Boolean
+): Float {
+    val baseSizeDp = if (isFullscreen) DANMAKU_FULLSCREEN_TEXT_SIZE_DP else DANMAKU_BASE_TEXT_SIZE_DP
+    return baseSizeDp * density * fontScale.coerceIn(0.5f, 2.5f)
+}
+
+internal fun resolveDanmakuStrokeWidthPx(density: Float, strokeWidth: Float): Float =
+    strokeWidth.coerceAtLeast(0f) * density
 
 internal fun resolveDanmakuScrollDurationMillis(
     scrollDurationSeconds: Float,
@@ -200,25 +192,25 @@ internal fun resolveDanmakuScrollDurationMillis(
     scrollFixedVelocity: Boolean,
     viewportWidthPx: Int
 ): Long {
-    val baseDurationMillis = (scrollDurationSeconds.coerceIn(2.0f, 15.0f) * 1000f).toLong()
+    val baseDurationMillis = (scrollDurationSeconds.coerceIn(1f, 50f) * 1000f).toLong()
     val scaledBySpeed = baseDurationMillis * speedFactor.coerceIn(0.5f, 2.0f)
     val viewportFactor = if (scrollFixedVelocity && viewportWidthPx > 0) {
         (viewportWidthPx / 1080f).coerceIn(0.75f, 2.5f)
     } else {
         1.0f
     }
-    return (scaledBySpeed * viewportFactor).toLong().coerceIn(2000L, 20000L)
+    return (scaledBySpeed * viewportFactor).toLong().coerceAtLeast(1L)
 }
 
 internal fun resolveDanmakuLayerLineHeightPx(
     fontSize: Float,
     lineHeightMultiplier: Float
 ): Float {
-    return fontSize * lineHeightMultiplier.coerceIn(0.8f, 2.2f)
+    return fontSize * lineHeightMultiplier.coerceIn(1f, 3f)
 }
 
 internal fun resolveDanmakuPinnedDurationMillis(staticDurationSeconds: Float): Long {
-    return (staticDurationSeconds.coerceIn(2.0f, 15.0f) * 1000f).toLong()
+    return (staticDurationSeconds.coerceIn(1f, 50f) * 1000f).toLong()
 }
 
 internal fun resolveDanmakuVisibleLineCount(
@@ -234,23 +226,50 @@ internal fun resolveDanmakuVisibleLineCount(
         return resolveDanmakuFallbackMaxLines(areaRatioHint)
     }
 
+    val lineHeightMultiplier = lineHeight.coerceIn(1f, 3f)
     val estimatedLineHeight =
-        (fontSize + (if (strokeEnabled) strokeWidth else 0f) + 12f) * lineHeight.coerceIn(0.8f, 2.2f)
-    val totalLines = (visibleHeightPx / estimatedLineHeight).toInt()
-    val minLines = resolveDanmakuMinimumVisibleLines(areaRatioHint)
-    val resolvedLines = totalLines.coerceAtLeast(minLines)
-    val boostedLines = if (massiveMode) {
-        (resolvedLines * 2).coerceAtMost(40)
+        (fontSize + (if (strokeEnabled) strokeWidth else 0f) + 12f) * lineHeightMultiplier
+    val estimatedLines = if (estimatedLineHeight > 0f) {
+        (visibleHeightPx / estimatedLineHeight).toInt()
+    } else {
+        0
+    }
+    val minimumLines = resolveDanmakuMinimumVisibleLines(areaRatioHint)
+    val resolvedLines = estimatedLines.coerceAtLeast(minimumLines)
+    val requestedLines = if (massiveMode) {
+        (resolvedLines.toLong() * 2L).coerceAtMost(40L).toInt()
     } else {
         resolvedLines
     }
-    return boostedLines.also {
+
+    // The engine stacks rows on the line height alone; there is no extra interline margin.
+    val engineLineHeight = resolveDanmakuLayerLineHeightPx(
+        fontSize = fontSize,
+        lineHeightMultiplier = lineHeightMultiplier
+    )
+    val maxLinesByBudget = if (visibleHeightPx >= engineLineHeight && engineLineHeight > 0f) {
+        ((visibleHeightPx - engineLineHeight) / engineLineHeight).toInt() + 1
+    } else {
+        0
+    }
+    val budgetedLines = requestedLines.coerceAtMost(maxLinesByBudget)
+
+    return budgetedLines.also {
         android.util.Log.i(
             "DanmakuConfig",
-            "DisplayArea: visibleHeight=$visibleHeightPx, fontSize=$fontSize, ratio=$areaRatioHint -> total=$totalLines, visible=$it"
+            "DisplayArea: visibleHeight=$visibleHeightPx, estimatedLineHeight=$estimatedLineHeight, " +
+                "lineHeight=$engineLineHeight, " +
+                "ratio=$areaRatioHint -> estimated=$estimatedLines, max=$maxLinesByBudget, visible=$it"
         )
     }
 }
+
+internal fun resolveDanmakuHotBarReservedHeightPx(
+    requestedHeightPx: Float,
+    viewportHeightPx: Int,
+    massiveMode: Boolean,
+): Float = if (massiveMode || !requestedHeightPx.isFinite()) 0f
+else requestedHeightPx.coerceIn(0f, viewportHeightPx.coerceAtLeast(0).toFloat())
 
 internal fun resolveDanmakuMinimumVisibleLines(displayAreaRatio: Float): Int {
     return when {

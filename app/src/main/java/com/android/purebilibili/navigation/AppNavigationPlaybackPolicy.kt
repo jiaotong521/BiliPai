@@ -5,9 +5,10 @@ import com.android.purebilibili.navigation3.BiliPaiNavKey
 
 internal fun shouldStopPlaybackEagerlyOnVideoRouteExit(
     fromRoute: String?,
-    toRoute: String?
+    toRoute: String?,
+    isVideoEntryRetained: Boolean,
 ): Boolean {
-    if (toRoute.isNullOrBlank()) return false
+    if (isVideoEntryRetained || toRoute.isNullOrBlank()) return false
     val toRouteBase = toRoute.substringBefore("?")
     return isVideoDetailRoute(fromRoute) &&
         !isVideoDetailRoute(toRouteBase) &&
@@ -74,10 +75,22 @@ internal fun isVideoDetailRoute(route: String?): Boolean {
     return route?.startsWith("${VideoRoute.base}/") == true
 }
 
+internal fun resolveAudioNowPlayingBarExpandRoute(
+    opensAudioMode: Boolean,
+    bvid: String,
+    cid: Long,
+    coverUrl: String,
+): String = if (opensAudioMode) {
+    ScreenRoutes.AudioMode.createRoute(bvid = bvid, cid = cid)
+} else {
+    VideoRoute.createRoute(bvid = bvid, cid = cid, coverUrl = coverUrl)
+}
+
 internal fun shouldEnableVideoDetailSharedTransition(
-    cardTransitionEnabled: Boolean
+    cardTransitionEnabled: Boolean,
+    sourceRoute: String?,
 ): Boolean {
-    return cardTransitionEnabled
+    return cardTransitionEnabled && !isVideoDetailRoute(sourceRoute?.substringBefore("?"))
 }
 
 internal fun shouldShareAudioModeViewModelWithPreviousEntry(
@@ -115,4 +128,14 @@ internal fun resolveAudioModeInitialLoadRequest(
         cid = key.sourceCid.coerceAtLeast(0L),
         resumePositionMs = key.sourceResumePositionMs.coerceAtLeast(0L)
     )
+}
+
+/** 入口请求只在导航会话建立时解析，切歌的 Loading/Success 不得重建旧视频入口。 */
+@androidx.compose.runtime.Composable
+internal fun rememberAudioModeInitialLoadRequest(
+    key: BiliPaiNavKey.AudioMode,
+    playbackOwner: Any,
+    hasDisplayState: () -> Boolean,
+): AudioModeInitialLoadRequest? = androidx.compose.runtime.remember(key, playbackOwner) {
+    resolveAudioModeInitialLoadRequest(key, hasDisplayState())
 }

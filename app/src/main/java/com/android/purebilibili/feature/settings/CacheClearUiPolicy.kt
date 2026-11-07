@@ -90,11 +90,169 @@ internal fun resolveSelectedCacheSizeSummary(
     breakdown: CacheUtils.CacheBreakdown?,
     selectedTargets: Set<CacheClearTarget> = resolveDefaultCacheClearTargets()
 ): String {
-    if (breakdown == null) return "已选缓存：计算中..."
+    if (breakdown == null) return "已选缓存：计算中…"
     val selectedBytes = resolveSelectedCacheBytes(
         breakdown = breakdown,
         selectedTargets = selectedTargets
     )
-    val formattedSize = CacheUtils.CacheBreakdown(otherCache = selectedBytes).format()
-    return "已选缓存：$formattedSize"
+    return "已选缓存：${formatCacheClearBytes(selectedBytes)}"
+}
+
+internal data class CacheClearDonutSegment(
+    val target: CacheClearTarget,
+    val title: String,
+    val bytes: Long,
+    val startAngle: Float,
+    val sweepAngle: Float,
+    val selected: Boolean,
+    val colorIndex: Int,
+    val percentLabel: String,
+    val chartPercentLabel: String = percentLabel,
+    val fraction: Float = 0f,
+    val sizeKnown: Boolean = true
+)
+
+internal fun formatCacheClearBytes(bytes: Long): String {
+    return if (bytes in 1L..1023L) "$bytes B"
+    else CacheUtils.CacheBreakdown(otherCache = bytes.coerceAtLeast(0L)).format()
+}
+
+internal fun formatCacheClearPercent(bytes: Long, totalBytes: Long): String {
+    if (totalBytes <= 0L || bytes <= 0L) return "0%"
+    val percent = bytes.toDouble() / totalBytes.toDouble() * 100.0
+    return if (percent < 1.0) "<1.0%" else "${percent.toInt()}%"
+}
+
+internal fun resolveCacheClearButtonLabel(
+    breakdown: CacheUtils.CacheBreakdown?,
+    selectedTargets: Set<CacheClearTarget>
+): String {
+    if (selectedTargets.isEmpty()) return "清理缓存"
+    if (breakdown == null) return "清理缓存"
+    val selectedBytes = resolveSelectedCacheBytes(breakdown, selectedTargets)
+    return "清理缓存 ${formatCacheClearBytes(selectedBytes)}"
+}
+
+internal fun resolveCacheClearDonutCenterSize(
+    breakdown: CacheUtils.CacheBreakdown?,
+    selectedTargets: Set<CacheClearTarget>
+): String {
+    if (breakdown == null) return "计算中"
+    return formatCacheClearBytes(resolveSelectedCacheBytes(breakdown, selectedTargets))
+}
+
+internal fun resolveCacheClearDonutSegments(
+    breakdown: CacheUtils.CacheBreakdown?,
+    selectedTargets: Set<CacheClearTarget>,
+    options: List<CacheClearOptionUiModel> = resolveCacheClearOptions()
+): List<CacheClearDonutSegment> {
+    val buckets = options.mapIndexed { index, option ->
+        Triple(option, breakdown?.let { resolveSelectedCacheBytes(it, setOf(option.target)) } ?: 0L, index)
+    }
+    val selectedBytes = buckets.map { if (it.first.target in selectedTargets) it.second else 0L }
+    val selectedTotal = selectedBytes.sum()
+    val rowPercents = roundedCacheClearPercents(buckets.map { it.second })
+    val chartPercents = roundedCacheClearPercents(selectedBytes)
+    val visualFractions = cacheClearVisualFractions(selectedBytes)
+    var currentStart = -90f
+    return buckets.mapIndexed { index, (option, bytes, colorIndex) ->
+        val selected = option.target in selectedTargets
+        val fraction = if (selectedTotal > 0L) selectedBytes[index].toFloat() / selectedTotal else 0f
+        val sweep = visualFractions[index] * 360f
+        CacheClearDonutSegment(
+            target = option.target,
+            title = option.title,
+            bytes = bytes,
+            startAngle = currentStart,
+            sweepAngle = sweep,
+            selected = selected,
+            colorIndex = colorIndex,
+            percentLabel = when {
+                breakdown == null -> "—"
+                bytes > 0 && rowPercents[index] == 0 -> "<1%"
+                else -> "${rowPercents[index]}%"
+            },
+            chartPercentLabel = "${chartPercents[index]}%",
+            fraction = fraction,
+            sizeKnown = breakdown != null && option.target != CacheClearTarget.APP_METADATA
+        ).also { currentStart += sweep }
+    }
+}
+
+/** 最大余数分配使显示百分比合计为 100，真实零值不会获得虚构份额。 */
+internal fun roundedCacheClearPercents(bytes: List<Long>): List<Int> {
+    val total = bytes.sumOf { it.coerceAtLeast(0L).toDouble() }
+    if (total <= 0.0) return List(bytes.size) { 0 }
+    val exact = bytes.map { it.coerceAtLeast(0L).toDouble() / total * 100.0 }
+    val result = exact.map { it.toInt() }.toMutableList()
+    val remainder = (100 - result.sum()).coerceIn(0, bytes.size)
+    exact.indices.sortedWith(compareByDescending<Int> { exact[it] - result[it] }.thenByDescending { bytes[it] }.thenBy { it })
+        .take(remainder).forEach { result[it]++ }
+    return result
+}
+
+/** 小分类保留可命中的角度，百分比仍按真实容量显示。 */
+internal fun cacheClearVisualFractions(bytes: List<Long>): List<Float> {
+    val total = bytes.sumOf { it.coerceAtLeast(0L).toDouble() }
+    if (total <= 0.0) return List(bytes.size) { 0f }
+    val actual = bytes.map { it.coerceAtLeast(0L).toDouble() / total }
+    val small = actual.count { it > 0.0 && it < .02 }
+    val largeTotal = actual.filter { it >= .02 }.sum()
+    return actual.map {
+        when {
+            it <= 0.0 -> 0f
+            it < .02 -> .02f
+            largeTotal > 0.0 -> (it / largeTotal * (1.0 - small * .02)).toFloat()
+            else -> it.toFloat()
+        }
+    }
+}
+
+internal fun cacheClearCategoryTitle(target: CacheClearTarget): String = when (target) {
+    CacheClearTarget.PLAYBACK_QUALITY -> "播放与画质"
+    CacheClearTarget.NETWORK -> "网络与媒体分片"
+    CacheClearTarget.IMAGE_PREVIEW -> "图片与预览图"
+    CacheClearTarget.SUBTITLE_DANMAKU -> "字幕与弹幕"
+    CacheClearTarget.TEMP_FILES_AND_LOGS -> "临时文件与日志"
+    CacheClearTarget.APP_METADATA -> "关注与签名数据"
+}
+
+internal fun resolveCacheClearStageMessage(target: CacheClearTarget): String =
+    "正在清理${cacheClearCategoryTitle(target)}"
+
+internal fun cacheClearProgressFraction(completed: Long, total: Long): Float? =
+    if (total > 0L) (completed.toDouble() / total).toFloat().coerceIn(0f, 1f) else null
+
+internal fun canvasAngleDegrees(dx: Float, dy: Float): Float {
+    var angle = Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
+    if (angle < 0f) angle += 360f
+    return angle
+}
+
+internal fun isAngleInDonutSweep(angle: Float, startAngle: Float, sweepAngle: Float): Boolean {
+    if (sweepAngle <= 0f) return false
+    if (sweepAngle >= 360f) return true
+    val start = ((startAngle % 360f) + 360f) % 360f
+    val end = (start + sweepAngle) % 360f
+    val normalized = ((angle % 360f) + 360f) % 360f
+    return if (start <= end) {
+        normalized >= start && normalized < end
+    } else {
+        normalized >= start || normalized < end
+    }
+}
+
+internal fun resolveCacheClearDonutHitTarget(
+    segments: List<CacheClearDonutSegment>,
+    dx: Float,
+    dy: Float,
+    innerRadius: Float,
+    outerRadius: Float
+): CacheClearTarget? {
+    val distance = kotlin.math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
+    if (distance < innerRadius || distance > outerRadius) return null
+    val angle = canvasAngleDegrees(dx, dy)
+    return segments.firstOrNull { segment ->
+        isAngleInDonutSweep(angle, segment.startAngle, segment.sweepAngle)
+    }?.target
 }

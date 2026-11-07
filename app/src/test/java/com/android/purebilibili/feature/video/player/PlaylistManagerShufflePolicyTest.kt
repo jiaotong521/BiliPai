@@ -3,6 +3,8 @@ package com.android.purebilibili.feature.video.player
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class PlaylistManagerShufflePolicyTest {
 
@@ -10,6 +12,37 @@ class PlaylistManagerShufflePolicyTest {
     fun setUp() {
         PlaylistManager.clearPlaylist()
         PlaylistManager.setPlayMode(PlayMode.SEQUENTIAL)
+        PlaylistManager.setShuffleEnabled(false)
+    }
+
+    @Test
+    fun `editing queue preserves current part and queued next through reorder and removal`() {
+        val parts = listOf(1L, 2L, 3L, 4L).map { cid -> playlistItem("BV1").copy(cid = cid) }
+        PlaylistManager.setPlaylist(parts, startIndex = 1)
+        PlaylistManager.setShuffleEnabled(true)
+        PlaylistManager.playQueueItemNext(0)
+        assertTrue(PlaylistManager.hasQueuedNext)
+        assertEquals(2L, PlaylistManager.getCurrentItem()?.cid)
+        assertEquals(listOf(2L, 1L, 3L, 4L), PlaylistManager.playlist.value.map { it.cid })
+        PlaylistManager.moveQueueItem(3, 0)
+        PlaylistManager.removeQueueItem(0)
+        assertEquals(2L, PlaylistManager.getCurrentItem()?.cid)
+        assertEquals(1L, PlaylistManager.playNext()?.cid)
+        assertFalse(PlaylistManager.hasQueuedNext)
+        assertEquals(2L, PlaylistManager.playPrevious()?.cid)
+        PlaylistManager.clearUpcomingQueue()
+        assertEquals(listOf(2L), PlaylistManager.playlist.value.map { it.cid })
+        assertEquals(0, PlaylistManager.currentIndex.value)
+    }
+
+    @Test
+    fun `queue edits invalidate stale asynchronous playlist additions`() {
+        val session = PlaylistManager.setExternalPlaylist(
+            listOf(playlistItem("BV1"), playlistItem("BV2")), source = ExternalPlaylistSource.WATCH_LATER,
+        )
+        PlaylistManager.removeQueueItem(1)
+        assertFalse(PlaylistManager.addAllToPlaylistIfCurrent(listOf(playlistItem("BV3")), session))
+        assertEquals(listOf("BV1"), PlaylistManager.playlist.value.map { it.bvid })
     }
 
     @Test
@@ -136,13 +169,13 @@ class PlaylistManagerShufflePolicyTest {
     }
 
     @Test
-    fun `repeat one mode should keep current item on next`() {
+    fun `repeat one skip still advances to the next track`() {
         PlaylistManager.setPlaylist(
             items = listOf(
                 playlistItem("BV1"),
                 playlistItem("BV2")
             ),
-            startIndex = 1
+            startIndex = 0
         )
         PlaylistManager.setPlayMode(PlayMode.REPEAT_ONE)
 
@@ -160,6 +193,36 @@ class PlaylistManagerShufflePolicyTest {
 
         assertEquals("BV1", PlaylistManager.playNext()?.bvid)
         assertEquals(0, PlaylistManager.currentIndex.value)
+    }
+
+    @Test
+    fun `late playlist completion only appends to the session that started it`() {
+        val staleSession = PlaylistManager.setExternalPlaylist(
+            items = listOf(playlistItem("favorite-1")),
+            source = ExternalPlaylistSource.FAVORITE,
+        )
+        val currentSession = PlaylistManager.setExternalPlaylist(
+            items = listOf(playlistItem("watch-later-1")),
+            source = ExternalPlaylistSource.WATCH_LATER,
+        )
+
+        assertFalse(
+            PlaylistManager.addAllToPlaylistIfCurrent(
+                items = listOf(playlistItem("favorite-2")),
+                session = staleSession,
+            )
+        )
+        assertEquals(listOf("watch-later-1"), PlaylistManager.playlist.value.map { it.bvid })
+        assertTrue(
+            PlaylistManager.addAllToPlaylistIfCurrent(
+                items = listOf(playlistItem("watch-later-2")),
+                session = currentSession,
+            )
+        )
+        assertEquals(
+            listOf("watch-later-1", "watch-later-2"),
+            PlaylistManager.playlist.value.map { it.bvid },
+        )
     }
 
     private fun playlistItem(bvid: String) = PlaylistItem(

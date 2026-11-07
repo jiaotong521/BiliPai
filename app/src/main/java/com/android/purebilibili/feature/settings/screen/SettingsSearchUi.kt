@@ -1,215 +1,85 @@
 package com.android.purebilibili.feature.settings
 
-import androidx.compose.foundation.background
+import com.android.purebilibili.core.ui.AppContentColors
+import com.android.purebilibili.core.ui.AppChromeSizeTokens
+import com.android.purebilibili.core.ui.components.appElasticPress
+
+
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.android.purebilibili.R
-import com.android.purebilibili.core.theme.LocalAndroidNativeVariant
-import com.android.purebilibili.core.theme.LocalCornerRadiusScale
-import com.android.purebilibili.core.theme.LocalUiPreset
-import com.android.purebilibili.core.theme.UiPreset
-import com.android.purebilibili.core.theme.iOSCornerRadius
-import com.android.purebilibili.core.ui.AppSurfaceTokens
-import com.android.purebilibili.core.ui.LocalGlobalWallpaperBackdropVisible
 import com.android.purebilibili.core.ui.rememberAppSettingsIcon
-import com.android.purebilibili.core.ui.components.IOSClickableItem
-import com.android.purebilibili.core.ui.components.IOSDivider
-import com.android.purebilibili.core.ui.components.IOSGroup
-import com.android.purebilibili.core.ui.components.resolveAdaptiveListComponentVisualSpec
-import com.android.purebilibili.core.ui.components.resolveAdaptiveSearchBarContainerColor
-import com.android.purebilibili.core.ui.components.shouldUseNativeMiuixSearchBar
-import io.github.alexzhirkevich.cupertino.icons.CupertinoIcons
-import io.github.alexzhirkevich.cupertino.icons.filled.*
-import io.github.alexzhirkevich.cupertino.icons.outlined.*
-import kotlinx.coroutines.delay
-import top.yukonga.miuix.kmp.basic.InputField
+import com.android.purebilibili.core.ui.adaptiveSquircleBackground
+import com.android.purebilibili.core.ui.components.AppIcon
+import com.android.purebilibili.core.ui.components.AppPreference
+import com.android.purebilibili.core.ui.components.AppPreferenceGroup
+import com.android.purebilibili.core.ui.components.AppLiquidAwareSearchField
+import com.android.purebilibili.core.ui.components.AppSearchFieldPresentation
+import com.android.purebilibili.core.ui.components.AppSearchEntry
+import com.android.purebilibili.core.ui.components.AppText
+import com.android.purebilibili.core.ui.components.rememberAdaptivePreferenceIconContainerColor
+import com.android.purebilibili.core.ui.components.rememberAdaptivePreferenceIconContentColor
+import com.android.purebilibili.core.ui.LocalAppThemeConfig
+import com.android.purebilibili.core.ui.LocalGlobalWallpaperBackdropVisible
+import com.android.purebilibili.core.ui.wallpaper.LocalGlobalWallpaperBackdropSource
+import com.android.purebilibili.feature.home.components.BottomBarMatchedReusableLiquidDock
+import top.yukonga.miuix.kmp.blur.Backdrop
+
+@Composable
+private fun settingsSearchWallpaperBackdrop(): Backdrop? {
+    // Search lives inside the page recording. Only the independent wallpaper source is
+    // safe here; passing the scroll/header source back into its child would sample itself.
+    val source = LocalGlobalWallpaperBackdropSource.current
+    return if (LocalAppThemeConfig.current.liquidGlassEnabled &&
+        LocalGlobalWallpaperBackdropVisible.current
+    ) source?.takeIf { it.isReady }?.backdrop else null
+}
 
 @Composable
 internal fun SettingsSearchBarSection(
     query: String,
     onQueryChange: (String) -> Unit,
+    onSearch: () -> Unit = {},
+    autoFocusEnabled: Boolean = true,
 ) {
-    val uiPreset = LocalUiPreset.current
-    val androidNativeVariant = LocalAndroidNativeVariant.current
-    val colorScheme = MaterialTheme.colorScheme
-    val visualSpec = resolveAdaptiveListComponentVisualSpec(
-        uiPreset = uiPreset,
-        androidNativeVariant = androidNativeVariant,
-    )
     val placeholder = stringResource(R.string.settings_search_placeholder)
-    val clearLabel = stringResource(R.string.common_clear)
-    val containerColor = resolveAdaptiveSearchBarContainerColor(
-        uiPreset = uiPreset,
-        colorScheme = colorScheme,
-        fallbackColor = colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        androidNativeVariant = androidNativeVariant,
-        globalWallpaperVisible = LocalGlobalWallpaperBackdropVisible.current,
-    )
-    val cornerRadius = if (uiPreset == UiPreset.MD3) {
-        visualSpec.searchBarCornerRadiusDp.dp
-    } else {
-        iOSCornerRadius.Small * LocalCornerRadiusScale.current
-    }
-    val minHeight = visualSpec.searchBarHeightDp.dp
-    val focusRequester = remember { FocusRequester() }
-    val fieldModifier = Modifier
-        .padding(horizontal = 16.dp, vertical = 10.dp)
-        .fillMaxWidth()
-        .focusRequester(focusRequester)
-
-    LaunchedEffect(focusRequester) {
-        delay(80)
-        runCatching { focusRequester.requestFocus() }
-    }
-
-    if (shouldUseNativeMiuixSearchBar(uiPreset, androidNativeVariant)) {
-        InputField(
-            query = query,
-            onQueryChange = onQueryChange,
-            onSearch = {},
-            expanded = true,
-            onExpandedChange = {},
-            modifier = fieldModifier.defaultMinSize(minHeight = minHeight),
-            label = placeholder,
-        )
-        return
-    }
-
-    if (uiPreset == UiPreset.MD3) {
-        OutlinedTextField(
-            value = query,
-            onValueChange = onQueryChange,
-            modifier = fieldModifier.defaultMinSize(minHeight = minHeight),
-            placeholder = {
-                Text(
-                    text = placeholder,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = colorScheme.onSurfaceVariant,
-                )
-            },
-            leadingIcon = {
-                Icon(
-                    imageVector = Icons.Default.Search,
-                    contentDescription = null,
-                    tint = colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp),
-                )
-            },
-            trailingIcon = if (query.isNotEmpty()) {
-                {
-                    IconButton(onClick = { onQueryChange("") }) {
-                        Icon(
-                            imageVector = Icons.Default.Clear,
-                            contentDescription = clearLabel,
-                            tint = colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    }
-                }
-            } else {
-                null
-            },
-            singleLine = true,
-            textStyle = MaterialTheme.typography.bodyMedium.copy(color = colorScheme.onSurface),
-            shape = RoundedCornerShape(cornerRadius),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = colorScheme.onSurface,
-                unfocusedTextColor = colorScheme.onSurface,
-                disabledTextColor = colorScheme.onSurface,
-                cursorColor = colorScheme.primary,
-                focusedContainerColor = AppSurfaceTokens.surfaceContainerHigh(),
-                unfocusedContainerColor = AppSurfaceTokens.surfaceContainerHigh(),
-                disabledContainerColor = AppSurfaceTokens.surfaceContainerHigh(),
-                focusedBorderColor = Color.Transparent,
-                unfocusedBorderColor = Color.Transparent,
-                disabledBorderColor = Color.Transparent,
-            ),
-        )
-        return
-    }
-
-    BasicTextField(
-        value = query,
-        onValueChange = onQueryChange,
-        modifier = fieldModifier
-            .defaultMinSize(minHeight = minHeight)
-            .clip(RoundedCornerShape(cornerRadius))
-            .background(containerColor),
-        textStyle = MaterialTheme.typography.bodyMedium.copy(color = colorScheme.onSurface),
-        singleLine = true,
-        cursorBrush = SolidColor(colorScheme.primary),
-        decorationBox = { innerTextField ->
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(horizontal = 12.dp),
-            ) {
-                Icon(
-                    imageVector = CupertinoIcons.Default.MagnifyingGlass,
-                    contentDescription = null,
-                    tint = colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp),
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Box(
-                    contentAlignment = Alignment.CenterStart,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    if (query.isEmpty()) {
-                        Text(
-                            text = placeholder,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    innerTextField()
-                }
-                if (query.isNotEmpty()) {
-                    IconButton(
-                        onClick = { onQueryChange("") },
-                        modifier = Modifier.size(20.dp),
-                    ) {
-                        Icon(
-                            imageVector = CupertinoIcons.Default.XmarkCircle,
-                            contentDescription = clearLabel,
-                            tint = colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(16.dp),
-                        )
-                    }
-                }
-            }
-        },
+    AppLiquidAwareSearchField(
+        query = query,
+        onQueryChange = onQueryChange,
+        onSearch = onSearch,
+        placeholder = placeholder,
+        presentation = AppSearchFieldPresentation.TOP_BAR,
+        backdrop = settingsSearchWallpaperBackdrop(),
+        captureShellForContent = false,
+        autoFocusEnabled = autoFocusEnabled,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
     )
 }
 
@@ -218,106 +88,144 @@ internal fun SettingsHomeSearchEntry(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val uiPreset = LocalUiPreset.current
-    val androidNativeVariant = LocalAndroidNativeVariant.current
-    val colorScheme = MaterialTheme.colorScheme
     val visualSpec = resolveSettingsVisualSpec()
-    val listVisualSpec = resolveAdaptiveListComponentVisualSpec(
-        uiPreset = uiPreset,
-        androidNativeVariant = androidNativeVariant,
-    )
-    val containerColor = resolveAdaptiveSearchBarContainerColor(
-        uiPreset = uiPreset,
-        colorScheme = colorScheme,
-        fallbackColor = colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        androidNativeVariant = androidNativeVariant,
-        globalWallpaperVisible = LocalGlobalWallpaperBackdropVisible.current,
-    )
     val placeholder = stringResource(R.string.settings_search_placeholder)
-    val cornerRadius = if (uiPreset == UiPreset.MD3) {
-        listVisualSpec.searchBarCornerRadiusDp.dp
-    } else {
-        iOSCornerRadius.Small * LocalCornerRadiusScale.current
+    val entryModifier = modifier.padding(horizontal = visualSpec.screenHorizontalPadding)
+    // Material boundary: keep the disabled MD3/Miuix entry and its defaults intact.
+    if (!LocalAppThemeConfig.current.liquidGlassEnabled) {
+        AppSearchEntry(
+            onClick = onClick,
+            placeholder = placeholder,
+            modifier = entryModifier,
+        )
+        return
     }
-    val minHeight = listVisualSpec.searchBarHeightDp.dp
-
-    Row(
-        modifier = modifier
-            .padding(
-                horizontal = visualSpec.screenHorizontalPadding,
-                vertical = visualSpec.searchBarVerticalPadding,
-            )
-            .fillMaxWidth()
-            .defaultMinSize(minHeight = minHeight)
-            .clip(RoundedCornerShape(cornerRadius))
-            .background(containerColor)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    BottomBarMatchedReusableLiquidDock(
+        shape = CircleShape,
+        modifier = entryModifier,
+        backdrop = settingsSearchWallpaperBackdrop(),
+        reuseEnabled = true,
+        elasticFeedbackEnabled = true,
+        elasticFeedbackStrength = com.android.purebilibili.core.ui.components.APP_SEARCH_ELASTIC_FEEDBACK_STRENGTH,
+        useNeutralLiquidContainer = true,
+        captureShellForContent = false,
     ) {
-        if (uiPreset == UiPreset.MD3) {
-            Icon(
-                imageVector = Icons.Default.Search,
+        // Glass entry is a compact click target, independent of native input-field metrics.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = AppChromeSizeTokens.LiquidSearchFieldHeightDp.dp)
+                .clip(CircleShape)
+                .clickable(onClick = onClick)
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AppIcon(
+                Icons.Default.Search,
                 contentDescription = null,
-                tint = colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(18.dp),
+                tint = AppContentColors.secondaryText(),
+                modifier = Modifier.size(24.dp),
             )
-        } else {
-            Icon(
-                imageVector = CupertinoIcons.Default.MagnifyingGlass,
-                contentDescription = null,
-                tint = colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(18.dp),
+            AppText(
+                text = placeholder,
+                color = AppContentColors.secondaryText(),
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            text = placeholder,
-            style = MaterialTheme.typography.bodyMedium,
-            color = colorScheme.onSurfaceVariant,
-        )
     }
 }
 
 @Composable
-internal fun SettingsSearchResultsSection(
-    results: List<SettingsSearchResult>,
-    onResultClick: (SettingsSearchResult) -> Unit,
+internal fun SettingsSearchEmptyState(
+    onClearQuery: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    val uiPreset = LocalUiPreset.current
-    val androidNativeVariant = LocalAndroidNativeVariant.current
-    val visualSpec = resolveAdaptiveListComponentVisualSpec(
-        uiPreset = uiPreset,
-        androidNativeVariant = androidNativeVariant,
-    )
-    SettingsCategoryHeader(stringResource(R.string.settings_search_results_title))
-    IOSGroup {
-        if (results.isEmpty()) {
-            IOSClickableItem(
-                icon = rememberAppSettingsIcon(),
-                title = stringResource(R.string.settings_search_empty_title),
-                subtitle = stringResource(R.string.settings_search_empty_subtitle),
-                onClick = null,
-                showChevron = false,
-                iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+    val iconContainerColor =
+        rememberAdaptivePreferenceIconContainerColor(AppContentColors.accent())
+    val iconContentColor = rememberAdaptivePreferenceIconContentColor(iconContainerColor)
+    Column(
+        modifier = modifier.padding(horizontal = 32.dp, vertical = 36.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(56.dp)
+                .adaptiveSquircleBackground(iconContainerColor, 16.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            AppIcon(
+                imageVector = rememberAppSettingsIcon(),
+                contentDescription = null,
+                tint = iconContentColor,
+                modifier = Modifier.size(28.dp),
             )
-        } else {
-            results.forEachIndexed { index, result ->
-                val visual = rememberSettingsEntryVisual(result.target, uiPreset)
-                IOSClickableItem(
-                    icon = visual.icon,
-                    iconPainter = visual.iconResId?.let { painterResource(id = it) },
-                    title = result.title,
-                    subtitle = result.subtitle,
-                    value = result.section,
-                    onClick = { onResultClick(result) },
-                    iconTint = visual.iconTint,
-                )
-                if (index != results.lastIndex) {
-                    IOSDivider(startIndent = visualSpec.dividerStartIndentDp.dp)
-                }
-            }
+        }
+        Spacer(modifier = Modifier.height(16.dp))
+        AppText(
+            text = stringResource(R.string.settings_search_empty_title),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        AppText(
+            text = stringResource(R.string.settings_search_empty_subtitle),
+            style = MaterialTheme.typography.bodyMedium,
+            color = AppContentColors.secondaryText(),
+            textAlign = TextAlign.Center,
+        )
+        com.android.purebilibili.core.ui.components.AppTextButton(
+            onClick = onClearQuery,
+            modifier = Modifier.appElasticPress(),
+        ) { AppText("清除搜索") }
+    }
+}
+
+@Composable
+internal fun SettingsSearchResultRow(
+    result: SettingsSearchResult,
+    settingsState: SettingsUiState,
+    query: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val titleResId = settingsSearchResultTitleResource(result.settingId)
+    val localizedTitle = if (titleResId != null) stringResource(titleResId) else result.title
+    val summaryResId = settingsSearchResultSummaryResource(result.settingId)
+    val localizedSummary = if (summaryResId != null) stringResource(summaryResId) else result.subtitle
+    val item = remember(result.settingId) {
+        settingsItemDirectory.firstOrNull { it.settingId == result.settingId }
+    }
+    val context = LocalContext.current
+    val valueFlow = remember(item, context) { item?.observeValue?.invoke(context) }
+    val seedValue = item?.readState?.invoke(settingsState)
+        ?: playbackSettingStateValue(result.settingId, settingsState)
+    val currentValue = if (valueFlow != null) {
+        val value by valueFlow.collectAsStateWithLifecycle(initialValue = seedValue)
+        value
+    } else {
+        seedValue
+    }
+    val visual = rememberSettingsEntryVisual(result.target)
+    androidx.compose.runtime.CompositionLocalProvider(
+        com.android.purebilibili.core.ui.components.LocalAppTextSearchQuery provides query,
+    ) {
+        AppPreferenceGroup(modifier = modifier) {
+            AppPreference(
+                icon = visual.icon,
+                iconPainter = visual.iconResId?.let { painterResource(id = it) },
+                title = localizedTitle,
+                subtitle = listOf(
+                    result.path,
+                    resolveSettingsSearchDescriptionSnippet(localizedSummary, query),
+                ).filter { it.isNotBlank() }.joinToString("\n"),
+                value = currentValue,
+                onClick = onClick,
+                iconTint = visual.iconTint,
+            )
         }
     }
-    Spacer(modifier = Modifier.height(8.dp))
 }

@@ -15,13 +15,15 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
+import com.android.purebilibili.core.ui.components.AppButton
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import com.android.purebilibili.core.ui.components.AppOutlinedButton
+import com.android.purebilibili.core.ui.components.AppSurface
+import com.android.purebilibili.core.ui.components.AppText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,6 +41,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.android.purebilibili.core.ui.AppShapes
+import com.android.purebilibili.core.ui.ContainerLevel
 
 @Composable
 fun AppScreenshotRegionOverlay(
@@ -46,7 +50,11 @@ fun AppScreenshotRegionOverlay(
     saving: Boolean,
     onCancel: () -> Unit,
     onSaveRegion: (AppScreenshotCropRect) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    instruction: String = "拖拽选择截图区域",
+    showControls: Boolean = true,
+    adjustableSelection: Boolean = false,
+    onSelectionChanged: ((AppScreenshotCropRect?) -> Unit)? = null,
 ) {
     var previewSize by remember { mutableStateOf(IntSize.Zero) }
     var dragStart by remember { mutableStateOf<AppScreenshotPoint?>(null) }
@@ -63,6 +71,9 @@ fun AppScreenshotRegionOverlay(
         }
     }
 
+    val currentOnSelectionChanged by rememberUpdatedState(onSelectionChanged)
+    LaunchedEffect(cropRect) { currentOnSelectionChanged?.invoke(cropRect) }
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -74,35 +85,44 @@ fun AppScreenshotRegionOverlay(
             contentScale = ContentScale.FillBounds,
             modifier = Modifier
                 .fillMaxSize()
-                .onSizeChanged { previewSize = it }
-                .pointerInput(bitmap, previewSize) {
+                .onSizeChanged { size ->
+                    if (adjustableSelection && previewSize != size) {
+                        selectionRect = null
+                        dragStart = null
+                    }
+                    previewSize = size
+                }
+                .pointerInput(bitmap, previewSize, adjustableSelection, saving) {
+                    var dragTarget = RegionDragTarget.NEW
+                    var originRect: AppScreenshotSelectionRect? = null
                     detectDragGestures(
                         onDragStart = { offset ->
-                            val point = offset.toAppScreenshotPoint()
-                            dragStart = point
-                            selectionRect = normalizeAppScreenshotSelectionRect(
-                                start = point,
-                                end = point,
-                                viewportWidth = previewSize.width.toFloat(),
-                                viewportHeight = previewSize.height.toFloat()
-                            )
+                            if (!saving) {
+                                val point = offset.toAppScreenshotPoint()
+                                dragStart = point
+                                val previous = selectionRect?.takeIf { isAppScreenshotSelectionLargeEnough(it) }
+                                originRect = previous
+                                dragTarget = if (adjustableSelection) resolveRegionDragTarget(previous, point, 24.dp.toPx()) else RegionDragTarget.NEW
+                                if (dragTarget == RegionDragTarget.NEW) {
+                                    selectionRect = normalizeAppScreenshotSelectionRect(point, point, previewSize.width.toFloat(), previewSize.height.toFloat())
+                                }
+                            }
                         },
                         onDrag = { change, _ ->
-                            val start = dragStart ?: change.position.toAppScreenshotPoint()
-                            selectionRect = normalizeAppScreenshotSelectionRect(
-                                start = start,
-                                end = change.position.toAppScreenshotPoint(),
-                                viewportWidth = previewSize.width.toFloat(),
-                                viewportHeight = previewSize.height.toFloat()
-                            )
-                            change.consume()
+                            val start = dragStart
+                            if (!saving && start != null) {
+                                val point = change.position.toAppScreenshotPoint()
+                                val original = originRect
+                                selectionRect = if (dragTarget != RegionDragTarget.NEW && original != null) {
+                                    adjustRegionSelection(original, dragTarget, AppScreenshotPoint(point.x - start.x, point.y - start.y), previewSize.width.toFloat(), previewSize.height.toFloat())
+                                } else {
+                                    normalizeAppScreenshotSelectionRect(start, point, previewSize.width.toFloat(), previewSize.height.toFloat())
+                                }
+                                change.consume()
+                            }
                         },
-                        onDragEnd = {
-                            dragStart = null
-                        },
-                        onDragCancel = {
-                            dragStart = null
-                        }
+                        onDragEnd = { dragStart = null; originRect = null },
+                        onDragCancel = { dragStart = null; originRect = null },
                     )
                 }
         )
@@ -142,52 +162,62 @@ fun AppScreenshotRegionOverlay(
                         pathEffect = PathEffect.dashPathEffect(floatArrayOf(18f, 10f))
                     )
                 )
+                if (adjustableSelection && isAppScreenshotSelectionLargeEnough(rect)) {
+                    listOf(
+                        Offset(rect.left, rect.top), Offset(rect.right, rect.top),
+                        Offset(rect.left, rect.bottom), Offset(rect.right, rect.bottom),
+                        Offset((rect.left + rect.right) / 2, rect.top), Offset((rect.left + rect.right) / 2, rect.bottom),
+                        Offset(rect.left, (rect.top + rect.bottom) / 2), Offset(rect.right, (rect.top + rect.bottom) / 2),
+                    ).forEach { drawCircle(Color.White, radius = 4.dp.toPx(), center = it) }
+                }
             }
         }
 
-        Surface(
-            color = Color.Black.copy(alpha = 0.54f),
-            contentColor = Color.White,
-            shape = RoundedCornerShape(18.dp),
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .statusBarsPadding()
-                .padding(horizontal = 16.dp, vertical = 12.dp)
-        ) {
-            Text(
-                text = "拖拽选择截图区域",
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
-            )
-        }
-
-        Row(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            OutlinedButton(
-                onClick = onCancel,
-                enabled = !saving,
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = Color.White
+        if (showControls) {
+            AppSurface(
+                color = Color.Black.copy(alpha = 0.54f),
+                contentColor = Color.White,
+                shape = AppShapes.container(ContainerLevel.Card),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+            ) {
+                AppText(
+                    text = instruction,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
                 )
-            ) {
-                Text("取消")
             }
-            Spacer(modifier = Modifier.weight(0.08f))
-            Button(
-                onClick = {
-                    cropRect?.let(onSaveRegion)
-                },
-                enabled = cropRect != null && !saving,
-                modifier = Modifier.weight(1f)
+
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(if (saving) "保存中" else "保存")
+                AppOutlinedButton(
+                    onClick = onCancel,
+                    enabled = !saving,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = Color.White
+                    )
+                ) {
+                    AppText("取消")
+                }
+                Spacer(modifier = Modifier.weight(0.08f))
+                AppButton(
+                    onClick = {
+                        cropRect?.let(onSaveRegion)
+                    },
+                    enabled = cropRect != null && !saving,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    AppText(if (saving) "保存中" else "保存")
+                }
             }
         }
     }

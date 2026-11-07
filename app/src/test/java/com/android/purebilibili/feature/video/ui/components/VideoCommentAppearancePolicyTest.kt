@@ -6,6 +6,7 @@ import kotlin.test.assertEquals
 
 class VideoCommentAppearancePolicyTest {
 
+
     @Test
     fun `light comment appearance should derive every slot from active theme`() {
         val appearance = resolveVideoCommentAppearance(

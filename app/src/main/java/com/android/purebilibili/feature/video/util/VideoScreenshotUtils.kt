@@ -2,6 +2,7 @@ package com.android.purebilibili.feature.video.util
 
 import android.content.ContentValues
 import android.content.Context
+import android.net.Uri
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.os.Build
@@ -13,6 +14,7 @@ import android.view.SurfaceView
 import android.view.TextureView
 import androidx.media3.ui.PlayerView
 import com.android.purebilibili.core.util.Logger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -61,16 +63,27 @@ suspend fun captureAndSaveVideoScreenshot(
     videoHeight: Int,
     videoTitle: String,
     timestampMs: Long = System.currentTimeMillis(),
-): Boolean {
+): Boolean = captureAndSaveVideoScreenshotUri(
+    context, playerView, videoWidth, videoHeight, videoTitle, timestampMs,
+) != null
+
+suspend fun captureAndSaveVideoScreenshotUri(
+    context: Context,
+    playerView: PlayerView,
+    videoWidth: Int,
+    videoHeight: Int,
+    videoTitle: String,
+    timestampMs: Long = System.currentTimeMillis(),
+): Uri? {
     val bitmap = captureVideoScreenshot(
         playerView = playerView,
         videoWidth = videoWidth,
         videoHeight = videoHeight,
-    ) ?: return false
+    ) ?: return null
 
     val fileName = buildScreenshotFileName(videoTitle = videoTitle, timestampMs = timestampMs)
     return try {
-        saveScreenshotToGallery(context = context, bitmap = bitmap, fileName = fileName)
+        saveScreenshotToGalleryUri(context = context, bitmap = bitmap, fileName = fileName)
     } finally {
         bitmap.recycle()
     }
@@ -131,11 +144,57 @@ suspend fun captureVideoScreenshot(
     }
 }
 
+/**
+ * Captures a deliberately small current-frame sample for ambient player chrome.
+ * The caller renders the top edge of this sample into the status bar. SurfaceView PixelCopy
+ * writes directly into the small destination so frequent live Haze refreshes do not allocate
+ * a full-resolution screenshot.
+ */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+suspend fun captureVideoAmbientFrame(
+    playerView: PlayerView,
+    targetWidth: Int = 160,
+    targetHeight: Int = 90,
+): Bitmap? = withContext(Dispatchers.Main.immediate) {
+    val safeWidth = targetWidth.coerceAtLeast(1)
+    val safeHeight = targetHeight.coerceAtLeast(1)
+    when (val videoSurface = playerView.videoSurfaceView) {
+        is TextureView -> runCatching {
+            videoSurface.getBitmap(safeWidth, safeHeight)
+        }.getOrNull()
+
+        is SurfaceView -> captureSurfaceViewAmbientBitmap(
+            surfaceView = videoSurface,
+            targetWidth = safeWidth,
+            targetHeight = safeHeight,
+        )
+
+        else -> runCatching {
+            Bitmap.createBitmap(safeWidth, safeHeight, Bitmap.Config.ARGB_8888).also { bitmap ->
+                val canvas = Canvas(bitmap)
+                val sourceWidth = playerView.width.coerceAtLeast(1)
+                val sourceHeight = playerView.height.coerceAtLeast(1)
+                canvas.scale(
+                    safeWidth.toFloat() / sourceWidth,
+                    safeHeight.toFloat() / sourceHeight,
+                )
+                playerView.draw(canvas)
+            }
+        }.getOrNull()
+    }
+}
+
 suspend fun saveScreenshotToGallery(
     context: Context,
     bitmap: Bitmap,
     fileName: String,
-): Boolean = withContext(Dispatchers.IO) {
+): Boolean = saveScreenshotToGalleryUri(context, bitmap, fileName) != null
+
+suspend fun saveScreenshotToGalleryUri(
+    context: Context,
+    bitmap: Bitmap,
+    fileName: String,
+): Uri? = withContext(Dispatchers.IO) {
     val resolver = context.contentResolver
     val values = ContentValues().apply {
         put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
@@ -147,7 +206,7 @@ suspend fun saveScreenshotToGallery(
     }
 
     val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-        ?: return@withContext false
+        ?: return@withContext null
 
     try {
         val wrote = resolver.openOutputStream(uri)?.use { output ->
@@ -156,7 +215,7 @@ suspend fun saveScreenshotToGallery(
 
         if (!wrote) {
             resolver.delete(uri, null, null)
-            return@withContext false
+            return@withContext null
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -165,15 +224,19 @@ suspend fun saveScreenshotToGallery(
             resolver.update(uri, values, null, null)
         }
 
-        true
+        uri
+    } catch (cancelled: CancellationException) {
+        resolver.delete(uri, null, null)
+        throw cancelled
     } catch (e: Exception) {
         Logger.e("VideoScreenshot", "Failed to save screenshot", e)
         resolver.delete(uri, null, null)
-        false
+        null
     }
 }
 
-private suspend fun captureSurfaceViewBitmap(
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+internal suspend fun captureSurfaceViewBitmap(
     surfaceView: SurfaceView,
     targetWidth: Int,
     targetHeight: Int,
@@ -192,13 +255,12 @@ private suspend fun captureSurfaceViewBitmap(
                     return@request
                 }
                 if (result == PixelCopy.SUCCESS) {
-                    continuation.resume(
-                        resizeBitmapIfNeeded(
-                            bitmap = sourceBitmap,
-                            targetWidth = targetWidth,
-                            targetHeight = targetHeight,
-                        )
+                    val captured = resizeBitmapIfNeeded(
+                        bitmap = sourceBitmap,
+                        targetWidth = targetWidth,
+                        targetHeight = targetHeight,
                     )
+                    continuation.resume(captured, onCancellation = { captured.recycle() })
                 } else {
                     Logger.w("VideoScreenshot", "PixelCopy failed with code: $result")
                     sourceBitmap.recycle()
@@ -215,9 +277,45 @@ private suspend fun captureSurfaceViewBitmap(
         }
     }
 
-    continuation.invokeOnCancellation {
-        sourceBitmap.recycle()
+    // PixelCopy 无法取消；取消后的位图由结果回调回收，避免回收仍在写入的目标。
+}
+
+private suspend fun captureSurfaceViewAmbientBitmap(
+    surfaceView: SurfaceView,
+    targetWidth: Int,
+    targetHeight: Int,
+): Bitmap? = suspendCancellableCoroutine { continuation ->
+    val bitmap = Bitmap.createBitmap(
+        targetWidth.coerceAtLeast(1),
+        targetHeight.coerceAtLeast(1),
+        Bitmap.Config.ARGB_8888,
+    )
+    try {
+        PixelCopy.request(
+            surfaceView,
+            bitmap,
+            { result ->
+                if (!continuation.isActive) {
+                    bitmap.recycle()
+                    return@request
+                }
+                if (result == PixelCopy.SUCCESS) {
+                    continuation.resume(bitmap)
+                } else {
+                    bitmap.recycle()
+                    continuation.resume(null)
+                }
+            },
+            Handler(Looper.getMainLooper()),
+        )
+    } catch (error: Exception) {
+        Logger.w("VideoAmbientFrame", "PixelCopy failed: ${error.message}")
+        bitmap.recycle()
+        if (continuation.isActive) continuation.resume(null)
     }
+
+    // PixelCopy cannot be cancelled. The callback above owns cleanup for cancelled
+    // requests; recycling here would destroy a destination still being written.
 }
 
 private fun resizeBitmapIfNeeded(bitmap: Bitmap, targetWidth: Int, targetHeight: Int): Bitmap {

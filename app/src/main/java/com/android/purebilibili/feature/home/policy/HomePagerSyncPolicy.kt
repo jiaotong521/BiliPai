@@ -5,13 +5,23 @@ import com.android.purebilibili.feature.home.HomeTopTabEntry
 
 internal enum class HomePagerSettledAction {
     NONE,
-    SWITCH_CATEGORY
+    SWITCH_CATEGORY,
 }
 
-internal fun shouldEnableHomeTopPagerUserScroll(isTopLevelActive: Boolean): Boolean {
+/**
+ * 即使开启隐藏顶部标签，依然允许用户在屏幕中央左右滑动切换页面。
+ */
+internal fun shouldEnableHomeTopPagerUserScroll(
+    isTopLevelActive: Boolean,
+    hideTopTabs: Boolean = false
+): Boolean {
     return isTopLevelActive
 }
 
+/**
+ * 是否在首页 Pager 内渲染该分类内容。
+ * 直播 / 追番也作为独立页留在顶栏分页里，不再切走导航。
+ */
 internal fun shouldDisplayHomeTopCategoryInline(category: HomeCategory?): Boolean {
     return category != null
 }
@@ -52,10 +62,10 @@ internal fun resolveHomePagerSettledAction(
         return HomePagerSettledAction.NONE
     }
 
-    return if (shouldDisplayHomeTopCategoryInline(settledCategory)) {
-        HomePagerSettledAction.SWITCH_CATEGORY
-    } else {
-        HomePagerSettledAction.NONE
+    return when {
+        settledCategory == null -> HomePagerSettledAction.NONE
+        shouldDisplayHomeTopCategoryInline(settledCategory) -> HomePagerSettledAction.SWITCH_CATEGORY
+        else -> HomePagerSettledAction.NONE
     }
 }
 
@@ -99,6 +109,7 @@ internal fun resolveHomeInitialTopTabPage(
     val displayedEntry = topTabEntries[safeDisplayedIndex]
     if (
         displayedEntry == HomeTopTabEntry.Partition ||
+        displayedEntry == HomeTopTabEntry.Subscriptions ||
         displayedEntry == HomeTopTabEntry.Category(currentCategory)
     ) {
         return safeDisplayedIndex
@@ -114,6 +125,7 @@ internal fun shouldTreatInitialHomePagerPageAsSyncedWithState(
     currentCategory: HomeCategory
 ): Boolean {
     return initialEntry == HomeTopTabEntry.Partition ||
+        initialEntry == HomeTopTabEntry.Subscriptions ||
         initialEntry == HomeTopTabEntry.Category(currentCategory)
 }
 
@@ -126,6 +138,7 @@ internal fun resolveHomePagerTargetPage(
     if (topTabEntries.isEmpty()) return -1
     val targetEntry = when {
         retainedEntry == HomeTopTabEntry.Partition -> HomeTopTabEntry.Partition
+        retainedEntry == HomeTopTabEntry.Subscriptions -> HomeTopTabEntry.Subscriptions
         else -> HomeTopTabEntry.Category(currentCategory)
     }
     val targetIndex = topTabEntries.indexOf(targetEntry)

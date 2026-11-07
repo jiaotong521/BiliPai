@@ -7,14 +7,154 @@ import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
 
 class BiliPaiNavKeyMappingPolicyTest {
+    @Test
+    fun webUploadsRestoreOwnerAndCurrentCollectionWithoutBecomingAWebPage() {
+        listOf(
+            BiliPaiNavKey.SpaceWebVideos(42L, "UP + 空间 & 100%"),
+            BiliPaiNavKey.SpaceWebVideos(42L, "UP", "season", 123L),
+            BiliPaiNavKey.SpaceWebVideos(42L, "UP", "series", 456L),
+        ).forEach { key ->
+            assertEquals(key, legacyRouteToBiliPaiNavKey(key.toLegacyRoute()))
+            assertEquals(BiliPaiNavEntryContentRole.SPACE_WEB_VIDEOS, resolveBiliPaiNavEntryContentRole(key))
+        }
+    }
 
     @Test
-    fun `navigation state keys distinguish detail entries`() {
-        val first = BiliPaiNavKey.VideoDetail(bvid = "BV1", cid = 1L, coverUrl = "", sourceRoute = "video/BV0")
-        val second = first.copy(sourceRoute = "video/BV2")
+    fun profileAccountEditorHasItsOwnRestorableDestination() {
+        assertEquals(BiliPaiNavKey.ProfileAccountEdit, legacyRouteToBiliPaiNavKey(BiliPaiNavKey.ProfileAccountEdit.toLegacyRoute()))
+        assertNotEquals(BiliPaiNavKey.Profile.toLegacyRoute(), BiliPaiNavKey.ProfileAccountEdit.toLegacyRoute())
+        assertEquals(BiliPaiNavEntryContentRole.PROFILE, resolveBiliPaiNavEntryContentRole(BiliPaiNavKey.ProfileAccountEdit))
+    }
+
+    @Test
+    fun dynamicCommentEntryAndReplyLocationSurviveRouteRestoration() {
+        listOf(
+            BiliPaiNavKey.DynamicDetail("123"),
+            BiliPaiNavKey.DynamicDetail("123", openComments = true),
+            BiliPaiNavKey.DynamicDetail("123", 456L, 789L, openComments = true),
+            BiliPaiNavKey.DynamicDetail("123", 456L, 789L),
+        ).forEach { key ->
+            assertEquals(key, legacyRouteToBiliPaiNavKey(key.toLegacyRoute()))
+            assertEquals(
+                key,
+                legacyRouteToBiliPaiNavKey(ScreenRoutes.DynamicDetail.createRoute(
+                    dynamicId = key.dynamicId,
+                    commentRootRpid = key.commentRootRpid,
+                    commentTargetRpid = key.commentTargetRpid,
+                    openComments = key.openComments,
+                )),
+            )
+        }
+        assertEquals(BiliPaiNavKey.DynamicDetail("123"), legacyRouteToBiliPaiNavKey("dynamic_detail/123"))
+        assertEquals(
+            BiliPaiNavKey.DynamicDetail("123"),
+            legacyRouteToBiliPaiNavKey("dynamic_detail/123?openComments=false"),
+        )
+    }
+
+    @Test
+    fun articleCommentLocationSurvivesRouteRestoration() {
+        val key = BiliPaiNavKey.ArticleDetail(123L, "专栏 & 评论", 456L, 789L)
+        assertEquals(key, legacyRouteToBiliPaiNavKey(key.toLegacyRoute()))
+        assertEquals(BiliPaiNavKey.ArticleDetail(123L), legacyRouteToBiliPaiNavKey("article/123?title="))
+    }
+
+    @Test
+    fun liveMatchesRestoreIntoNativeScheduleDestination() {
+        assertEquals(ScreenRoutes.LiveMatch.route, BiliPaiNavKey.LiveMatch.toLegacyRoute())
+        assertEquals(BiliPaiNavKey.LiveMatch, legacyRouteToBiliPaiNavKey("live_match"))
+        assertEquals(BiliPaiNavEntryContentRole.LIVE_MATCH, resolveBiliPaiNavEntryContentRole(BiliPaiNavKey.LiveMatch))
+    }
+
+    @Test
+    fun audioCollectionKeysPreserveSourceAndTitleAcrossRouteRestoration() {
+        for (key in listOf(
+            BiliPaiNavKey.AudioMode(collectionMediaId = 42L, collectionTitle = "默认收藏夹 + 100% & 音乐"),
+            BiliPaiNavKey.AudioMode(collectionSeasonId = 81L, collectionTitle = "专辑"),
+        )) {
+            assertEquals(key, legacyRouteToBiliPaiNavKey(key.toLegacyRoute()))
+            assertEquals(BiliPaiNavEntryContentRole.AUDIO_MODE, resolveBiliPaiNavEntryContentRole(key))
+        }
+    }
+
+    @Test
+    fun weeklySeriesKeysPreservePeriodAcrossRouteRestoration() {
+        for (key in listOf(BiliPaiNavKey.WeeklySeries(), BiliPaiNavKey.WeeklySeries(133))) {
+            assertEquals(key, legacyRouteToBiliPaiNavKey(key.toLegacyRoute()))
+            assertEquals(BiliPaiNavEntryContentRole.WEEKLY_SERIES, resolveBiliPaiNavEntryContentRole(key))
+        }
+    }
+
+    @Test
+    fun personalListSearchKeysRoundTripThroughLegacyRoutes() {
+        val keys = listOf(
+            BiliPaiNavKey.HistorySearch("猫 咪"),
+            BiliPaiNavKey.FavoriteSubscribed,
+            BiliPaiNavKey.FavoriteSearch(
+                "Compose",
+                com.android.purebilibili.data.model.response.FavoriteSearchScope.ALL_VIDEO_FOLDERS,
+            ),
+            BiliPaiNavKey.FavoriteSearch(query = "教程 + 合集", subscribed = true),
+            BiliPaiNavKey.WatchLaterSearch("稍后"),
+        )
+
+        keys.forEach { key -> assertEquals(key, legacyRouteToBiliPaiNavKey(key.toLegacyRoute())) }
+    }
+
+    @Test
+    fun `navigation state keys distinguish detail sessions for the same video`() {
+        val first = BiliPaiNavKey.VideoDetail(
+            bvid = "BV1",
+            cid = 1L,
+            coverUrl = "",
+            sourceRoute = "home",
+            openId = 101L,
+        )
+        val second = first.copy(openId = 102L)
 
         assertEquals(resolveNavigation3SaveableStateKey(first), resolveNavigation3SaveableStateKey(first))
         assertNotEquals(resolveNavigation3SaveableStateKey(first), resolveNavigation3SaveableStateKey(second))
+    }
+
+    @Test
+    fun `removed navigation state keys evict popped detail sessions only`() {
+        val first = BiliPaiNavKey.VideoDetail(
+            bvid = "BV1first",
+            cid = 1L,
+            coverUrl = "",
+            openId = 101L,
+        )
+        val second = BiliPaiNavKey.VideoDetail(
+            bvid = "BV1second",
+            cid = 2L,
+            coverUrl = "",
+            openId = 102L,
+        )
+
+        assertEquals(
+            setOf(resolveNavigation3SaveableStateKey(second)),
+            resolveRemovedNavigation3SaveableStateKeys(
+                currentStack = listOf(BiliPaiNavKey.MainHost, first, second),
+                replacementStack = listOf(BiliPaiNavKey.MainHost, first),
+            ),
+        )
+    }
+
+    @Test
+    fun `navigation state eviction keeps a key retained elsewhere in replacement stack`() {
+        val duplicateSearchStack = listOf(
+            BiliPaiNavKey.MainHost,
+            BiliPaiNavKey.Search,
+            BiliPaiNavKey.Search,
+        )
+
+        assertEquals(
+            emptySet(),
+            resolveRemovedNavigation3SaveableStateKeys(
+                currentStack = duplicateSearchStack,
+                replacementStack = duplicateSearchStack.dropLast(1),
+            ),
+        )
     }
 
     @Test
@@ -80,13 +220,31 @@ class BiliPaiNavKeyMappingPolicyTest {
     }
 
     @Test
+    fun bangumiMediaRoute_roundTripsMediaId() {
+        val key = BiliPaiNavKey.BangumiDetail(seasonId = 0L, mediaId = 28237119L)
+
+        assertEquals(key, legacyRouteToBiliPaiNavKey(key.toLegacyRoute()))
+    }
+
+    @Test
+    fun spaceRoute_preservesVideoLocateTarget() {
+        val key = BiliPaiNavKey.Space(mid = 42L, targetBvid = "BV1abc?x")
+
+        assertEquals(key, legacyRouteToBiliPaiNavKey(key.toLegacyRoute()))
+    }
+
+    @Test
     fun settingsSecondaryRoutes_mapToNavigation3Keys() {
         assertEquals(BiliPaiNavKey.OpenSourceLicenses, legacyRouteToBiliPaiNavKey(ScreenRoutes.OpenSourceLicenses.route))
         assertEquals(BiliPaiNavKey.AppearanceSettings, legacyRouteToBiliPaiNavKey(ScreenRoutes.AppearanceSettings.route))
+        assertEquals(BiliPaiNavKey.HomeSettings, legacyRouteToBiliPaiNavKey(ScreenRoutes.HomeSettings.route))
         assertEquals(BiliPaiNavKey.IconSettings, legacyRouteToBiliPaiNavKey(ScreenRoutes.IconSettings.route))
         assertEquals(BiliPaiNavKey.AnimationSettings, legacyRouteToBiliPaiNavKey(ScreenRoutes.AnimationSettings.route))
         assertEquals(BiliPaiNavKey.PlaybackSettings, legacyRouteToBiliPaiNavKey(ScreenRoutes.PlaybackSettings.route))
         assertEquals(BiliPaiNavKey.PermissionSettings, legacyRouteToBiliPaiNavKey(ScreenRoutes.PermissionSettings.route))
+        val messageNotificationKey = BiliPaiNavKey.MessageNotificationSettings
+        assertEquals(ScreenRoutes.MessageNotificationSettings.route, messageNotificationKey.toLegacyRoute())
+        assertEquals(messageNotificationKey, legacyRouteToBiliPaiNavKey(messageNotificationKey.toLegacyRoute()))
         assertEquals(BiliPaiNavKey.PluginsSettings(), legacyRouteToBiliPaiNavKey(ScreenRoutes.PluginsSettings.createRoute()))
         val pluginImportRoute = "plugins_settings?importUrl=https%3A%2F%2Fexample.com%2Fa.bpplugin"
         assertEquals(
@@ -134,6 +292,10 @@ class BiliPaiNavKeyMappingPolicyTest {
             BiliPaiNavKey.Chat(talkerId = 42L, sessionType = 1, userName = "测试用户"),
             legacyRouteToBiliPaiNavKey("chat/42/1?name=%E6%B5%8B%E8%AF%95%E7%94%A8%E6%88%B7")
         )
+        assertEquals(
+            BiliPaiNavKey.Chat(talkerId = 42L, sessionType = 1, userName = "测试 用户+号"),
+            legacyRouteToBiliPaiNavKey(ScreenRoutes.Chat.createRoute(42L, 1, "测试 用户+号"))
+        )
     }
 
     @Test
@@ -157,6 +319,10 @@ class BiliPaiNavKeyMappingPolicyTest {
         )
         assertEquals(BiliPaiNavKey.Bangumi(initialType = 2), legacyRouteToBiliPaiNavKey(ScreenRoutes.Bangumi.createRoute(2)))
         assertEquals(
+            BiliPaiNavKey.BangumiReview(mediaId = 88L, title = "点评"),
+            legacyRouteToBiliPaiNavKey(ScreenRoutes.BangumiReview.createRoute(88L, "点评"))
+        )
+        assertEquals(
             BiliPaiNavKey.BangumiPlayer(seasonId = 1L, epId = 2L, resumePositionMs = 3000L),
             legacyRouteToBiliPaiNavKey(ScreenRoutes.BangumiPlayer.createRoute(1L, 2L, 3000L))
         )
@@ -165,6 +331,36 @@ class BiliPaiNavKeyMappingPolicyTest {
             BiliPaiNavKey.NativeMusic(title = "背景音乐", bvid = "BV1", cid = 3L),
             legacyRouteToBiliPaiNavKey("native_music?title=%E8%83%8C%E6%99%AF%E9%9F%B3%E4%B9%90&bvid=BV1&cid=3")
         )
+    }
+
+    @Test
+    fun notificationDynamicVideoRoute_reachesVideoDetailDestination() {
+        val route = ScreenRoutes.VideoPlayer.createRoute(
+            bvid = "BV1xx411c7mD",
+            cid = 7L,
+            commentRootRpid = 11L,
+            commentTargetRpid = 22L
+        )
+
+        val key = assertIs<BiliPaiNavKey.VideoDetail>(legacyRouteToBiliPaiNavKey(route))
+
+        assertEquals("BV1xx411c7mD", key.bvid)
+        assertEquals(7L, key.cid)
+        assertEquals(11L, key.commentRootRpid)
+        assertEquals(22L, key.commentTargetRpid)
+    }
+
+    @Test
+    fun commentDetailRoute_roundTripsThroughLegacyRoute() {
+        val key = BiliPaiNavKey.CommentDetail(
+            oid = 12345L,
+            rootId = 67890L,
+            targetId = 11111L,
+            type = 1,
+            enterUri = "bilibili://video/12345"
+        )
+        val route = key.toLegacyRoute()
+        assertEquals(key, legacyRouteToBiliPaiNavKey(route))
     }
 
     @Test

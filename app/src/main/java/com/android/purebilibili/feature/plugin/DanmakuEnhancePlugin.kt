@@ -1,31 +1,36 @@
 // 文件路径: feature/plugin/DanmakuEnhancePlugin.kt
 package com.android.purebilibili.feature.plugin
 
+import com.android.purebilibili.core.plugin.BuiltinPluginIds
+
+import com.android.purebilibili.core.ui.AppContentColors
+
 import android.content.Context
 import androidx.compose.foundation.layout.*
-//  Cupertino Icons - iOS SF Symbols 风格图标
-import io.github.alexzhirkevich.cupertino.icons.CupertinoIcons
-import io.github.alexzhirkevich.cupertino.icons.outlined.*
-import io.github.alexzhirkevich.cupertino.icons.filled.*
+//  Material Icons
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
+import com.android.purebilibili.core.ui.components.AppOutlinedTextField
+import com.android.purebilibili.core.ui.components.AppSwitch
+import com.android.purebilibili.core.ui.components.AppText
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.android.purebilibili.core.plugin.DanmakuItem
-import com.android.purebilibili.core.plugin.DanmakuPluginApi
-import com.android.purebilibili.core.plugin.DanmakuStyle
-import com.android.purebilibili.core.plugin.PluginCapability
-import com.android.purebilibili.core.plugin.PluginCapabilityManifest
+import com.android.purebilibili.core.plugin.BuiltinPlugin
+import com.android.purebilibili.plugin.sdk.DanmakuItem
+import com.android.purebilibili.plugin.sdk.DanmakuPluginApi
+import com.android.purebilibili.plugin.sdk.DanmakuStyle
+import com.android.purebilibili.core.plugin.PLUGIN_EFFECT_HINT_DANMAKU_COOLDOWN_MS
+import com.android.purebilibili.plugin.sdk.PluginCapability
+import com.android.purebilibili.plugin.sdk.PluginCapabilityManifest
+import com.android.purebilibili.core.plugin.PluginEffectHintBus
 import com.android.purebilibili.core.plugin.PluginManager
 import com.android.purebilibili.core.plugin.PluginStore
+import com.android.purebilibili.core.plugin.resolveDanmakuFilterEffectHint
 import com.android.purebilibili.core.util.Logger
-import io.github.alexzhirkevich.cupertino.CupertinoSwitch
-import io.github.alexzhirkevich.cupertino.CupertinoSwitchDefaults
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -36,19 +41,19 @@ private const val TAG = "DanmakuEnhancePlugin"
 
 /**
  *  弹幕增强插件
- * 
+ *
  * 提供弹幕过滤和高亮功能：
  * - 关键词屏蔽
  * - 同传弹幕高亮
  */
-class DanmakuEnhancePlugin : DanmakuPluginApi {
-    
-    override val id = "danmaku_enhance"
+class DanmakuEnhancePlugin : BuiltinPlugin, DanmakuPluginApi {
+
+    override val id = BuiltinPluginIds.DANMAKU_ENHANCE
     override val name = "弹幕增强"
     override val description = "关键词屏蔽、按用户ID屏蔽、同传弹幕高亮"
-    override val version = "1.1.0"
+    override val version = "1.1.1"
     override val author = "BiliPai项目组"
-    override val icon: ImageVector = CupertinoIcons.Default.TextBubble
+    override val icon: ImageVector = Icons.Outlined.ChatBubble
     override val capabilityManifest: PluginCapabilityManifest = PluginCapabilityManifest(
         pluginId = id,
         displayName = name,
@@ -61,7 +66,7 @@ class DanmakuEnhancePlugin : DanmakuPluginApi {
             PluginCapability.PLUGIN_STORAGE
         )
     )
-    
+
     private var config: DanmakuEnhanceConfig = DanmakuEnhanceConfig()
     private var filteredCount = 0
     private var blockedKeywordsCache: List<String> = splitKeywords(config.blockedKeywords)
@@ -93,6 +98,13 @@ class DanmakuEnhancePlugin : DanmakuPluginApi {
         highlightKeywordsCache = splitKeywords(config.highlightKeywords)
     }
 
+    private fun emitFilterHint() {
+        PluginEffectHintBus.tryEmit(
+            resolveDanmakuFilterEffectHint(id, name),
+            cooldownMs = PLUGIN_EFFECT_HINT_DANMAKU_COOLDOWN_MS
+        )
+    }
+
     private suspend fun persistConfig(context: Context, newConfig: DanmakuEnhanceConfig) {
         config = newConfig
         refreshKeywordCache()
@@ -112,7 +124,7 @@ class DanmakuEnhancePlugin : DanmakuPluginApi {
                 )
         }
     }
-    
+
     override suspend fun onEnable() {
         filteredCount = 0
         try {
@@ -122,43 +134,45 @@ class DanmakuEnhancePlugin : DanmakuPluginApi {
         }
         Logger.d(TAG, " 弹幕增强已启用")
     }
-    
+
     override suspend fun onDisable() {
         Logger.d(TAG, "🔴 弹幕增强已禁用，本次过滤了 $filteredCount 条弹幕")
         filteredCount = 0
     }
-    
+
     override fun filterDanmaku(danmaku: DanmakuItem): DanmakuItem? {
         if (!config.enableFilter) return danmaku
 
         if (blockedKeywordsCache.any { danmaku.content.contains(it, ignoreCase = true) }) {
             filteredCount++
+            emitFilterHint()
             return null
         }
 
         if (isUserBlocked(danmaku.userId)) {
             filteredCount++
+            emitFilterHint()
             return null
         }
 
         return danmaku
     }
-    
+
     override fun styleDanmaku(danmaku: DanmakuItem): DanmakuStyle? {
         if (!config.enableHighlight) return null
 
         if (highlightKeywordsCache.any { danmaku.content.contains(it, ignoreCase = true) }) {
             return DanmakuStyle(
-                textColor = Color(0xFFFFD700),
-                backgroundColor = Color.Black.copy(alpha = 0.5f),
+                textColor = 0xFFFFD700.toInt(),
+                backgroundColor = 0x80000000.toInt(),
                 bold = true,
                 scale = 1.05f
             )
         }
-        
+
         return null
     }
-    
+
     @Composable
     override fun SettingsContent() {
         val context = LocalContext.current
@@ -168,7 +182,7 @@ class DanmakuEnhancePlugin : DanmakuPluginApi {
         var blockedKeywords by remember { mutableStateOf(config.blockedKeywords) }
         var blockedUserIds by remember { mutableStateOf(config.blockedUserIds) }
         var highlightKeywords by remember { mutableStateOf(config.highlightKeywords) }
-        
+
         // 加载配置
         LaunchedEffect(Unit) {
             loadConfig(context)
@@ -178,7 +192,7 @@ class DanmakuEnhancePlugin : DanmakuPluginApi {
             blockedUserIds = config.blockedUserIds
             highlightKeywords = config.highlightKeywords
         }
-        
+
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -191,37 +205,31 @@ class DanmakuEnhancePlugin : DanmakuPluginApi {
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("启用关键词屏蔽", style = MaterialTheme.typography.bodyLarge)
+                    AppText("启用关键词屏蔽", style = MaterialTheme.typography.bodyLarge)
                 }
-                val primaryColor = MaterialTheme.colorScheme.primary
-                CupertinoSwitch(
+                AppSwitch(
                     checked = enableFilter,
                     onCheckedChange = { newValue ->
                         enableFilter = newValue
-                        scope.launch { 
+                        scope.launch {
                             persistConfig(context, config.copy(enableFilter = newValue))
                         }
                     },
-                    colors = CupertinoSwitchDefaults.colors(
-                        thumbColor = Color.White,
-                        checkedTrackColor = primaryColor,
-                        uncheckedTrackColor = Color(0xFFE9E9EA)
-                    )
                 )
             }
-            
+
             // 屏蔽关键词输入
             if (enableFilter) {
-                OutlinedTextField(
+                AppOutlinedTextField(
                     value = blockedKeywords,
                     onValueChange = { newValue ->
                         blockedKeywords = newValue
-                        scope.launch { 
+                        scope.launch {
                             persistConfig(context, config.copy(blockedKeywords = newValue))
                         }
                     },
-                    label = { Text("屏蔽关键词") },
-                    placeholder = { Text("用逗号分隔，如：剧透,前方高能") },
+                    label = { AppText("屏蔽关键词") },
+                    placeholder = { AppText("用逗号分隔，如：剧透,前方高能") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = false,
                     maxLines = 3
@@ -229,7 +237,7 @@ class DanmakuEnhancePlugin : DanmakuPluginApi {
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                OutlinedTextField(
+                AppOutlinedTextField(
                     value = blockedUserIds,
                     onValueChange = { newValue ->
                         blockedUserIds = newValue
@@ -237,58 +245,52 @@ class DanmakuEnhancePlugin : DanmakuPluginApi {
                             persistConfig(context, config.copy(blockedUserIds = newValue))
                         }
                     },
-                    label = { Text("屏蔽用户 ID/哈希") },
-                    placeholder = { Text("用逗号分隔，如：abc123,7f9d...,123456") },
+                    label = { AppText("屏蔽用户 ID/哈希") },
+                    placeholder = { AppText("用逗号分隔，如：abc123,7f9d...,123456") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = false,
                     maxLines = 3
                 )
             }
-            
+
             Spacer(modifier = Modifier.height(8.dp))
-            
+
             // 启用高亮
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("启用同传高亮", style = MaterialTheme.typography.bodyLarge)
-                    Text(
+                    AppText("启用同传高亮", style = MaterialTheme.typography.bodyLarge)
+                    AppText(
                         "高亮显示同传/翻译弹幕",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = AppContentColors.secondaryText()
                     )
                 }
-                val primaryColor = MaterialTheme.colorScheme.primary
-                CupertinoSwitch(
+                AppSwitch(
                     checked = enableHighlight,
                     onCheckedChange = { newValue ->
                         enableHighlight = newValue
-                        scope.launch { 
+                        scope.launch {
                             persistConfig(context, config.copy(enableHighlight = newValue))
                         }
                     },
-                    colors = CupertinoSwitchDefaults.colors(
-                        thumbColor = Color.White,
-                        checkedTrackColor = primaryColor,
-                        uncheckedTrackColor = Color(0xFFE9E9EA)
-                    )
                 )
             }
-            
+
             // 高亮关键词输入
             if (enableHighlight) {
-                OutlinedTextField(
+                AppOutlinedTextField(
                     value = highlightKeywords,
                     onValueChange = { newValue ->
                         highlightKeywords = newValue
-                        scope.launch { 
+                        scope.launch {
                             persistConfig(context, config.copy(highlightKeywords = newValue))
                         }
                     },
-                    label = { Text("高亮关键词") },
-                    placeholder = { Text("用逗号分隔，如：【,】,同传") },
+                    label = { AppText("高亮关键词") },
+                    placeholder = { AppText("用逗号分隔，如：【,】,同传") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = false,
                     maxLines = 3

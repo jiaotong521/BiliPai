@@ -1,5 +1,6 @@
 package com.android.purebilibili.feature.cast
 
+import com.android.purebilibili.core.network.buildAppDns
 import android.content.Context
 import android.net.ConnectivityManager
 import com.android.purebilibili.core.util.Logger
@@ -27,6 +28,7 @@ import java.util.concurrent.ConcurrentHashMap
 class LocalProxyServer(port: Int = 8901) : NanoHTTPD(port) {
 
     private val client = OkHttpClient.Builder()
+        .dns(buildAppDns())
         .followRedirects(true)
         .followSslRedirects(true)
         .build()
@@ -140,6 +142,14 @@ class LocalProxyServer(port: Int = 8901) : NanoHTTPD(port) {
                 server.start()
                 sharedServer = server
                 return true
+            }
+        }
+
+        fun stopAndClear() {
+            synchronized(bootstrapLock) {
+                sharedServer?.stop()
+                sharedServer = null
+                manifestStore.clear()
             }
         }
 

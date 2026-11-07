@@ -73,6 +73,13 @@ class DynamicIncrementalRefreshPolicyTest {
     }
 
     @Test
+    fun resolveDynamicRefreshDividerGridIndex_accountsForLeadingChromeInset() {
+        assertEquals(4, resolveDynamicRefreshDividerGridIndex(dividerDataIndex = 3))
+        assertEquals(3, resolveDynamicRefreshDividerGridIndex(dividerDataIndex = 3, leadingGridItemCount = 0))
+        assertEquals(-1, resolveDynamicRefreshDividerGridIndex(dividerDataIndex = -1))
+    }
+
+    @Test
     fun shouldStartDynamicRefresh_requiresIdleRefreshAndUnlockedState() {
         assertEquals(true, shouldStartDynamicRefresh(isRefreshing = false, isLoadingLocked = false))
         assertEquals(false, shouldStartDynamicRefresh(isRefreshing = true, isLoadingLocked = false))
@@ -80,18 +87,11 @@ class DynamicIncrementalRefreshPolicyTest {
     }
 
     @Test
-    fun refreshTarget_usesSelectedUserOnlyOnUserTab() {
-        assertEquals(
-            1001L,
-            resolveDynamicRefreshUserId(selectedTab = 4, selectedUserId = 1001L)
-        )
-        assertEquals(
-            null,
-            resolveDynamicRefreshUserId(selectedTab = 0, selectedUserId = 1001L)
-        )
-        assertEquals(
-            null,
-            resolveDynamicRefreshUserId(selectedTab = 4, selectedUserId = null)
-        )
+    fun refreshTarget_usesSelectedAuthorForFilterableCategoriesOnly() {
+        for (tab in listOf(0, 1, 3)) {
+            assertEquals(1001L, resolveDynamicRefreshUserId(selectedTab = tab, selectedUserId = 1001L))
+            assertEquals(null, resolveDynamicRefreshUserId(selectedTab = tab, selectedUserId = null))
+        }
+        assertEquals(null, resolveDynamicRefreshUserId(selectedTab = 2, selectedUserId = 1001L))
     }
 }

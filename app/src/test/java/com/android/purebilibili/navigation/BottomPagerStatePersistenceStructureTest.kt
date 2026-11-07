@@ -16,7 +16,8 @@ class BottomPagerStatePersistenceStructureTest {
         assertTrue(source.contains("rememberMainBottomPagerState("))
         assertTrue(source.contains("HorizontalPager("))
         assertTrue(source.contains("rememberSaveableStateHolder()"))
-        assertTrue(source.contains("SaveableStateProvider(resolveBottomPagerSaveableStateKey(slotItem))"))
+        assertTrue(source.contains("bottomPagerSaveableStateHolder.SaveableStateProvider("))
+        assertTrue(source.contains("resolveBottomPagerSaveableStateKey(slotItem)"))
         assertTrue(source.contains("historyViewModel.loadData("))
         assertTrue(source.contains("isBottomPagerPageActive"))
         assertTrue(source.contains("userScrollEnabled = shouldEnableBottomPagerUserScroll()"))
@@ -31,41 +32,72 @@ class BottomPagerStatePersistenceStructureTest {
     }
 
     @Test
-    fun `main bottom pager avoids pager pre jump animation`() {
+    fun `bottom tab switch follows user input scroll mutation`() {
         val source = loadSource("app/src/main/java/com/android/purebilibili/navigation/MainBottomPagerState.kt")
-        val animatedNavigationSource = source
-            .substringAfter("fun animateToPage(")
+        val sharedMotionSource = loadSource("app/src/main/java/com/android/purebilibili/navigation/PagerSelectionMotion.kt")
+        val switchNavigationSource = source
+            .substringAfter("fun switchToPage(")
             .substringBefore("fun syncPage(")
 
         assertTrue(source.contains("navigationStartPage"))
-        assertTrue(source.contains("pagerState.animateScrollBy("))
-        assertFalse(source.contains("pagerState.animateScrollToPage("))
-        assertFalse(source.contains("shouldUseDirectBottomPagerJump("))
-        assertFalse(animatedNavigationSource.contains("pagerState.scrollToPage("))
+        assertTrue(switchNavigationSource.contains("animatePagerSelection(pagerState, safeTargetIndex)"))
+        assertTrue(sharedMotionSource.contains("PagerState.tabIndicatorPosition"))
+        assertFalse(sharedMotionSource.contains("scrollBy(value - consumedPx)"))
+        assertTrue(sharedMotionSource.contains("easing = EaseInOut"))
+        assertTrue(sharedMotionSource.contains("pagerState.animateScrollToPage(target, animationSpec = spec)"))
+        assertTrue(sharedMotionSource.contains("pagerState.scrollToPage(safeTargetPage)"))
+        assertFalse(sharedMotionSource.contains("pagerState.animateScrollBy("))
+        assertTrue(sharedMotionSource.contains("if (state.value === motion) state.value = null"))
+        // No self-invented absolute seek / predictive progress path.
+        assertFalse(source.contains("seekPredictiveReturnToPage"))
+        assertFalse(source.contains("dispatchRawDelta"))
+        assertFalse(source.contains("commitPredictiveReturnToPage"))
+        assertFalse(source.contains("cancelPredictiveReturn"))
     }
 
     @Test
-    fun `main bottom pager defers silent snap until next frame after idle`() {
+    fun `main bottom pager state coordinates page selection and indicator motion`() {
         val source = loadSource("app/src/main/java/com/android/purebilibili/navigation/MainBottomPagerState.kt")
-        val snapNavigationSource = source
-            .substringAfter("fun snapToPage(")
-            .substringBefore("private suspend fun")
 
-        assertCallsInOrder(
-            snapNavigationSource,
-            "awaitScrollIdle()",
-            "awaitNextFrame()",
-            "pagerState.scrollToPage(targetIndex)"
+        assertTrue(source.contains("@Stable\ninternal class MainBottomPagerState("))
+        assertTrue(source.contains("val indicatorPosition: Float"))
+        assertTrue(
+            source.contains(
+                "pagerState.tabIndicatorPosition"
+            )
         )
+        assertTrue(source.contains("val isScrollInProgress: Boolean"))
+        assertTrue(source.contains("get() = pagerState.isScrollInProgress"))
+        assertTrue(source.contains("val indicatorPositionProvider: () -> Float"))
+        assertTrue(source.contains("val scrollInProgressProvider: () -> Boolean"))
     }
 
-    private fun assertCallsInOrder(source: String, vararg calls: String) {
-        var previousIndex = -1
-        calls.forEach { call ->
-            val currentIndex = source.indexOf(call)
-            assertTrue(currentIndex > previousIndex, "$call should appear after previous call")
-            previousIndex = currentIndex
-        }
+    @Test
+    fun `main bottom pager reconciles stale switches`() {
+        val source = loadSource("app/src/main/java/com/android/purebilibili/navigation/MainBottomPagerState.kt")
+        val switchNavigationSource = source
+            .substringAfter("fun switchToPage(")
+            .substringBefore("fun syncPage(")
+
+        assertTrue(switchNavigationSource.contains("navJob?.cancel()"))
+        assertTrue(switchNavigationSource.contains("if (navJob == myJob)"))
+        assertTrue(switchNavigationSource.contains("selectedPage = pagerState.currentPage"))
+        assertTrue(switchNavigationSource.contains("navigationStartPage = pagerState.currentPage"))
+        assertFalse(switchNavigationSource.contains("withContext(NonCancellable)"))
+        assertFalse(switchNavigationSource.contains("settleLatestNavigation"))
+    }
+
+    @Test
+    fun `tab back handler wires BiliPai onBackCompleted to switchToPage home`() {
+        val source = loadSource("app/src/main/java/com/android/purebilibili/navigation/AppNavigation.kt")
+
+        assertTrue(source.contains("MainHostTabBackHandler("))
+        assertTrue(source.contains("onReturnToHomeTab = {"))
+        assertTrue(source.contains("mainBottomPagerState.switchToPage(homeIndex)"))
+        assertFalse(source.contains("seekPredictiveReturnToPage"))
+        assertFalse(source.contains("commitPredictiveReturnToPage"))
+        assertFalse(source.contains("cancelPredictiveReturn"))
+        assertFalse(source.contains("onPredictiveProgress"))
     }
 
     private fun loadSource(path: String): String {

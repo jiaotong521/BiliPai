@@ -6,26 +6,15 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.android.purebilibili.core.ui.resolveCompactCapsuleChromeSpec
-import com.android.purebilibili.core.theme.AndroidNativeVariant
-import com.android.purebilibili.core.theme.UiPreset
+import com.android.purebilibili.core.theme.AppUiStyle
+import com.android.purebilibili.core.ui.AppSpacingTokens
+import com.android.purebilibili.core.ui.AppTopChromePolicy
+import com.android.purebilibili.core.ui.AppTopTabPresentation
 
 enum class TopTabMaterialMode {
     PLAIN,
     BLUR,
     LIQUID_GLASS
-}
-
-enum class HomeTopTabRenderer {
-    IOS,
-    MD3,
-    MIUIX
-}
-
-enum class HomeTopPreset {
-    IOS,
-    MATERIAL3,
-    MIUIX
 }
 
 enum class TopTabClickAction {
@@ -34,8 +23,7 @@ enum class TopTabClickAction {
 }
 
 data class HomeTopPresetStyle(
-    val preset: HomeTopPreset,
-    val renderer: HomeTopTabRenderer,
+    val presentation: AppTopTabPresentation,
     val indicatorStyle: TopTabIndicatorStyle,
     val search: HomeTopSearchStyle,
     val panel: HomeTopPanelStyle,
@@ -60,6 +48,7 @@ data class HomeTopPresetStyle(
     val tabHorizontalPaddingDocked: Dp get() = tabs.horizontalPadding.docked
     val tabHorizontalPaddingFloating: Dp get() = tabs.horizontalPadding.floating
     val searchToTabsSpacing: Dp get() = spacing.searchToTabs
+    val tabsToContentSpacing: Dp get() = spacing.tabsToContent
     val searchCollapseExtraSpacing: Dp get() = spacing.searchCollapseExtra
     val continuousSlabOverlap: Dp get() = spacing.continuousSlabOverlap
     val tabRowHeightDocked: Dp get() = tabs.rowHeight.docked
@@ -98,7 +87,13 @@ data class HomeTopPanelStyle(
 data class HomeTopSpacingStyle(
     val edgeControlGap: Dp,
     val embeddedTabHorizontalPadding: Dp,
+    /** Vertical gap between search row and top tab dock. */
     val searchToTabs: Dp,
+    /**
+     * Intentional air under the tab dock before the first feed row.
+     * Kept near [searchToTabs] so search↔tabs and tabs↔cards feel balanced.
+     */
+    val tabsToContent: Dp,
     val searchCollapseExtra: Dp,
     val continuousSlabOverlap: Dp
 )
@@ -120,22 +115,31 @@ data class HomeTopDpPair(
     val floating: Dp
 )
 
+/**
+ * Edge controls retain the former dialog radii while their renderer is selected
+ * through the shared top-chrome policy.
+ */
+internal fun resolveHomeTopEdgeButtonCornerRadius(
+    chromePolicy: AppTopChromePolicy,
+): Dp = when (chromePolicy.tabPresentation) {
+    AppTopTabPresentation.MOVING_CAPSULE -> 0.dp
+    AppTopTabPresentation.MATERIAL_UNDERLINE -> 12.6.dp
+    AppTopTabPresentation.TONAL_CAPSULE -> 16.1.dp
+}
+
 internal fun resolveHomeTopPresetStyle(
-    uiPreset: UiPreset,
-    androidNativeVariant: AndroidNativeVariant,
+    chromePolicy: AppTopChromePolicy,
     labelMode: Int
 ): HomeTopPresetStyle {
     val normalizedLabelMode = normalizeTopTabLabelMode(labelMode)
-    val isIconAndText = normalizedLabelMode == 0
-    val compactChrome = resolveCompactCapsuleChromeSpec(uiPreset, androidNativeVariant)
-    return when {
-        uiPreset == UiPreset.IOS -> {
+    val compactChrome = chromePolicy.compactChromeSpec
+    return when (chromePolicy.tabPresentation) {
+        AppTopTabPresentation.MOVING_CAPSULE -> {
             HomeTopPresetStyle(
-                preset = HomeTopPreset.IOS,
-                renderer = HomeTopTabRenderer.IOS,
+                presentation = chromePolicy.tabPresentation,
                 indicatorStyle = TopTabIndicatorStyle.CAPSULE,
                 search = HomeTopSearchStyle(
-                    barHeight = 48.dp,
+                    barHeight = compactChrome.primaryHeightDp.dp,
                     revealDeadZone = 8.dp,
                     rowHorizontalPadding = 14.dp,
                     pillHeight = compactChrome.primaryHeightDp.dp,
@@ -154,21 +158,22 @@ internal fun resolveHomeTopPresetStyle(
                 ),
                 spacing = HomeTopSpacingStyle(
                     edgeControlGap = 6.dp,
-                    embeddedTabHorizontalPadding = 0.dp,
-                    searchToTabs = 4.dp,
+                    // Align the category strip with the avatar/search/settings row.
+                    embeddedTabHorizontalPadding = 14.dp,
+                    searchToTabs = 6.dp,
+                    tabsToContent = 6.dp,
                     searchCollapseExtra = 0.dp,
                     continuousSlabOverlap = 0.dp
                 ),
                 tabs = HomeTopTabsStyle(
                     horizontalPadding = HomeTopDpPair(docked = 0.dp, floating = 2.dp),
-                    // Match resolveIosTopTabRowHeight so header chrome and tab row share one height.
                     rowHeight = HomeTopDpPair(
-                        docked = if (isIconAndText) 58.dp else 54.dp,
-                        floating = if (isIconAndText) 62.dp else 56.dp
+                        docked = resolveHomeTopDockShellHeight(isFloatingStyle = false),
+                        floating = resolveHomeTopDockShellHeight(isFloatingStyle = true)
                     ),
                     md3VisualSpec = resolveMd3TopTabVisualSpec(
                         false,
-                        AndroidNativeVariant.MATERIAL3,
+                        AppTopTabPresentation.TONAL_CAPSULE,
                         normalizedLabelMode
                     )
                 ),
@@ -188,13 +193,14 @@ internal fun resolveHomeTopPresetStyle(
                 )
             )
         }
-        androidNativeVariant == AndroidNativeVariant.MIUIX -> {
+        AppTopTabPresentation.TONAL_CAPSULE -> {
             HomeTopPresetStyle(
-                preset = HomeTopPreset.MIUIX,
-                renderer = HomeTopTabRenderer.MD3,
+                // The home renderer routes this preset through its moving MD3 capsule,
+                // which can reuse the same liquid-glass indicator as the bottom bar.
+                presentation = AppTopTabPresentation.MATERIAL_UNDERLINE,
                 indicatorStyle = TopTabIndicatorStyle.MATERIAL,
                 search = HomeTopSearchStyle(
-                    barHeight = 50.dp,
+                    barHeight = compactChrome.primaryHeightDp.dp,
                     revealDeadZone = 0.dp,
                     rowHorizontalPadding = 14.dp,
                     pillHeight = compactChrome.primaryHeightDp.dp,
@@ -213,47 +219,47 @@ internal fun resolveHomeTopPresetStyle(
                 ),
                 spacing = HomeTopSpacingStyle(
                     edgeControlGap = 7.dp,
-                    embeddedTabHorizontalPadding = 0.dp,
-                    searchToTabs = 4.dp,
+                    // Align the category strip with the avatar/search/settings row.
+                    embeddedTabHorizontalPadding = 14.dp,
+                    searchToTabs = 6.dp,
+                    tabsToContent = 6.dp,
                     searchCollapseExtra = 5.dp,
                     continuousSlabOverlap = 20.dp
                 ),
                 tabs = HomeTopTabsStyle(
                     horizontalPadding = HomeTopDpPair(docked = 0.dp, floating = 2.dp),
-                    // Align with resolveMd3TopTabVisualSpec(MIUIX) used by the tab row.
                     rowHeight = HomeTopDpPair(
-                        docked = if (isIconAndText) 58.dp else 52.dp,
-                        floating = if (isIconAndText) 64.dp else 56.dp
+                        docked = resolveHomeTopDockShellHeight(isFloatingStyle = false),
+                        floating = resolveHomeTopDockShellHeight(isFloatingStyle = true)
                     ),
                     md3VisualSpec = resolveMd3TopTabVisualSpec(
                         false,
-                        AndroidNativeVariant.MIUIX,
+                        AppTopTabPresentation.TONAL_CAPSULE,
                         normalizedLabelMode
                     )
                 ),
                 actions = HomeTopActionStyle(
                     buttonSize = HomeTopDpPair(
-                        docked = resolveMd3TopTabActionButtonSize(false, AndroidNativeVariant.MIUIX),
-                        floating = resolveMd3TopTabActionButtonSize(true, AndroidNativeVariant.MIUIX)
+                        docked = resolveMd3TopTabActionButtonSize(false, AppTopTabPresentation.TONAL_CAPSULE),
+                        floating = resolveMd3TopTabActionButtonSize(true, AppTopTabPresentation.TONAL_CAPSULE)
                     ),
                     buttonCorner = HomeTopDpPair(
-                        docked = resolveMd3TopTabActionButtonCorner(false, AndroidNativeVariant.MIUIX),
-                        floating = resolveMd3TopTabActionButtonCorner(true, AndroidNativeVariant.MIUIX)
+                        docked = resolveMd3TopTabActionButtonCorner(false, AppTopTabPresentation.TONAL_CAPSULE),
+                        floating = resolveMd3TopTabActionButtonCorner(true, AppTopTabPresentation.TONAL_CAPSULE)
                     ),
                     iconSize = HomeTopDpPair(
-                        docked = resolveMd3TopTabActionIconSize(false, AndroidNativeVariant.MIUIX),
-                        floating = resolveMd3TopTabActionIconSize(true, AndroidNativeVariant.MIUIX)
+                        docked = resolveMd3TopTabActionIconSize(false, AppTopTabPresentation.TONAL_CAPSULE),
+                        floating = resolveMd3TopTabActionIconSize(true, AppTopTabPresentation.TONAL_CAPSULE)
                     )
                 )
             )
         }
-        else -> {
+        AppTopTabPresentation.MATERIAL_UNDERLINE -> {
             HomeTopPresetStyle(
-                preset = HomeTopPreset.MATERIAL3,
-                renderer = HomeTopTabRenderer.MD3,
+                presentation = chromePolicy.tabPresentation,
                 indicatorStyle = TopTabIndicatorStyle.MATERIAL,
                 search = HomeTopSearchStyle(
-                    barHeight = 52.dp,
+                    barHeight = compactChrome.primaryHeightDp.dp,
                     revealDeadZone = 0.dp,
                     rowHorizontalPadding = 16.dp,
                     pillHeight = compactChrome.primaryHeightDp.dp,
@@ -267,54 +273,48 @@ internal fun resolveHomeTopPresetStyle(
                     showDivider = true,
                     horizontalPadding = 0.dp,
                     innerPadding = 10.dp,
-                    cornerRadius = 16.dp,
-                    reservedContentBottomGap = 5.dp
+                    cornerRadius = 0.dp,
+                    reservedContentBottomGap = 0.dp
                 ),
                 spacing = HomeTopSpacingStyle(
                     edgeControlGap = 8.dp,
-                    embeddedTabHorizontalPadding = 0.dp,
+                    // Align the category strip with the avatar/search/settings row.
+                    embeddedTabHorizontalPadding = 16.dp,
                     searchToTabs = 6.dp,
+                    tabsToContent = 6.dp,
                     searchCollapseExtra = 5.dp,
-                    continuousSlabOverlap = 24.dp
+                    continuousSlabOverlap = 0.dp
                 ),
                 tabs = HomeTopTabsStyle(
                     horizontalPadding = HomeTopDpPair(docked = 0.dp, floating = 2.dp),
                     // Align with resolveMd3TopTabVisualSpec used by the tab row.
                     rowHeight = HomeTopDpPair(
-                        docked = if (isIconAndText) 62.dp else 54.dp,
-                        floating = if (isIconAndText) 64.dp else 56.dp
+                        docked = resolveHomeTopDockShellHeight(isFloatingStyle = false),
+                        floating = resolveHomeTopDockShellHeight(isFloatingStyle = true)
                     ),
                     md3VisualSpec = resolveMd3TopTabVisualSpec(
                         false,
-                        AndroidNativeVariant.MATERIAL3,
+                        AppTopTabPresentation.MATERIAL_UNDERLINE,
                         normalizedLabelMode
                     )
                 ),
                 actions = HomeTopActionStyle(
                     buttonSize = HomeTopDpPair(
-                        docked = resolveMd3TopTabActionButtonSize(false, AndroidNativeVariant.MATERIAL3),
-                        floating = resolveMd3TopTabActionButtonSize(true, AndroidNativeVariant.MATERIAL3)
+                        docked = resolveMd3TopTabActionButtonSize(false, AppTopTabPresentation.MATERIAL_UNDERLINE),
+                        floating = resolveMd3TopTabActionButtonSize(true, AppTopTabPresentation.MATERIAL_UNDERLINE)
                     ),
                     buttonCorner = HomeTopDpPair(
-                        docked = resolveMd3TopTabActionButtonCorner(false, AndroidNativeVariant.MATERIAL3),
-                        floating = resolveMd3TopTabActionButtonCorner(true, AndroidNativeVariant.MATERIAL3)
+                        docked = resolveMd3TopTabActionButtonCorner(false, AppTopTabPresentation.MATERIAL_UNDERLINE),
+                        floating = resolveMd3TopTabActionButtonCorner(true, AppTopTabPresentation.MATERIAL_UNDERLINE)
                     ),
                     iconSize = HomeTopDpPair(
-                        docked = resolveMd3TopTabActionIconSize(false, AndroidNativeVariant.MATERIAL3),
-                        floating = resolveMd3TopTabActionIconSize(true, AndroidNativeVariant.MATERIAL3)
+                        docked = resolveMd3TopTabActionIconSize(false, AppTopTabPresentation.MATERIAL_UNDERLINE),
+                        floating = resolveMd3TopTabActionIconSize(true, AppTopTabPresentation.MATERIAL_UNDERLINE)
                     )
                 )
             )
         }
     }
-}
-
-internal fun resolveHomeTopTabRenderer(
-    uiPreset: UiPreset,
-    androidNativeVariant: AndroidNativeVariant,
-    labelMode: Int
-): HomeTopTabRenderer {
-    return resolveHomeTopPresetStyle(uiPreset, androidNativeVariant, labelMode).renderer
 }
 
 internal fun resolveHomeTopTabMaterialMode(headerBlurEnabled: Boolean): TopTabMaterialMode {
@@ -348,10 +348,9 @@ enum class TopTabIndicatorStyle {
     MATERIAL
 }
 
-// Bottom-bar capsule is 56dp; top dock is shorter, so rest height sits near dock fill
-// while drag scale (88/56) still slightly overflows the chrome like the bottom bar.
-internal const val CompactTopTabIndicatorHeightDp = 48f
-internal const val CompactTopTabIndicatorCornerDp = CompactTopTabIndicatorHeightDp / 2f
+// Compact top docks scale the 56/64 rest fill from the 64dp home bottom bar.
+internal const val CompactTopTabIndicatorHeightDp = 30f
+internal const val CompactTopTabIndicatorCornerDp = 9f
 
 data class TopTabVisualTuning(
     val nonFloatingIndicatorHeightDp: Float = CompactTopTabIndicatorHeightDp,
@@ -366,10 +365,10 @@ data class TopTabVisualTuning(
     val floatingIndicatorHeightDp: Float = CompactTopTabIndicatorHeightDp,
     val tabTextSizeSp: Float = 15f,
     val tabTextLineHeightSp: Float = 20f,
-    val tabContentMinHeightDp: Float = 42f,
-    val tabIconWithTextSizeDp: Float = 20f,
-    val tabIconOnlySizeDp: Float = 24f,
-    val tabIconTextSpacingDp: Float = 3f
+    val tabContentMinHeightDp: Float = 30f,
+    val tabIconWithTextSizeDp: Float = 18f,
+    val tabIconOnlySizeDp: Float = 18f,
+    val tabIconTextSpacingDp: Float = 6f
 )
 
 data class TopTabVisualState(
@@ -392,9 +391,9 @@ data class Md3TopTabVisualSpec(
 
 fun resolveTopTabVisualTuning(): TopTabVisualTuning = TopTabVisualTuning()
 
-fun resolveTopTabVisualTuning(uiPreset: UiPreset): TopTabVisualTuning {
-    return when (uiPreset) {
-        UiPreset.IOS -> TopTabVisualTuning(
+fun resolveTopTabVisualTuning(presentation: AppTopTabPresentation): TopTabVisualTuning {
+    return when (presentation) {
+        AppTopTabPresentation.MOVING_CAPSULE -> TopTabVisualTuning(
             nonFloatingIndicatorHeightDp = CompactTopTabIndicatorHeightDp,
             nonFloatingIndicatorCornerDp = CompactTopTabIndicatorCornerDp,
             nonFloatingIndicatorWidthRatio = 1.18f,
@@ -407,12 +406,13 @@ fun resolveTopTabVisualTuning(uiPreset: UiPreset): TopTabVisualTuning {
             floatingIndicatorHeightDp = CompactTopTabIndicatorHeightDp,
             tabTextSizeSp = 15f,
             tabTextLineHeightSp = 20f,
-            tabContentMinHeightDp = 42f,
-            tabIconWithTextSizeDp = 20f,
-            tabIconOnlySizeDp = 24f,
-            tabIconTextSpacingDp = 3f
+            tabContentMinHeightDp = 30f,
+            tabIconWithTextSizeDp = 18f,
+            tabIconOnlySizeDp = 18f,
+            tabIconTextSpacingDp = 6f
         )
-        UiPreset.MD3 -> resolveTopTabVisualTuning()
+        AppTopTabPresentation.MATERIAL_UNDERLINE,
+        AppTopTabPresentation.TONAL_CAPSULE -> resolveTopTabVisualTuning()
     }
 }
 
@@ -420,105 +420,114 @@ internal fun resolveTopTabContentScale(
     selectionFraction: Float,
     showIcon: Boolean,
     showText: Boolean,
-    uiPreset: UiPreset
+    presentation: AppTopTabPresentation
 ): Float {
     if (showIcon && showText) return 1f
 
     val clampedFraction = selectionFraction.coerceIn(0f, 1f)
-    val maxScale = when (uiPreset) {
-        UiPreset.IOS -> 1.03f
-        UiPreset.MD3 -> 1.04f
+    val maxScale = when (presentation) {
+        AppTopTabPresentation.MOVING_CAPSULE -> 1.03f
+        AppTopTabPresentation.MATERIAL_UNDERLINE,
+        AppTopTabPresentation.TONAL_CAPSULE -> 1.04f
     }
     return 1f + ((maxScale - 1f) * clampedFraction)
 }
 
 internal fun resolveMd3TopTabVisualSpec(
     isFloatingStyle: Boolean,
-    androidNativeVariant: AndroidNativeVariant = AndroidNativeVariant.MATERIAL3,
+    presentation: AppTopTabPresentation = AppTopTabPresentation.TONAL_CAPSULE,
     labelMode: Int = 2
 ): Md3TopTabVisualSpec {
     val normalizedLabelMode = normalizeTopTabLabelMode(labelMode)
     val showIconAndText = normalizedLabelMode == 0
-    if (androidNativeVariant == AndroidNativeVariant.MIUIX) {
+    if (presentation == AppTopTabPresentation.TONAL_CAPSULE) {
         return if (isFloatingStyle) {
             Md3TopTabVisualSpec(
-                rowHeight = if (showIconAndText) 64.dp else 56.dp,
-                selectedCapsuleHeight = 36.dp,
-                selectedCapsuleCornerRadius = 18.dp,
+                rowHeight = if (showIconAndText) 52.dp else 36.dp,
+                selectedCapsuleHeight = 30.dp,
+                selectedCapsuleCornerRadius = 9.dp,
                 selectedCapsuleTonalElevation = 0.dp,
                 selectedCapsuleShadowElevation = 0.dp,
-                itemHorizontalPadding = 12.dp,
-                iconSize = 24.dp,
+                itemHorizontalPadding = 10.dp,
+                iconSize = 18.dp,
                 labelTextSize = 15.sp,
                 labelLineHeight = 20.sp,
-                iconLabelSpacing = 3.dp
+                iconLabelSpacing = if (showIconAndText) 6.dp else 0.dp
             )
         } else {
             Md3TopTabVisualSpec(
-                rowHeight = if (showIconAndText) 58.dp else 52.dp,
-                selectedCapsuleHeight = 34.dp,
-                selectedCapsuleCornerRadius = 17.dp,
+                rowHeight = if (showIconAndText) 48.dp else 32.dp,
+                selectedCapsuleHeight = 30.dp,
+                selectedCapsuleCornerRadius = 9.dp,
                 selectedCapsuleTonalElevation = 0.dp,
                 selectedCapsuleShadowElevation = 0.dp,
-                itemHorizontalPadding = 12.dp,
-                iconSize = 22.dp,
+                itemHorizontalPadding = 10.dp,
+                iconSize = 18.dp,
                 labelTextSize = 15.sp,
                 labelLineHeight = 20.sp,
-                iconLabelSpacing = 3.dp
+                iconLabelSpacing = if (showIconAndText) 6.dp else 0.dp
             )
         }
     }
 
+    // MATERIAL_UNDERLINE on the home dock shares the compact liquid track with TONAL/Miuix.
+    // Row heights track the shrunken top dock shell (52/48) so labels never clip.
     return if (isFloatingStyle) {
         Md3TopTabVisualSpec(
-            rowHeight = if (showIconAndText) 64.dp else 56.dp,
-            selectedCapsuleHeight = 2.dp,
-            selectedCapsuleCornerRadius = 1.dp,
+            rowHeight = if (showIconAndText) 52.dp else 36.dp,
+            selectedCapsuleHeight = CompactTopTabIndicatorHeightDp.dp,
+            selectedCapsuleCornerRadius = CompactTopTabIndicatorCornerDp.dp,
             selectedCapsuleTonalElevation = 0.dp,
             selectedCapsuleShadowElevation = 0.dp,
-            itemHorizontalPadding = if (showIconAndText) 8.dp else 14.dp,
-            iconSize = 24.dp,
+            itemHorizontalPadding = 10.dp,
+            iconSize = 18.dp,
             labelTextSize = 15.sp,
             labelLineHeight = 20.sp,
-            iconLabelSpacing = if (showIconAndText) 3.dp else 0.dp
+            iconLabelSpacing = if (showIconAndText) 6.dp else 0.dp
         )
     } else {
         Md3TopTabVisualSpec(
-            rowHeight = if (showIconAndText) 62.dp else 54.dp,
-            selectedCapsuleHeight = 2.dp,
-            selectedCapsuleCornerRadius = 1.dp,
+            rowHeight = if (showIconAndText) 48.dp else 32.dp,
+            selectedCapsuleHeight = CompactTopTabIndicatorHeightDp.dp,
+            selectedCapsuleCornerRadius = CompactTopTabIndicatorCornerDp.dp,
             selectedCapsuleTonalElevation = 0.dp,
             selectedCapsuleShadowElevation = 0.dp,
-            itemHorizontalPadding = if (showIconAndText) 8.dp else 12.dp,
-            iconSize = 22.dp,
+            itemHorizontalPadding = 10.dp,
+            iconSize = 18.dp,
             labelTextSize = 15.sp,
             labelLineHeight = 20.sp,
-            iconLabelSpacing = if (showIconAndText) 3.dp else 0.dp
+            iconLabelSpacing = if (showIconAndText) 6.dp else 0.dp
         )
     }
 }
 
 internal fun resolveMd3TopTabSelectedContainerColor(
     colorScheme: ColorScheme,
-    androidNativeVariant: AndroidNativeVariant = AndroidNativeVariant.MATERIAL3
+    presentation: AppTopTabPresentation = AppTopTabPresentation.MATERIAL_UNDERLINE,
+    uiStyle: AppUiStyle = AppUiStyle.MATERIAL3
 ): androidx.compose.ui.graphics.Color = when {
-    androidNativeVariant == AndroidNativeVariant.MIUIX -> colorScheme.secondaryContainer
+    uiStyle == AppUiStyle.MIUIX -> colorScheme.primary
+    presentation == AppTopTabPresentation.TONAL_CAPSULE -> colorScheme.secondaryContainer
     else -> colorScheme.primary
 }
 
 internal fun resolveMd3TopTabSelectedIconColor(
     colorScheme: ColorScheme,
-    androidNativeVariant: AndroidNativeVariant = AndroidNativeVariant.MATERIAL3
+    presentation: AppTopTabPresentation = AppTopTabPresentation.MATERIAL_UNDERLINE,
+    uiStyle: AppUiStyle = AppUiStyle.MATERIAL3
 ): androidx.compose.ui.graphics.Color = when {
-    androidNativeVariant == AndroidNativeVariant.MIUIX -> colorScheme.onSecondaryContainer
+    uiStyle == AppUiStyle.MIUIX -> colorScheme.primary
+    presentation == AppTopTabPresentation.TONAL_CAPSULE -> colorScheme.onSecondaryContainer
     else -> colorScheme.primary
 }
 
 internal fun resolveMd3TopTabSelectedLabelColor(
     colorScheme: ColorScheme,
-    androidNativeVariant: AndroidNativeVariant = AndroidNativeVariant.MATERIAL3
+    presentation: AppTopTabPresentation = AppTopTabPresentation.MATERIAL_UNDERLINE,
+    uiStyle: AppUiStyle = AppUiStyle.MATERIAL3
 ): androidx.compose.ui.graphics.Color = when {
-    androidNativeVariant == AndroidNativeVariant.MIUIX -> colorScheme.onSecondaryContainer
+    uiStyle == AppUiStyle.MIUIX -> colorScheme.primary
+    presentation == AppTopTabPresentation.TONAL_CAPSULE -> colorScheme.onSecondaryContainer
     else -> colorScheme.primary
 }
 
@@ -533,43 +542,38 @@ internal fun resolveMd3TopTabUnselectedLabelColor(
 internal fun resolveMd3TopTabIconTint(
     selectionFraction: Float,
     colorScheme: ColorScheme,
-    androidNativeVariant: AndroidNativeVariant = AndroidNativeVariant.MATERIAL3
+    presentation: AppTopTabPresentation = AppTopTabPresentation.MATERIAL_UNDERLINE,
+    uiStyle: AppUiStyle = AppUiStyle.MATERIAL3
 ) = androidx.compose.ui.graphics.lerp(
     resolveMd3TopTabUnselectedIconColor(colorScheme),
-    resolveMd3TopTabSelectedIconColor(colorScheme, androidNativeVariant),
+    resolveMd3TopTabSelectedIconColor(colorScheme, presentation, uiStyle),
     selectionFraction.coerceIn(0f, 1f)
 )
 
 internal fun resolveMd3TopTabLabelTint(
     selectionFraction: Float,
     colorScheme: ColorScheme,
-    androidNativeVariant: AndroidNativeVariant = AndroidNativeVariant.MATERIAL3
+    presentation: AppTopTabPresentation = AppTopTabPresentation.MATERIAL_UNDERLINE,
+    uiStyle: AppUiStyle = AppUiStyle.MATERIAL3
 ) = androidx.compose.ui.graphics.lerp(
     resolveMd3TopTabUnselectedLabelColor(colorScheme),
-    resolveMd3TopTabSelectedLabelColor(colorScheme, androidNativeVariant),
+    resolveMd3TopTabSelectedLabelColor(colorScheme, presentation, uiStyle),
     selectionFraction.coerceIn(0f, 1f)
 )
 
-internal fun resolveTopTabIndicatorStyle(uiPreset: UiPreset): TopTabIndicatorStyle {
-    return if (uiPreset == UiPreset.MD3) {
-        TopTabIndicatorStyle.MATERIAL
-    } else {
+internal fun resolveTopTabIndicatorStyle(presentation: AppTopTabPresentation): TopTabIndicatorStyle {
+    return if (presentation == AppTopTabPresentation.MOVING_CAPSULE) {
         TopTabIndicatorStyle.CAPSULE
+    } else {
+        TopTabIndicatorStyle.MATERIAL
     }
 }
 
 internal fun shouldUseMd3TopTabMaterialIndicator(
-    uiPreset: UiPreset,
+    presentation: AppTopTabPresentation,
     liquidGlassEnabled: Boolean
 ): Boolean {
-    return resolveTopTabIndicatorStyle(uiPreset) == TopTabIndicatorStyle.MATERIAL
-}
-
-internal fun shouldUsePlainMd3TopTabUnderline(
-    uiPreset: UiPreset,
-    liquidGlassEnabled: Boolean
-): Boolean {
-    return uiPreset == UiPreset.MD3 && !liquidGlassEnabled
+    return resolveTopTabIndicatorStyle(presentation) == TopTabIndicatorStyle.MATERIAL
 }
 
 fun resolveTopTabLabelTextSizeSp(labelMode: Int): Float {
@@ -594,15 +598,15 @@ fun resolveTopTabLabelLineHeightSp(labelMode: Int): Float {
 
 fun resolveTopTabContentMinHeightDp(labelMode: Int = 2): Float {
     return when (normalizeTopTabLabelMode(labelMode)) {
-        0 -> 42f
+        0 -> 30f
         else -> resolveTopTabVisualTuning().tabContentMinHeightDp
     }
 }
 
 fun resolveTopTabContentVerticalPaddingDp(labelMode: Int): Float {
     return when (normalizeTopTabLabelMode(labelMode)) {
-        0 -> 2f
-        else -> 4f
+        0 -> 5f
+        else -> 5f
     }
 }
 
@@ -612,6 +616,16 @@ fun resolveTopTabIconSizeDp(labelMode: Int): Float {
         0 -> tuning.tabIconWithTextSizeDp
         1 -> tuning.tabIconOnlySizeDp
         else -> 0f
+    }
+}
+
+/** Native top-dock standalone icons use a standard 24dp glyph; glass keeps its existing dimensions. */
+internal fun resolveHomeTopDockIconSizeDp(labelMode: Int, liquidGlassEnabled: Boolean): Float {
+    val baseSize = resolveTopTabIconSizeDp(labelMode)
+    return if (!liquidGlassEnabled && normalizeTopTabLabelMode(labelMode) == 1) {
+        maxOf(baseSize, 24f)
+    } else {
+        baseSize
     }
 }
 
@@ -654,13 +668,13 @@ internal fun resolveEffectiveTopTabLiquidGlassEnabled(
     return isLiquidGlassEnabled
 }
 
+@Suppress("UNUSED_PARAMETER")
 internal fun shouldDrawHomeTopTabOuterChromeSurface(
-    uiPreset: UiPreset,
-    androidNativeVariant: AndroidNativeVariant,
+    presentation: AppTopTabPresentation,
     materialMode: TopTabMaterialMode
 ): Boolean {
-    if (uiPreset == UiPreset.MD3 && materialMode != TopTabMaterialMode.LIQUID_GLASS) {
-        return false
-    }
-    return !(uiPreset == UiPreset.MD3 && androidNativeVariant == AndroidNativeVariant.MIUIX)
+    // The full-width track is a liquid-glass affordance. In blur/plain modes it turns
+    // into a high-contrast white pill that competes with the search field, so let the
+    // tab row sit directly on the continuous top backdrop instead.
+    return materialMode == TopTabMaterialMode.LIQUID_GLASS
 }

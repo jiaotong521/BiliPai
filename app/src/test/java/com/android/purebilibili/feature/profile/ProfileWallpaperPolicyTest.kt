@@ -1,6 +1,7 @@
 package com.android.purebilibili.feature.profile
 
 import com.android.purebilibili.core.util.WindowWidthSizeClass
+import androidx.media3.common.Player
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -8,9 +9,16 @@ import org.junit.Test
 class ProfileWallpaperPolicyTest {
 
     @Test
+    fun profileSkinVideoHonorsOnceAndLoopPlayModes() {
+        assertEquals(Player.REPEAT_MODE_OFF, resolveProfileSkinVideoRepeatMode("once"))
+        assertEquals(Player.REPEAT_MODE_ONE, resolveProfileSkinVideoRepeatMode("loop"))
+        assertEquals(Player.REPEAT_MODE_ONE, resolveProfileSkinVideoRepeatMode(null))
+    }
+
+    @Test
     fun compactProfileTopBanner_usesHeroFractionAndClamp() {
         val compactHeight = resolveProfileTopBannerHeightDp(WindowWidthSizeClass.Compact)
-        assertEquals(288f, compactHeight, 0.001f)
+        assertEquals(resolveProfileLayoutTokens().heroMinHeightDp.toFloat(), compactHeight, 0.001f)
     }
 
     @Test
@@ -22,9 +30,9 @@ class ProfileWallpaperPolicyTest {
     }
 
     @Test
-    fun profileImmersiveBackground_isDeferredOnlyDuringBottomPagerTransition() {
+    fun profileStaticBackground_isRetainedDuringBottomPagerTransition() {
         assertEquals(
-            false,
+            true,
             shouldRenderProfileImmersiveBackground(
                 hasTopPhoto = true,
                 deferImmersiveRenderBudget = true

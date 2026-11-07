@@ -89,19 +89,33 @@ class PortraitPagerSwitchPolicyTest {
         assertFalse(
             shouldEnablePortraitPagerUserScroll(
                 scale = 1f,
-                commentOverlayActive = true
+                commentOverlayActive = true,
+                upPreviewActive = false
             )
         )
         assertTrue(
             shouldEnablePortraitPagerUserScroll(
                 scale = 1f,
-                commentOverlayActive = false
+                commentOverlayActive = false,
+                upPreviewActive = false
             )
         )
         assertFalse(
             shouldEnablePortraitPagerUserScroll(
                 scale = 1.2f,
-                commentOverlayActive = false
+                commentOverlayActive = false,
+                upPreviewActive = false
+            )
+        )
+    }
+
+    @Test
+    fun shouldEnablePortraitPagerUserScroll_blocksWhenUpPreviewActive() {
+        assertFalse(
+            shouldEnablePortraitPagerUserScroll(
+                scale = 1f,
+                commentOverlayActive = false,
+                upPreviewActive = true
             )
         )
     }
@@ -228,10 +242,20 @@ class PortraitPagerSwitchPolicyTest {
                 currentPlayerMediaId = " "
             )
         )
+        // Multi-P: same bvid, different cid must reload.
+        assertFalse(
+            shouldSkipPortraitReloadForCurrentMedia(
+                currentPlayingBvid = "BV1xx411c7mD",
+                targetBvid = "BV1xx411c7mD",
+                currentPlayerMediaId = "BV1xx411c7mD#1",
+                targetCid = 2L,
+                currentPlayingCid = 1L
+            )
+        )
     }
 
     @Test
-    fun shouldShowPortraitCover_showOnlyWhenLoadingOrNotReady() {
+    fun shouldShowPortraitCover_holdsUntilFirstFrameAndStaysHiddenDuringRebuffer() {
         assertTrue(
             shouldShowPortraitCover(
                 isLoading = true,
@@ -270,7 +294,7 @@ class PortraitPagerSwitchPolicyTest {
 
         assertFalse(
             shouldShowPortraitCover(
-                isLoading = false,
+                isLoading = true,
                 isCurrentPage = true,
                 isPlayerReadyForThisVideo = true,
                 hasRenderedFirstFrame = true
@@ -297,10 +321,14 @@ class PortraitPagerSwitchPolicyTest {
     }
 
     @Test
-    fun portraitCover_prefersFitScaleToAvoidTemporaryCropJump() {
+    fun portraitCover_fillsVerticalViewportButKeepsLandscapeCoverComplete() {
+        assertEquals(
+            ContentScale.Crop,
+            resolvePortraitCoverContentScale(isVerticalVideo = true)
+        )
         assertEquals(
             ContentScale.Fit,
-            resolvePortraitCoverContentScale()
+            resolvePortraitCoverContentScale(isVerticalVideo = false)
         )
     }
 
@@ -439,6 +467,28 @@ class PortraitPagerSwitchPolicyTest {
     }
 
     @Test
+    fun verticalRecommendations_startLoadingBeforeTheShortFilteredFeedRunsOut() {
+        assertEquals(
+            4,
+            resolvePortraitRecommendationPrefetchThreshold(
+                onlyVerticalRecommendations = true,
+            )
+        )
+        assertEquals(
+            3,
+            resolvePortraitRecommendationFetchAttemptLimit(
+                onlyVerticalRecommendations = true,
+            )
+        )
+        assertEquals(
+            1,
+            resolvePortraitRecommendationPrefetchThreshold(
+                onlyVerticalRecommendations = false,
+            )
+        )
+    }
+
+    @Test
     fun mergePortraitRecommendationAppendItems_filtersDuplicatesAndCurrentVideo() {
         val appendItems = mergePortraitRecommendationAppendItems(
             currentBvid = "BV_CURRENT",
@@ -454,6 +504,23 @@ class PortraitPagerSwitchPolicyTest {
         )
 
         assertEquals(listOf("BV_C", "BV_D"), appendItems.map { it.bvid })
+    }
+
+    @Test
+    fun externalRecommendationAppend_keepsOnlyNewBvidsInOrder() {
+        val appendItems = resolvePortraitExternalRecommendationAppendItems(
+            currentInitialBvid = "BV_SEED",
+            existingBvids = setOf("BV_SEED", "BV_A"),
+            externalRecommendations = listOf(
+                related("BV_SEED"),
+                related("BV_A"),
+                related("BV_B"),
+                related("BV_C"),
+                related("BV_B")
+            )
+        )
+
+        assertEquals(listOf("BV_B", "BV_C"), appendItems.map { it.bvid })
     }
 
     @Test
@@ -558,6 +625,18 @@ class PortraitPagerSwitchPolicyTest {
     }
 
     @Test
+    fun portraitRecommendationSimilarity_usesHoistedTitleRegexAndCachedSignatures() {
+        val source = java.io.File(
+            "src/main/java/com/android/purebilibili/feature/video/ui/pager/PortraitPagerSwitchPolicy.kt"
+        ).readText()
+
+        assertTrue(source.contains("private val PORTRAIT_TITLE_BRACKET_PATTERN"))
+        assertTrue(source.contains("private val PORTRAIT_TITLE_ZH_TOKEN_PATTERN"))
+        assertTrue(source.contains("signatureCache.getOrPut"))
+        assertFalse(source.contains("val zhTokens = Regex("))
+    }
+
+    @Test
     fun shufflePortraitRecommendations_deduplicatesBlankAndRepeatedBvids() {
         val shuffled = shufflePortraitRecommendations(
             seed = 7,
@@ -606,6 +685,20 @@ class PortraitPagerSwitchPolicyTest {
     }
 
     @Test
+    fun shufflePortraitRecommendations_avoidsSameOwnerAtPreviousListBoundary() {
+        val shuffled = shufflePortraitRecommendations(
+            seed = 1,
+            recommendations = listOf(
+                related(bvid = "BV_SAME", ownerMid = 7L),
+                related(bvid = "BV_OTHER", ownerMid = 8L)
+            ),
+            precedingOwnerMid = 7L
+        )
+
+        assertEquals(8L, shuffled.first().owner.mid)
+    }
+
+    @Test
     fun toRelatedVideoForPortraitRecommendation_mapsVideoItemFields() {
         val related = toRelatedVideoForPortraitRecommendation(
             VideoItem(
@@ -617,7 +710,8 @@ class PortraitPagerSwitchPolicyTest {
                 pic = "https://example.com/cover.jpg",
                 owner = Owner(mid = 6L, name = "up"),
                 stat = Stat(view = 10, like = 5),
-                duration = 99
+                duration = 99,
+                isVertical = true,
             )
         )
 
@@ -626,6 +720,7 @@ class PortraitPagerSwitchPolicyTest {
         assertEquals(82L, related?.cid)
         assertEquals("sample", related?.title)
         assertEquals(99, related?.duration)
+        assertEquals(true, related?.isVertical)
     }
 
     @Test
@@ -657,5 +752,30 @@ class PortraitPagerSwitchPolicyTest {
         assertEquals(related.owner.mid, info.owner.mid)
         assertEquals(related.stat.view, info.stat.view)
         assertEquals(65L, info.pages.firstOrNull()?.duration)
+    }
+
+    @Test
+    fun requestVideoChange_insertsMissingPortraitPageInsteadOfNoOp() {
+        val source = java.io.File(
+            "app/src/main/java/com/android/purebilibili/feature/video/ui/pager/PortraitVideoPager.kt"
+        ).takeIf { it.exists() }
+            ?: java.io.File("src/main/java/com/android/purebilibili/feature/video/ui/pager/PortraitVideoPager.kt")
+        val text = source.readText()
+
+        assertTrue(
+            text.contains("val jumpToPortraitPageForVideo: (String, Long, UgcSeason?) -> Unit"),
+            "竖屏点视频应复用 insert-or-scroll 跳转 helper。"
+        )
+        assertTrue(
+            text.contains("onRequestVideoChange = { targetBvid ->"),
+        )
+        assertTrue(
+            text.contains("jumpToPortraitPageForVideo(normalizedBvid, 0L, null)"),
+            "Up 预览点视频必须走 jumpToPortraitPageForVideo，不能静默 no-op。"
+        )
+        assertTrue(
+            text.contains("onRequestCollectionItem = jumpToPortraitPageForVideo"),
+            "合集点击与 Up 预览点击共用同一 insert-or-scroll 路径。"
+        )
     }
 }

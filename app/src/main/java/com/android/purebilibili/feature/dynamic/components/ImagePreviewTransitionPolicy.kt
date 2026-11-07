@@ -1,15 +1,24 @@
 package com.android.purebilibili.feature.dynamic.components
 
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.SpringSpec
+import androidx.compose.animation.core.TweenSpec
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.min
-import kotlin.math.pow
+import kotlin.math.roundToInt
 
-private const val LAYOUT_PROGRESS_MIN = -0.08f
-private const val LAYOUT_PROGRESS_MAX = 1.02f
+private const val LAYOUT_PROGRESS_MIN = 0f
+private const val LAYOUT_PROGRESS_MAX = 1f
 private const val FALLBACK_START_SCALE = 0.96f
-private const val DISMISS_OVERSHOOT_FACTOR = 0.03f
+private const val IMAGE_PREVIEW_OPEN_DURATION_MS = 260
+private const val IMAGE_PREVIEW_CANCEL_RECOVER_DURATION_MS = 180
+private const val IMAGE_PREVIEW_VERTICAL_DISMISS_FRACTION = 0.18f
+private const val IMAGE_PREVIEW_BLUR_QUANTUM_PX = 2f
 
 internal data class ImagePreviewTransitionFrame(
     val layoutProgress: Float,
@@ -25,8 +34,13 @@ internal data class ImagePreviewVisualFrame(
 )
 
 internal data class ImagePreviewDismissMotion(
+    /** 关闭落点：一镜到底直落到 0，不再 overshoot。 */
     val overshootTarget: Float,
-    val settleTarget: Float
+    val settleTarget: Float,
+    /** 预测返回取消后的回弹时长。 */
+    val cancelRecoverDurationMillis: Int,
+    /** 打开时长；关闭使用 spring，由位移和速度决定收敛时间。 */
+    val openDurationMillis: Int
 )
 
 internal data class ImagePreviewDismissTransform(
@@ -97,6 +111,14 @@ internal data class CommentImagePreviewPageTransform(
     val alpha: Float
 )
 
+internal data class ImagePreviewGalleryPageTransform(
+    val rotationY: Float,
+    val pivotFractionX: Float,
+    val translationXPx: Float,
+    val scale: Float,
+    val alpha: Float
+)
+
 internal data class ImagePreviewOverlayPadding(
     val start: Dp,
     val top: Dp,
@@ -111,11 +133,12 @@ internal fun resolveImagePreviewTransitionFrame(
 ): ImagePreviewTransitionFrame {
     val layoutProgress = rawProgress.coerceIn(LAYOUT_PROGRESS_MIN, LAYOUT_PROGRESS_MAX)
     val visualProgress = rawProgress.coerceIn(0f, 1f)
-    val cornerRadiusDp = if (hasSourceRect) {
-        sourceCornerRadiusDp.coerceAtLeast(0f)
-    } else {
-        0f
-    }
+    val cornerRadiusDp = resolveImagePreviewPresentedCornerRadiusDp(
+        visualProgress = visualProgress,
+        verticalDragProgress = 0f,
+        hasSourceRect = hasSourceRect,
+        sourceCornerRadiusDp = sourceCornerRadiusDp
+    )
     val fallbackScale = lerpFloat(FALLBACK_START_SCALE, 1f, visualProgress)
     return ImagePreviewTransitionFrame(
         layoutProgress = layoutProgress,
@@ -125,10 +148,29 @@ internal fun resolveImagePreviewTransitionFrame(
     )
 }
 
+/**
+ * 全屏打开时圆角为 0；返回/竖滑退出时插值到缩略图圆角，贴回格子更自然。
+ */
+internal fun resolveImagePreviewPresentedCornerRadiusDp(
+    visualProgress: Float,
+    verticalDragProgress: Float,
+    hasSourceRect: Boolean,
+    sourceCornerRadiusDp: Float,
+    openCornerRadiusDp: Float = 0f
+): Float {
+    if (!hasSourceRect) return openCornerRadiusDp.coerceAtLeast(0f)
+    val source = sourceCornerRadiusDp.coerceAtLeast(0f)
+    val open = openCornerRadiusDp.coerceAtLeast(0f)
+    val morphCorner = lerpFloat(source, open, visualProgress.coerceIn(0f, 1f))
+    val dragCorner = lerpFloat(open, source, verticalDragProgress.coerceIn(0f, 1f))
+    return maxOf(morphCorner, dragCorner)
+}
+
 internal fun resolveImagePreviewVisualFrame(
     visualProgress: Float,
     transitionEnabled: Boolean,
-    maxBlurRadiusPx: Float
+    maxBlurRadiusPx: Float,
+    blurEnabled: Boolean = true,
 ): ImagePreviewVisualFrame {
     val progress = visualProgress.coerceIn(0f, 1f)
     if (!transitionEnabled) {
@@ -140,16 +182,90 @@ internal fun resolveImagePreviewVisualFrame(
     }
 
     return ImagePreviewVisualFrame(
-        contentAlpha = lerpFloat(0.9f, 1f, progress),
+        // Match PiliPlus Hero behavior: only the route backdrop fades; the shared image
+        // stays fully opaque throughout the flight, avoiding the initial dark flash.
+        contentAlpha = 1f,
         backdropAlpha = progress,
-        blurRadiusPx = maxBlurRadiusPx.coerceAtLeast(0f) * (1f - progress)
+        blurRadiusPx = if (blurEnabled) {
+            resolveImagePreviewBlurRadiusPx(
+                visualProgress = progress,
+                maxBlurRadiusPx = maxBlurRadiusPx,
+            )
+        } else {
+            0f
+        }
     )
+}
+
+/** Keep a smooth ease-out landing while shortening the route response. */
+internal fun imagePreviewOpenTween(): TweenSpec<Float> =
+    tween(durationMillis = IMAGE_PREVIEW_OPEN_DURATION_MS, easing = CubicBezierEasing(0f, 0f, 0.58f, 1f))
+
+/**
+ * 关闭回位用临界阻尼 spring 而非 easeIn tween：easeIn 在 t=0 斜率为 0，
+ * 松手后画面会先"停一下"再窜出，且末端速度最大造成硬着陆。
+ * 临界阻尼 spring 起步即可携带手势速度，落地自带减速，与评论区下拉关闭的手感一致。
+ */
+internal fun imagePreviewCloseSpring(): SpringSpec<Float> =
+    spring(dampingRatio = 1f, stiffness = 600f)
+
+/** 关闭回位允许携带的手势速度上限（px/s），避免极端快挥把画面甩过落点方向。 */
+internal fun clampImagePreviewDismissVelocity(velocityY: Float): Float =
+    velocityY.coerceIn(-3000f, 3000f)
+
+/** Project px/s onto the return path, then convert to progress/s. Never reverse the exit. */
+internal fun resolveImagePreviewDismissProgressVelocity(
+    velocityY: Float,
+    startRect: Rect?,
+    targetRect: Rect?,
+    containerHeightPx: Float,
+    startProgress: Float = 1f,
+): Float {
+    val velocity = clampImagePreviewDismissVelocity(velocityY)
+    val progress = startProgress.coerceIn(0f, 1f)
+    val projectedVelocity = if (startRect != null && targetRect != null) {
+        val dx = targetRect.center.x - startRect.center.x
+        val dy = targetRect.center.y - startRect.center.y
+        -velocity * dy / (dx * dx + dy * dy).coerceAtLeast(120f * 120f)
+    } else {
+        -kotlin.math.abs(velocity) / containerHeightPx.coerceAtLeast(120f)
+    }
+    // Below the critically damped spring's natural frequency: no overshoot past the source.
+    return (projectedVelocity * progress).coerceIn(-12f * progress, 0f)
+}
+
+internal fun resolveImagePreviewDismissCornerRadiusDp(
+    remainingProgress: Float,
+    startCornerRadiusDp: Float,
+    targetCornerRadiusDp: Float,
+): Float = lerpFloat(
+    targetCornerRadiusDp.coerceAtLeast(0f),
+    startCornerRadiusDp.coerceAtLeast(0f),
+    remainingProgress.coerceIn(0f, 1f),
+)
+
+/**
+ * 模糊随回位进度线性爬升。此前用 returnProgress² 会让模糊集中在关闭后半段
+ * 突然涌出，叠加量化步进呈现"跳级"感；线性曲线整段均匀，步进仍用于防抖动。
+ */
+internal fun resolveImagePreviewBlurRadiusPx(
+    visualProgress: Float,
+    maxBlurRadiusPx: Float,
+): Float {
+    val returnProgress = 1f - visualProgress.coerceIn(0f, 1f)
+    val maxRadius = maxBlurRadiusPx.coerceAtLeast(0f)
+    val linearRadius = maxRadius * returnProgress
+    return ((linearRadius / IMAGE_PREVIEW_BLUR_QUANTUM_PX).roundToInt() *
+        IMAGE_PREVIEW_BLUR_QUANTUM_PX).coerceIn(0f, maxRadius)
 }
 
 internal fun imagePreviewDismissMotion(): ImagePreviewDismissMotion {
     return ImagePreviewDismissMotion(
+        // 一镜到底：单段连续 morph 到缩略图，不做 overshoot + spring 二次落点。
         overshootTarget = 0f,
-        settleTarget = 0f
+        settleTarget = 0f,
+        cancelRecoverDurationMillis = IMAGE_PREVIEW_CANCEL_RECOVER_DURATION_MS,
+        openDurationMillis = IMAGE_PREVIEW_OPEN_DURATION_MS
     )
 }
 
@@ -166,14 +282,8 @@ internal fun resolveImagePreviewDismissTransform(
         )
     }
 
-    val clampedProgress = transitionProgress.coerceIn(LAYOUT_PROGRESS_MIN, 1f)
-    val baseDismiss = (1f - clampedProgress.coerceIn(0f, 1f)).pow(1.6f)
-    val overshoot = if (clampedProgress < 0f) {
-        ((-clampedProgress) / (-LAYOUT_PROGRESS_MIN)) * DISMISS_OVERSHOOT_FACTOR
-    } else {
-        0f
-    }
-    val dismissFraction = baseDismiss + overshoot
+    // 几何插值保持线性；速度曲线只交给 Animatable 的 Continuity easing。
+    val dismissFraction = resolveImagePreviewDismissFraction(transitionProgress)
     val targetScale = min(
         sourceRect.width / displayedImageRect.width,
         sourceRect.height / displayedImageRect.height
@@ -220,6 +330,22 @@ internal fun resolveImagePreviewDismissRectFrame(
     )
 }
 
+/** Source thumbnail to the full preview surface, preserving a rect flight for image clipping. */
+internal fun resolveImagePreviewOpenRect(
+    transitionProgress: Float,
+    sourceRect: Rect?,
+    previewSurfaceRect: Rect?
+): Rect? {
+    if (sourceRect == null || previewSurfaceRect == null) return null
+    val progress = transitionProgress.coerceIn(0f, 1f)
+    return Rect(
+        left = lerpFloat(sourceRect.left, previewSurfaceRect.left, progress),
+        top = lerpFloat(sourceRect.top, previewSurfaceRect.top, progress),
+        right = lerpFloat(sourceRect.right, previewSurfaceRect.right, progress),
+        bottom = lerpFloat(sourceRect.bottom, previewSurfaceRect.bottom, progress)
+    )
+}
+
 internal fun resolveImagePreviewDismissStartRect(
     previewSurfaceRect: Rect?,
     displayedImageRect: Rect?,
@@ -253,13 +379,14 @@ internal fun resolveImagePreviewOverlayPadding(
 internal fun resolveImagePreviewDraggedDisplayRect(
     displayedImageRect: Rect?,
     translationYPx: Float,
-    scale: Float
+    scale: Float,
+    translationXPx: Float = 0f
 ): Rect? {
     if (displayedImageRect == null) return null
     val safeScale = scale.coerceAtLeast(0.01f)
     val width = displayedImageRect.width * safeScale
     val height = displayedImageRect.height * safeScale
-    val centerX = (displayedImageRect.left + displayedImageRect.right) / 2f
+    val centerX = (displayedImageRect.left + displayedImageRect.right) / 2f + translationXPx
     val centerY = (displayedImageRect.top + displayedImageRect.bottom) / 2f + translationYPx
     return Rect(
         left = centerX - width / 2f,
@@ -290,7 +417,10 @@ internal fun resolveImagePreviewVerticalDismissDecision(
     dragOffsetYPx: Float,
     containerHeightPx: Float
 ): ImagePreviewVerticalDismissDecision {
-    val threshold = maxOf(120f, containerHeightPx.coerceAtLeast(1f) * 0.14f)
+    val threshold = maxOf(
+        120f,
+        containerHeightPx.coerceAtLeast(1f) * IMAGE_PREVIEW_VERTICAL_DISMISS_FRACTION
+    )
     return if (kotlin.math.abs(dragOffsetYPx) >= threshold) {
         ImagePreviewVerticalDismissDecision.DISMISS
     } else {
@@ -299,10 +429,73 @@ internal fun resolveImagePreviewVerticalDismissDecision(
 }
 
 internal fun resolveImagePreviewDismissBackdropAlpha(
+    visualProgress: Float,
+    startAlpha: Float = 1f,
+): Float {
+    // 保留下拉结束时的遮罩透明度，再与回位 morph 同步淡出，避免门槛处闪黑。
+    return startAlpha.coerceIn(0f, 1f) * visualProgress.coerceIn(0f, 1f)
+}
+
+/**
+ * Chrome（顶栏/评论条）比图片 morph 更早淡出，避免控件跟着缩变形。
+ */
+/**
+ * Rect 飞行路径的图片全程不透明、自己飞回缩略图，避免初始暗闪；
+ * fallback 关闭（无 sourceRect）没有落点，图片必须与遮罩同步淡出，
+ * 否则窗口移除瞬间全屏图凭空消失，产生一次闪切。
+ */
+internal fun resolveImagePreviewDismissContentAlpha(
+    hasRectFlight: Boolean,
+    isDismissing: Boolean,
     visualProgress: Float
 ): Float {
-    return visualProgress.coerceIn(0f, 1f).pow(0.45f)
+    if (hasRectFlight || !isDismissing) return 1f
+    return visualProgress.coerceIn(0f, 1f)
 }
+
+/**
+ * Chrome（顶栏/评论条）比图片 morph 更早淡出，避免控件跟着缩变形。
+ * 淡出窗口 [0.05, 0.6]：与背景/图片的节奏错位比旧的 [0.35, 1] 更小，
+ * 又仍保证后半段只剩干净的图片飞回。
+ */
+internal fun resolveImagePreviewChromeAlpha(
+    visualProgress: Float,
+    isDismissing: Boolean
+): Float {
+    val progress = visualProgress.coerceIn(0f, 1f)
+    if (!isDismissing) return progress
+    return ((progress - 0.05f) / 0.55f).coerceIn(0f, 1f)
+}
+
+/**
+ * 圆角在非均匀缩放图层上会被拉伸成椭圆。按轴分别反除缩放，
+ * 屏幕上的圆角在飞行全程保持正圆。
+ */
+internal data class ImagePreviewCounterScaledCornerRadii(
+    val horizontalDp: Float,
+    val verticalDp: Float
+)
+
+internal fun resolveImagePreviewCounterScaledCornerRadii(
+    cornerRadiusDp: Float,
+    scaleX: Float,
+    scaleY: Float
+): ImagePreviewCounterScaledCornerRadii {
+    val radius = cornerRadiusDp.coerceAtLeast(0f)
+    val cap = radius * 64f
+    return ImagePreviewCounterScaledCornerRadii(
+        horizontalDp = (radius / scaleX.coerceAtLeast(0.01f)).coerceAtMost(cap),
+        verticalDp = (radius / scaleY.coerceAtLeast(0.01f)).coerceAtMost(cap)
+    )
+}
+
+/** 3D 翻页强度随进度在 [0.85, 1] 平滑进入，替代硬阈值开关造成的尾段跳变。 */
+internal fun resolveImagePreviewGallery3DBlend(transitionProgress: Float): Float =
+    ((transitionProgress.coerceIn(0f, 1f) - 0.85f) / 0.15f).coerceIn(0f, 1f)
+
+/** 实况照片在 [0.7, 1] 随进度淡入，替代 0.85 处的整帧弹入。 */
+internal fun resolveImagePreviewLivePhotoAlpha(visualProgress: Float): Float =
+    ((visualProgress.coerceIn(0f, 1f) - 0.7f) / 0.3f).coerceIn(0f, 1f)
 
 internal fun resolveImagePreviewText(
     textContent: ImagePreviewTextContent?,
@@ -378,6 +571,29 @@ internal fun resolveCommentImagePreviewPageTransform(
     )
 }
 
+/**
+ * 普通画廊的可选 3D 翻页。角度和位移比评论面板更轻，减少边缘拉伸与切页时的黑缝。
+ */
+internal fun resolveImagePreviewGalleryPageTransform(
+    pageOffsetFraction: Float,
+    containerWidthPx: Float
+): ImagePreviewGalleryPageTransform {
+    val clampedOffset = pageOffsetFraction.coerceIn(-1f, 1f)
+    val absOffset = kotlin.math.abs(clampedOffset)
+    val pivot = when {
+        clampedOffset > 0.001f -> 1f
+        clampedOffset < -0.001f -> 0f
+        else -> 0.5f
+    }
+    return ImagePreviewGalleryPageTransform(
+        rotationY = -clampedOffset * 48f,
+        pivotFractionX = pivot,
+        translationXPx = -clampedOffset * containerWidthPx.coerceAtLeast(1f) * 0.08f,
+        scale = lerpFloat(1f, 0.94f, absOffset),
+        alpha = lerpFloat(1f, 0.84f, absOffset)
+    )
+}
+
 internal fun resolveCommentImageOriginalSizeLabel(sizeKb: Float?): String {
     val safeSize = sizeKb?.takeIf { it > 0f } ?: return "查看原图"
     return if (safeSize >= 1024f) {
@@ -399,13 +615,10 @@ private fun lerpFloat(start: Float, stop: Float, fraction: Float): Float {
     return start + (stop - start) * fraction
 }
 
+/**
+ * 进度 1 = 全屏打开，0 = 落回缩略图。
+ * 几何插值线性，避免与 Animatable easing 叠加重映射导致末段发黏。
+ */
 private fun resolveImagePreviewDismissFraction(transitionProgress: Float): Float {
-    val clampedProgress = transitionProgress.coerceIn(LAYOUT_PROGRESS_MIN, 1f)
-    val baseDismiss = (1f - clampedProgress.coerceIn(0f, 1f)).pow(1.6f)
-    val overshoot = if (clampedProgress < 0f) {
-        ((-clampedProgress) / (-LAYOUT_PROGRESS_MIN)) * DISMISS_OVERSHOOT_FACTOR
-    } else {
-        0f
-    }
-    return baseDismiss + overshoot
+    return (1f - transitionProgress.coerceIn(0f, 1f)).coerceIn(0f, 1f)
 }

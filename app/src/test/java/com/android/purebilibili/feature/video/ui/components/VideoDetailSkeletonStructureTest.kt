@@ -8,14 +8,16 @@ import kotlin.test.assertTrue
 class VideoDetailSkeletonStructureTest {
 
     @Test
-    fun detailSkeletonUsesSynchronizedPulseInsteadOfSweepShimmer() {
+    fun detailSkeletonSharesSweepStateWithoutCompositionFrameReads() {
         val source = loadSource(
             "app/src/main/java/com/android/purebilibili/feature/video/ui/components/SkeletonComponents.kt"
         )
 
         assertTrue(source.contains("rememberVideoSkeletonPulse()"))
-        assertTrue(source.contains("RepeatMode.Reverse"))
-        assertTrue(source.contains("VIDEO_SKELETON_PULSE_DURATION_MILLIS"))
+        assertTrue(source.contains("State<Float>?>"))
+        assertTrue(source.contains("rememberSkeletonSweepState()"))
+        assertTrue(source.contains(".skeletonBackground(rememberVideoSkeletonBlockColor())"))
+        assertFalse(source.contains("val pulse by"))
         assertFalse(source.contains("com.valentinilk.shimmer.shimmer"))
         assertFalse(source.contains("modifier.shimmer()"))
     }
@@ -29,10 +31,24 @@ class VideoDetailSkeletonStructureTest {
         assertTrue(source.contains("VideoDetailTabBarSkeleton()"))
         assertTrue(source.contains("VideoDetailUpInfoSkeleton()"))
         assertTrue(source.contains("VideoDetailActionButtonsSkeleton()"))
-        assertTrue(source.contains("val relatedCoverWidth = 130.dp"))
-        assertTrue(source.contains("relatedCoverWidth / VIDEO_SHARED_COVER_ASPECT_RATIO"))
-        assertTrue(source.contains(".padding(5.dp)"))
+        assertTrue(source.contains("HorizontalVideoCardFrame("))
+        assertTrue(source.contains("videoCardCoverAspectRatio()"))
+        assertTrue(source.contains("coverAspectRatio = cardLayout.coverAspectRatio"))
+        assertTrue(source.contains("cardLayout.outerPaddingDp.dp"))
         assertTrue(source.contains("RoundedCornerShape(12.dp)"))
+    }
+
+    @Test
+    fun foldableAndLargeScreenPanesRenderLoadingBeforeSuccess() {
+        val tablet = loadSource("app/src/main/java/com/android/purebilibili/feature/video/screen/TabletVideoLayout.kt")
+        val large = loadSource("app/src/main/java/com/android/purebilibili/feature/video/screen/LargeScreenVideoLayout.kt")
+        assertTrue(tablet.contains("uiState is VideoPlaybackUiState.Loading && !layoutPolicy.useTabletopLayout"))
+        assertTrue(tablet.contains("VideoDetailInfoPaneSkeleton("))
+        assertTrue(tablet.split("VideoDetailSecondaryPaneSkeleton(").size >= 3)
+        assertTrue(large.contains("VideoDetailInfoPaneSkeleton("))
+        assertTrue(large.contains("VideoDetailSecondaryPaneSkeleton("))
+        assertTrue(tablet.contains("relatedLoadState = success.relatedLoadState"))
+        assertTrue(tablet.contains("tablet_intro_related_loading"))
     }
 
     private fun loadSource(path: String): String {

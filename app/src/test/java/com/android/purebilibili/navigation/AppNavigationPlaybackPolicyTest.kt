@@ -14,11 +14,55 @@ class AppNavigationPlaybackPolicyTest {
     }
 
     @Test
+    fun relatedDetailDisablesInternalSharedTransition() {
+        assertFalse(
+            shouldEnableVideoDetailSharedTransition(
+                cardTransitionEnabled = true,
+                sourceRoute = "video/BV_PARENT",
+            )
+        )
+        assertTrue(
+            shouldEnableVideoDetailSharedTransition(
+                cardTransitionEnabled = true,
+                sourceRoute = ScreenRoutes.Home.route,
+            )
+        )
+        assertFalse(
+            shouldEnableVideoDetailSharedTransition(
+                cardTransitionEnabled = false,
+                sourceRoute = ScreenRoutes.Home.route,
+            )
+        )
+    }
+
+    @Test
     fun leavingVideoToHome_shouldStopPlaybackEagerly() {
         assertTrue(
             shouldStopPlaybackEagerlyOnVideoRouteExit(
                 fromRoute = VideoRoute.route,
-                toRoute = ScreenRoutes.Home.route
+                toRoute = ScreenRoutes.Home.route,
+                isVideoEntryRetained = false,
+            )
+        )
+    }
+
+    @Test
+    fun coveringRetainedVideo_doesNotDestroyItsPlaybackIntentBeforeSessionSuspension() {
+        for (target in listOf("search?keyword=android", ScreenRoutes.Settings.route, "video/BVchild")) {
+            assertFalse(
+                shouldStopPlaybackEagerlyOnVideoRouteExit(
+                    fromRoute = "video/BVparent",
+                    toRoute = target,
+                    isVideoEntryRetained = true,
+                ),
+                target,
+            )
+        }
+        assertTrue(
+            shouldStopPlaybackEagerlyOnVideoRouteExit(
+                fromRoute = "video/BVparent",
+                toRoute = "search?keyword=android",
+                isVideoEntryRetained = false,
             )
         )
     }
@@ -28,7 +72,8 @@ class AppNavigationPlaybackPolicyTest {
         assertFalse(
             shouldStopPlaybackEagerlyOnVideoRouteExit(
                 fromRoute = VideoRoute.route,
-                toRoute = ScreenRoutes.AudioMode.route
+                toRoute = ScreenRoutes.AudioMode.route,
+                isVideoEntryRetained = false,
             )
         )
     }
@@ -38,7 +83,8 @@ class AppNavigationPlaybackPolicyTest {
         assertFalse(
             shouldStopPlaybackEagerlyOnVideoRouteExit(
                 fromRoute = VideoRoute.route,
-                toRoute = ScreenRoutes.Space.createRoute(123L)
+                toRoute = ScreenRoutes.Space.createRoute(123L),
+                isVideoEntryRetained = false,
             )
         )
     }
@@ -48,7 +94,8 @@ class AppNavigationPlaybackPolicyTest {
         assertFalse(
             shouldStopPlaybackEagerlyOnVideoRouteExit(
                 fromRoute = VideoRoute.route,
-                toRoute = VideoRoute.route
+                toRoute = VideoRoute.route,
+                isVideoEntryRetained = false,
             )
         )
     }
@@ -58,7 +105,8 @@ class AppNavigationPlaybackPolicyTest {
         assertFalse(
             shouldStopPlaybackEagerlyOnVideoRouteExit(
                 fromRoute = VideoRoute.route,
-                toRoute = null
+                toRoute = null,
+                isVideoEntryRetained = false,
             )
         )
     }

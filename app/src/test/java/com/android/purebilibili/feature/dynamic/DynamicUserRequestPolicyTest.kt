@@ -3,6 +3,9 @@ package com.android.purebilibili.feature.dynamic
 import com.android.purebilibili.data.model.response.DynamicItem
 import com.android.purebilibili.data.model.response.DynamicModules
 import com.android.purebilibili.data.model.response.DynamicAuthorModule
+import com.android.purebilibili.data.model.response.ArticleMajor
+import com.android.purebilibili.data.model.response.DynamicContentModule
+import com.android.purebilibili.data.model.response.DynamicMajor
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -39,6 +42,16 @@ class DynamicUserRequestPolicyTest {
     }
 
     @Test
+    fun `leaving and returning to an author rejects both old success and failure scopes`() {
+        // The UID alone is insufficient after A → B → A: the previous A request is stale.
+        assertFalse(shouldApplyUserDynamicsResult(123L, 123L, 12L, 10L))
+        assertFalse(shouldApplyUserDynamicsResult(123L, 456L, 12L, 11L))
+        assertTrue(shouldApplyUserDynamicsResult(123L, 123L, 12L, 12L))
+        // Clearing the author filter invalidates pending pagination as well.
+        assertFalse(shouldApplyUserDynamicsResult(null, 123L, 13L, 12L))
+    }
+
+    @Test
     fun `selected user reload policy retries same user when scoped state is empty or failed`() {
         assertFalse(
             shouldReloadSelectedUserDynamics(
@@ -46,7 +59,6 @@ class DynamicUserRequestPolicyTest {
                 nextUid = 123L,
                 currentItems = listOf(DynamicItem(id_str = "cached")),
                 userError = null,
-                localMatchCount = 1
             )
         )
         assertTrue(
@@ -55,7 +67,6 @@ class DynamicUserRequestPolicyTest {
                 nextUid = 123L,
                 currentItems = emptyList(),
                 userError = null,
-                localMatchCount = 0
             )
         )
         assertTrue(
@@ -64,7 +75,6 @@ class DynamicUserRequestPolicyTest {
                 nextUid = 123L,
                 currentItems = listOf(DynamicItem(id_str = "cached")),
                 userError = "加载失败",
-                localMatchCount = 1
             )
         )
     }
@@ -87,14 +97,13 @@ class DynamicUserRequestPolicyTest {
     }
 
     @Test
-    fun `selected user auto load only starts when local timeline has no match`() {
-        assertFalse(
+    fun `selected user always loads authoritative space feed while showing local matches`() {
+        assertTrue(
             shouldAutoLoadSelectedUserDynamics(
                 previousUid = null,
                 nextUid = 10001L,
                 currentItems = emptyList(),
                 userError = null,
-                localMatchCount = 2
             )
         )
         assertTrue(
@@ -103,10 +112,46 @@ class DynamicUserRequestPolicyTest {
                 nextUid = 10001L,
                 currentItems = emptyList(),
                 userError = null,
-                localMatchCount = 0
             )
         )
     }
+
+    @Test
+    fun `selected user content follows the top level category`() {
+        val video = DynamicItem(
+            id_str = "video",
+            type = "DYNAMIC_TYPE_AV",
+        )
+        val article = DynamicItem(
+            id_str = "article",
+            type = "DYNAMIC_TYPE_DRAW",
+        )
+        val legacyArticle = DynamicItem(
+            id_str = "legacy-article",
+            type = "DYNAMIC_TYPE_NONE",
+            modules = DynamicModules(
+                module_dynamic = DynamicContentModule(
+                    major = DynamicMajor(article = ArticleMajor(id = 123L)),
+                ),
+            ),
+        )
+
+        assertEquals(
+            listOf("video"),
+            filterSelectedUserDynamicItems(
+                items = listOf(video, article),
+                logicalTab = 1,
+            ).map { it.id_str },
+        )
+        assertEquals(
+            listOf("article", "legacy-article"),
+            filterSelectedUserDynamicItems(
+                items = listOf(video, article, legacyArticle),
+                logicalTab = 3,
+            ).map { it.id_str },
+        )
+    }
+
 }
 
 private fun buildDynamicItem(id: String, mid: Long) = DynamicItem(

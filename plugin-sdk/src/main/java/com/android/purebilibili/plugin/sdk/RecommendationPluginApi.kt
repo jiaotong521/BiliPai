@@ -9,6 +9,13 @@ enum class RecommendationMode {
 }
 
 @Serializable
+enum class RecommendationStrategy {
+    BALANCED,
+    AFFINITY,
+    EXPLORE
+}
+
+@Serializable
 data class PluginVideoCandidate(
     val bvid: String,
     val title: String,
@@ -44,24 +51,26 @@ data class RecommendationFeedbackSignals(
 @Serializable
 data class RecommendationSceneSignals(
     val eyeCareNightActive: Boolean,
+    /** Unix epoch seconds; hosts should supply their current clock explicitly. */
     val nowEpochSec: Long = 0L
 )
 
 @Serializable
-data class RecommendationRequest(
-    val candidateVideos: List<PluginVideoCandidate>,
-    val historyVideos: List<PluginVideoCandidate>,
+data class RecommendationRequest<T>(
+    val candidateVideos: List<T>,
+    val historyVideos: List<T>,
     val creatorSignals: List<RecommendationCreatorSignal> = emptyList(),
     val feedbackSignals: RecommendationFeedbackSignals = RecommendationFeedbackSignals(),
     val sceneSignals: RecommendationSceneSignals = RecommendationSceneSignals(eyeCareNightActive = false),
     val mode: RecommendationMode,
     val queueLimit: Int,
-    val groupLimit: Int
+    val groupLimit: Int,
+    val strategy: RecommendationStrategy = RecommendationStrategy.BALANCED
 )
 
 @Serializable
-data class RecommendedVideo(
-    val video: PluginVideoCandidate,
+data class RecommendedVideo<T>(
+    val video: T,
     val score: Double,
     val confidence: Float,
     val explanation: String,
@@ -87,22 +96,23 @@ data class RecommendationGroupItem(
     val id: String,
     val title: String,
     val subtitle: String? = null,
-    val score: Double? = null
+    val score: Double? = null,
+    val watchCount: Int? = null
 )
 
 @Serializable
-data class RecommendationResult(
+data class RecommendationResult<T>(
     val sourcePluginId: String,
     val mode: RecommendationMode,
-    val items: List<RecommendedVideo>,
+    val items: List<RecommendedVideo<T>>,
     val groups: List<RecommendationGroup> = emptyList(),
     val historySampleCount: Int = 0,
     val sceneSignals: RecommendationSceneSignals = RecommendationSceneSignals(eyeCareNightActive = false),
+    /** Generation time in Unix epoch milliseconds. */
     val generatedAt: Long = 0L
 )
 
-interface RecommendationPluginApi {
-    val capabilityManifest: PluginCapabilityManifest
+interface RecommendationPluginApi<T> : Plugin {
 
-    fun buildRecommendations(request: RecommendationRequest): RecommendationResult
+    fun buildRecommendations(request: RecommendationRequest<T>): RecommendationResult<T>
 }

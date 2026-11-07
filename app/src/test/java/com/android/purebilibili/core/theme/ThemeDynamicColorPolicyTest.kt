@@ -3,11 +3,14 @@ package com.android.purebilibili.core.theme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
+import com.materialkolor.Contrast
 import com.materialkolor.PaletteStyle
 import com.materialkolor.dynamiccolor.ColorSpec
 import com.android.purebilibili.feature.settings.AppThemeMode
 import com.android.purebilibili.feature.settings.Md3ColorSource
+import java.io.File
 import kotlin.test.Test
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -15,6 +18,73 @@ import top.yukonga.miuix.kmp.theme.ColorSchemeMode
 import com.android.purebilibili.core.theme.iOSSystemGray6
 
 class ThemeDynamicColorPolicyTest {
+
+    @Test
+    fun `all palette specs keep material and miuix roles accessible`() {
+        val seeds = listOf(
+            Color(0xFF007AFF),
+            Color(0xFFFF5722),
+            Color(0xFF34C759),
+        )
+        val modes = listOf(
+            Triple(false, false, "light"),
+            Triple(true, false, "dark"),
+            Triple(true, true, "amoled"),
+        )
+
+        PaletteStyle.KnownStyles.forEach { style ->
+            ColorSpec.SpecVersion.entries.forEach { spec ->
+                seeds.forEach { seed ->
+                    modes.forEach { (dark, amoled, mode) ->
+                        val label = "$style/$spec/$mode/${seed.value}"
+                        val scheme = createBiliPaiStyleColorScheme(
+                            seedColor = seed,
+                            darkTheme = dark,
+                            amoledDarkTheme = amoled,
+                            paletteStyle = style,
+                            colorSpec = spec,
+                        )
+
+                        assertTextContrast(scheme.onBackground, scheme.background, "$label background")
+                        assertTextContrast(scheme.onSurface, scheme.surface, "$label surface")
+                        assertTextContrast(scheme.onSurfaceVariant, scheme.surfaceVariant, "$label surfaceVariant")
+                        assertTextContrast(scheme.onPrimary, scheme.primary, "$label primary")
+                        assertTextContrast(scheme.onPrimaryContainer, scheme.primaryContainer, "$label primaryContainer")
+                        assertTextContrast(scheme.onSecondary, scheme.secondary, "$label secondary")
+                        assertTextContrast(scheme.onSecondaryContainer, scheme.secondaryContainer, "$label secondaryContainer")
+                        assertTextContrast(scheme.onTertiary, scheme.tertiary, "$label tertiary")
+                        assertTextContrast(scheme.onTertiaryContainer, scheme.tertiaryContainer, "$label tertiaryContainer")
+                        assertTextContrast(scheme.onError, scheme.error, "$label error")
+                        assertTextContrast(scheme.onErrorContainer, scheme.errorContainer, "$label errorContainer")
+                        assertTrue(
+                            calculateContrastRatio(scheme.primary, scheme.surface) >= 3f,
+                            "$label primary control is below 3:1",
+                        )
+
+                        val miuix = resolveMiuixColorsFromMaterialBridge(
+                            bridge = createMiuixMaterialBridge(scheme),
+                            darkTheme = dark,
+                        )
+                        assertTextContrast(miuix.onSurface, miuix.surface, "$label miuix surface")
+                        assertTextContrast(miuix.onPrimary, miuix.primary, "$label miuix primary")
+                        assertTextContrast(
+                            miuix.onPrimaryContainer,
+                            miuix.primaryContainer,
+                            "$label miuix primaryContainer",
+                        )
+                        assertTrue(
+                            calculateContrastRatio(miuix.onSecondary, miuix.secondary) >= 3f,
+                            "$label miuix switch roles are below 3:1",
+                        )
+                        assertTrue(
+                            calculateContrastRatio(miuix.sliderKeyPoint, miuix.surface) >= 3f,
+                            "$label miuix slider is below 3:1",
+                        )
+                    }
+                }
+            }
+        }
+    }
 
     @Test
     fun `dynamic color keeps miuix bridge on explicit resolved colors`() {
@@ -67,6 +137,44 @@ class ThemeDynamicColorPolicyTest {
     }
 
     @Test
+    fun `wallpaper changes refresh AndroidX dynamic schemes immediately and on resume`() {
+        val source = File(
+            "app/src/main/java/com/android/purebilibili/core/theme/Theme.kt"
+        ).readText()
+        val observer = source
+            .substringAfter("private fun rememberSystemWallpaperRefreshToken(")
+            .substringBefore("private const val SYSTEM_WALLPAPER_PALETTE_SETTLE_DELAY_MS")
+
+        assertTrue(observer.contains("WallpaperManager.OnColorsChangedListener"))
+        assertTrue(observer.contains("Intent.ACTION_WALLPAPER_CHANGED"))
+        assertTrue(observer.contains("androidx.lifecycle.Lifecycle.Event.ON_RESUME"))
+        assertTrue(observer.contains("wallpaperManager.removeOnColorsChangedListener(listener)"))
+        assertTrue(observer.contains("lifecycleOwner.lifecycle.removeObserver(lifecycleObserver)"))
+    }
+
+    @Test
+    fun `resume fallback refresh is throttled so foreground bounces stay cheap`() {
+        // 从未刷新过（例如首次进入前台）时必须刷新一次。
+        assertTrue(
+            shouldRefreshSystemWallpaperPaletteOnResume(lastRefreshAtMs = null, nowMs = 5_000L)
+        )
+        // 距上次刷新不足阈值：跳过。否则每次切回前台都会重算 dynamic color scheme，
+        // 让整棵树重新取色，正好和用户回前台后的第一次切页抢主线程。
+        assertFalse(
+            shouldRefreshSystemWallpaperPaletteOnResume(
+                lastRefreshAtMs = 1_000L,
+                nowMs = 1_000L + SYSTEM_WALLPAPER_PALETTE_RESUME_MIN_INTERVAL_MS - 1
+            )
+        )
+        assertTrue(
+            shouldRefreshSystemWallpaperPaletteOnResume(
+                lastRefreshAtMs = 1_000L,
+                nowMs = 1_000L + SYSTEM_WALLPAPER_PALETTE_RESUME_MIN_INTERVAL_MS
+            )
+        )
+    }
+
+    @Test
     fun `md3 color source maps wallpaper to monet and custom to static seed`() {
         assertTrue(
             resolveMd3DynamicColorEnabled(
@@ -97,6 +205,27 @@ class ThemeDynamicColorPolicyTest {
                 themeColorIndex = 0
             )
         )
+    }
+
+    @Test
+    fun `wallpaper color scheme remains the exact AndroidX resolved scheme`() {
+        val wallpaperScheme = lightColorScheme(
+            primary = Color(0xFF246A73),
+            secondary = Color(0xFF4F6367),
+            tertiary = Color(0xFF526A92),
+            surface = Color(0xFFF5FAF8)
+        )
+
+        val result = createBiliPaiStyleColorScheme(
+            seedColor = Color.Red,
+            darkTheme = false,
+            amoledDarkTheme = true,
+            paletteStyle = PaletteStyle.Expressive,
+            colorSpec = ColorSpec.SpecVersion.SPEC_2025,
+            dynamicBaseScheme = wallpaperScheme
+        )
+
+        assertEquals(wallpaperScheme, result)
     }
 
     @Test
@@ -132,13 +261,21 @@ class ThemeDynamicColorPolicyTest {
     }
 
     @Test
-    fun `color spec preference defaults to spec 2021 and rejects invalid values`() {
-        assertEquals(ColorSpec.SpecVersion.SPEC_2021, resolveColorSpecPreference(null))
-        assertEquals(ColorSpec.SpecVersion.SPEC_2021, resolveColorSpecPreference("not-a-spec"))
+    fun `color spec preference defaults to spec 2025 and rejects invalid values`() {
+        assertEquals(ColorSpec.SpecVersion.SPEC_2025, resolveColorSpecPreference(null))
+        assertEquals(ColorSpec.SpecVersion.SPEC_2025, resolveColorSpecPreference("not-a-spec"))
         assertEquals(
-            ColorSpec.SpecVersion.SPEC_2025,
-            resolveColorSpecPreference(ColorSpec.SpecVersion.SPEC_2025.name)
+            ColorSpec.SpecVersion.SPEC_2021,
+            resolveColorSpecPreference(ColorSpec.SpecVersion.SPEC_2021.name)
         )
+    }
+
+    @Test
+    fun `color contrast preference defaults to material default and rejects invalid values`() {
+        assertEquals(Contrast.Default, resolveColorContrastPreference(null))
+        assertEquals(Contrast.Default, resolveColorContrastPreference("not-a-contrast"))
+        assertEquals(Contrast.High, resolveColorContrastPreference(Contrast.High.name))
+        assertEquals(Contrast.Reduced, resolveColorContrastPreference(Contrast.Reduced.name))
     }
 
     @Test
@@ -164,14 +301,24 @@ class ThemeDynamicColorPolicyTest {
         assertEquals(Color.Black, result.surface)
         assertEquals(Color(0xFF050505), result.surfaceVariant)
         assertEquals(Color(0xFF090909), result.surfaceContainer)
+        // 容器层五级 + Bright/Dim 也必须压进 AMOLED 暗部阶梯,避免纯黑底上突兀的亮灰层。
+        assertEquals(Color.Black, result.surfaceContainerLowest)
+        assertEquals(Color(0xFF050505), result.surfaceContainerLow)
+        assertEquals(Color(0xFF121212), result.surfaceContainerHigh)
+        assertEquals(Color(0xFF1A1A1A), result.surfaceContainerHighest)
+        assertEquals(Color(0xFF0D0D0D), result.surfaceBright)
+        assertEquals(Color.Black, result.surfaceDim)
     }
 
     @Test
-    fun `static md3 light scheme derives distinct secondary and tertiary roles from source color`() {
-        val scheme = createStaticMd3ColorScheme(
-            primaryColor = Color(0xFF6750A4),
+    fun `custom seed md3 light scheme derives distinct secondary and tertiary roles from source color`() {
+        val scheme = createBiliPaiStyleColorScheme(
+            seedColor = Color(0xFF6750A4),
             darkTheme = false,
-            amoledDarkTheme = false
+            amoledDarkTheme = false,
+            // 生产默认值（Theme.kt）；签名新增必填参数后此处按默认行为补齐。
+            paletteStyle = PaletteStyle.TonalSpot,
+            colorSpec = ColorSpec.SpecVersion.SPEC_2025,
         )
 
         assertNotEquals(scheme.primary, scheme.secondary)
@@ -184,38 +331,41 @@ class ThemeDynamicColorPolicyTest {
     }
 
     @Test
-    fun `static palette keeps selected theme color as light primary even when generated palette drifts`() {
-        val selectedThemeColor = Color(0xFF007AFF)
-        val generatedScheme = lightColorScheme(
-            primary = Color(0xFF2E7D32),
-            primaryContainer = Color(0xFFC8E6C9),
-            background = Color(0xFFF8FBFF)
+    fun `custom seed scheme does not stamp raw seed into surfaceTint`() {
+        val brightSeed = Color(0xFF007AFF)
+
+        val scheme = createBiliPaiStyleColorScheme(
+            seedColor = brightSeed,
+            darkTheme = false,
+            amoledDarkTheme = false,
+            paletteStyle = PaletteStyle.TonalSpot,
+            colorSpec = ColorSpec.SpecVersion.SPEC_2025,
         )
 
-        val scheme = alignStaticColorSchemeWithThemePrimary(
-            scheme = generatedScheme,
-            themePrimaryColor = selectedThemeColor,
-            darkTheme = false
-        )
-
-        assertEquals(selectedThemeColor, scheme.primary)
-        assertNotEquals(generatedScheme.primary, scheme.primary)
-        assertNotEquals(generatedScheme.primaryContainer, scheme.primaryContainer)
-        assertTrue(calculateContrastRatio(scheme.onPrimary, scheme.primary) >= 4.5f)
-        assertTrue(calculateContrastRatio(scheme.onPrimaryContainer, scheme.primaryContainer) >= 4.5f)
+        // tonal elevation 表面会混合 surfaceTint；未调和的原始种子 hex 一旦进入
+        // surfaceTint，弹窗等表面就会被染成过饱和色，因此必须保持 materialkolor
+        // 原生调和值。
+        assertNotEquals(brightSeed, scheme.surfaceTint)
+        assertNotEquals(scheme.primaryContainer, scheme.tertiaryContainer)
     }
 
     @Test
-    fun `static md3 surfaces should respond to different source colors instead of staying fixed`() {
-        val blueScheme = createStaticMd3ColorScheme(
-            primaryColor = Color(0xFF007AFF),
+    fun `custom seed md3 surfaces should respond to different source colors instead of staying fixed`() {
+        val blueScheme = createBiliPaiStyleColorScheme(
+            seedColor = Color(0xFF007AFF),
             darkTheme = false,
-            amoledDarkTheme = false
+            amoledDarkTheme = false,
+            // 生产默认值（Theme.kt）；签名新增必填参数后此处按默认行为补齐。
+            paletteStyle = PaletteStyle.TonalSpot,
+            colorSpec = ColorSpec.SpecVersion.SPEC_2025,
         )
-        val orangeScheme = createStaticMd3ColorScheme(
-            primaryColor = Color(0xFFFF5722),
+        val orangeScheme = createBiliPaiStyleColorScheme(
+            seedColor = Color(0xFFFF5722),
             darkTheme = false,
-            amoledDarkTheme = false
+            amoledDarkTheme = false,
+            // 生产默认值（Theme.kt）；签名新增必填参数后此处按默认行为补齐。
+            paletteStyle = PaletteStyle.TonalSpot,
+            colorSpec = ColorSpec.SpecVersion.SPEC_2025,
         )
 
         assertNotEquals(blueScheme.background, orangeScheme.background)
@@ -224,11 +374,14 @@ class ThemeDynamicColorPolicyTest {
     }
 
     @Test
-    fun `static md3 dark scheme keeps readable accents and source tinted surfaces`() {
-        val scheme = createStaticMd3ColorScheme(
-            primaryColor = Color(0xFF34C759),
+    fun `custom seed md3 dark scheme keeps readable accents and source tinted surfaces`() {
+        val scheme = createBiliPaiStyleColorScheme(
+            seedColor = Color(0xFF34C759),
             darkTheme = true,
-            amoledDarkTheme = false
+            amoledDarkTheme = false,
+            // 生产默认值（Theme.kt）；签名新增必填参数后此处按默认行为补齐。
+            paletteStyle = PaletteStyle.TonalSpot,
+            colorSpec = ColorSpec.SpecVersion.SPEC_2025,
         )
 
         assertNotEquals(scheme.primary, scheme.secondary)
@@ -241,17 +394,23 @@ class ThemeDynamicColorPolicyTest {
     }
 
     @Test
-    fun `static md3 dark scheme preserves selected theme color as primary`() {
+    fun `custom seed dark scheme keeps theme identity via surfaceTint instead of raw primary`() {
         val selectedThemeColor = Color(0xFF007AFF)
 
-        val scheme = createStaticMd3ColorScheme(
-            primaryColor = selectedThemeColor,
+        val scheme = createBiliPaiStyleColorScheme(
+            seedColor = selectedThemeColor,
             darkTheme = true,
-            amoledDarkTheme = false
+            amoledDarkTheme = false,
+            // 生产默认值（Theme.kt）；签名新增必填参数后此处按默认行为补齐。
+            paletteStyle = PaletteStyle.TonalSpot,
+            colorSpec = ColorSpec.SpecVersion.SPEC_2025,
         )
 
-        assertEquals(selectedThemeColor, scheme.primary)
+        // 原始种子色不再强塞进 primary(避免亮色种子产生黑 onPrimary),
+        // 品牌一致性由 surfaceTint 承载,控制色使用 HCT 映射后的可读角色。
+        assertEquals(selectedThemeColor, scheme.surfaceTint)
         assertTrue(calculateContrastRatio(scheme.onPrimary, scheme.primary) >= 4.5f)
+        assertTrue(calculateContrastRatio(scheme.primary, scheme.surface) >= 3f)
     }
 
     @Test
@@ -274,10 +433,13 @@ class ThemeDynamicColorPolicyTest {
             darkTheme = true,
             amoledDarkTheme = false
         )
-        val md3Scheme = createStaticMd3ColorScheme(
-            primaryColor = Color(0xFF34C759),
+        val md3Scheme = createBiliPaiStyleColorScheme(
+            seedColor = Color(0xFF34C759),
             darkTheme = true,
-            amoledDarkTheme = false
+            amoledDarkTheme = false,
+            // 生产默认值（Theme.kt）；签名新增必填参数后此处按默认行为补齐。
+            paletteStyle = PaletteStyle.TonalSpot,
+            colorSpec = ColorSpec.SpecVersion.SPEC_2025,
         )
 
         assertNotEquals(md3Scheme.background, iosScheme.background)
@@ -332,5 +494,12 @@ class ThemeDynamicColorPolicyTest {
         assertEquals(Color.Black, scheme.background)
         assertEquals(Color.Black, scheme.surface)
         assertEquals(Color(0xFF007AFF), scheme.primary)
+    }
+
+    private fun assertTextContrast(foreground: Color, background: Color, label: String) {
+        assertTrue(
+            calculateContrastRatio(foreground, background) >= 4.5f,
+            "$label text is below 4.5:1",
+        )
     }
 }

@@ -4,13 +4,12 @@ import androidx.compose.ui.graphics.Color
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ProfileChromePolicyTest {
 
     @Test
-    fun wallpaperHero_usesWhiteTextAndStrongerDarkThemeScrim() {
+    fun wallpaperHero_usesWhiteTextAndNoDistortedScrim() {
         val lightHero = resolveProfileHeroChrome(
             hasWallpaper = true,
             isDarkTheme = false,
@@ -25,8 +24,8 @@ class ProfileChromePolicyTest {
         )
 
         assertEquals(Color.White, lightHero.textColor)
-        assertEquals(0.55f, lightHero.scrimBottomAlpha)
-        assertEquals(0.65f, darkHero.scrimBottomAlpha)
+        assertEquals(0f, lightHero.scrimBottomAlpha)
+        assertEquals(0f, darkHero.scrimBottomAlpha)
         assertFalse(lightHero.useLightStatusBarIcons)
     }
 
@@ -78,25 +77,4 @@ class ProfileChromePolicyTest {
         assertTrue(resolveProfileContentUsesOpaqueSurface(hasWallpaper = true))
     }
 
-    @Test
-    fun fallbackGradient_onlyAppliesWithoutWallpaper() {
-        assertNull(
-            resolveProfileHeroFallbackGradient(
-                hasWallpaper = true,
-                isDarkTheme = false,
-                surfaceColor = Color.White,
-                surfaceVariantColor = Color.LightGray,
-                primaryContainerColor = Color.Blue
-            )
-        )
-        val gradient = resolveProfileHeroFallbackGradient(
-            hasWallpaper = false,
-            isDarkTheme = true,
-            surfaceColor = Color.Black,
-            surfaceVariantColor = Color.DarkGray,
-            primaryContainerColor = Color.Blue
-        )
-        assertEquals(Color.DarkGray.copy(alpha = 0.92f), gradient?.topColor)
-        assertEquals(Color.Black, gradient?.bottomColor)
-    }
 }

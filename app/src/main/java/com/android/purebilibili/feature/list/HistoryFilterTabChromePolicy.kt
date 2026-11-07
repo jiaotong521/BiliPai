@@ -1,11 +1,11 @@
 package com.android.purebilibili.feature.list
 
 import com.android.purebilibili.core.store.HomeSettings
-import com.android.purebilibili.core.theme.AndroidNativeVariant
-import com.android.purebilibili.core.theme.UiPreset
-import com.android.purebilibili.core.ui.resolveCompactCapsuleChromeSpec
-internal const val HISTORY_FILTER_LIQUID_DOCK_HEIGHT_DP = 58
-internal const val HISTORY_FILTER_LIQUID_DOCK_INDICATOR_HEIGHT_DP = 54
+import com.android.purebilibili.core.ui.AppChromeSizeTokens
+import com.android.purebilibili.core.ui.AppTopChromePolicy
+import com.android.purebilibili.feature.home.components.resolveHomeTopSearchRowHorizontalPadding
+import kotlin.math.roundToInt
+
 internal const val HISTORY_FILTER_LIQUID_DOCK_LABEL_FONT_SIZE_SP = 15
 
 internal data class HistoryFilterTabChromeSpec(
@@ -32,23 +32,32 @@ internal fun resolveHistoryFilterTabItemWidthDp(filterCount: Int): Int {
 
 internal fun resolveHistoryFilterTabChromeSpec(
     homeSettings: HomeSettings,
-    uiPreset: UiPreset,
-    androidNativeVariant: AndroidNativeVariant = AndroidNativeVariant.MATERIAL3,
+    topChromePolicy: AppTopChromePolicy,
     filterCount: Int = HistoryContentFilter.entries.size
 ): HistoryFilterTabChromeSpec {
     val useLiquidDock = shouldUseHistoryFilterLiquidDock(
-        androidNativeLiquidGlassEnabled = homeSettings.androidNativeLiquidGlassEnabled
+        androidNativeLiquidGlassEnabled = homeSettings.otherGlassEnabled
     )
-    val compactChrome = resolveCompactCapsuleChromeSpec(uiPreset, androidNativeVariant)
+    val compactChrome = topChromePolicy.compactChromeSpec
     return if (useLiquidDock) {
+        // Glass filters share the compact category dock height. Search/header height
+        // makes short, content-sized labels produce circular selection indicators.
+        // Keep this sizing inside the glass branch; native chip sizing stays unchanged.
+        val sharedDockHeightDp = AppChromeSizeTokens.BottomBarMatchedSegmentedControlHeightDp
         HistoryFilterTabChromeSpec(
             useLiquidDock = true,
-            heightDp = HISTORY_FILTER_LIQUID_DOCK_HEIGHT_DP,
-            indicatorHeightDp = HISTORY_FILTER_LIQUID_DOCK_INDICATOR_HEIGHT_DP,
-            // 全宽 dock：固定 itemWidth 会把指示器压扁，导致整体显得过小。
+            heightDp = sharedDockHeightDp,
+            indicatorHeightDp = com.android.purebilibili.core.ui.roundMatchedLiquidIndicatorHeightDp(
+                sharedDockHeightDp.toFloat(),
+            ),
+            // Use the shared measured label width and padding for the compact glass capsule.
             itemWidthDp = null,
-            horizontalPaddingDp = 16,
+            horizontalPaddingDp = resolveHomeTopSearchRowHorizontalPadding(topChromePolicy)
+                .value
+                .roundToInt(),
             labelFontSizeSp = HISTORY_FILTER_LIQUID_DOCK_LABEL_FONT_SIZE_SP,
+            // Drag is allowed in the dock middle; FloatingBottomBar leaves the
+            // system-gesture edge bands for predictive back.
             dragSelectionEnabled = true
         )
     } else {

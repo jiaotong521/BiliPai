@@ -2,41 +2,53 @@ package com.android.purebilibili.feature.video.ui.components
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class CommentInputDialogLayoutPolicyTest {
 
     @Test
-    fun portrait_keepsRoomyEditorForComfortableCommentInput() {
-        val policy = resolveCommentInputDialogLayoutPolicy(
-            isLandscape = false
+    fun emojiPanel_reusesMeasuredKeyboardHeight() {
+        assertEquals(
+            420,
+            resolveCommentEmojiPanelHeightDp(
+                fallbackHeightDp = 280,
+                keyboardHeightDp = 420,
+                availableHeightDp = 600,
+            ),
         )
-
-        assertEquals(84, policy.inputBoxMinHeightDp)
-        assertEquals(136, policy.inputBoxMaxHeightDp)
-        assertEquals(220, policy.emojiPanelHeightDp)
-        assertEquals(16, policy.sheetHorizontalPaddingDp)
-        assertEquals(40, policy.toolbarToolButtonSizeDp)
-        assertEquals(6, policy.toolbarToolSpacingDp)
-        assertEquals(16, policy.sendButtonHorizontalPaddingDp)
     }
 
     @Test
-    fun landscape_compactsEditorToReduceVideoOcclusion() {
-        val portraitPolicy = resolveCommentInputDialogLayoutPolicy(
-            isLandscape = false
+    fun emojiPanel_hasUsableHeightBeforeKeyboardMeasurement() {
+        assertEquals(
+            280,
+            resolveCommentEmojiPanelHeightDp(
+                fallbackHeightDp = 280,
+                keyboardHeightDp = 0,
+                availableHeightDp = 600,
+            ),
         )
-        val landscapePolicy = resolveCommentInputDialogLayoutPolicy(
-            isLandscape = true
-        )
+    }
 
-        assertEquals(64, landscapePolicy.inputBoxMinHeightDp)
-        assertEquals(112, landscapePolicy.inputBoxMaxHeightDp)
-        assertEquals(196, landscapePolicy.emojiPanelHeightDp)
-        assertEquals(18, landscapePolicy.sendButtonHorizontalPaddingDp)
-        assertTrue(landscapePolicy.inputBoxMinHeightDp < portraitPolicy.inputBoxMinHeightDp)
-        assertTrue(landscapePolicy.inputBoxMaxHeightDp < portraitPolicy.inputBoxMaxHeightDp)
-        assertTrue(landscapePolicy.emojiPanelHeightDp < portraitPolicy.emojiPanelHeightDp)
+    @Test
+    fun emojiPanel_doesNotPushEditorOutsideShortViewport() {
+        assertEquals(
+            150,
+            resolveCommentEmojiPanelHeightDp(
+                fallbackHeightDp = 280,
+                keyboardHeightDp = 420,
+                availableHeightDp = 150,
+            ),
+        )
+        assertEquals(
+            0,
+            resolveCommentEmojiPanelHeightDp(
+                fallbackHeightDp = 280,
+                keyboardHeightDp = 420,
+                availableHeightDp = -20,
+            ),
+        )
     }
 
     @Test
@@ -55,19 +67,25 @@ class CommentInputDialogLayoutPolicyTest {
     }
 
     @Test
-    fun draftUpdates_doNotRestartDialogInitializationEffect() {
-        val source = listOf(
-            java.io.File("app/src/main/java/com/android/purebilibili/feature/video/ui/components/CommentInputDialog.kt"),
-            java.io.File("src/main/java/com/android/purebilibili/feature/video/ui/components/CommentInputDialog.kt")
-        ).first { it.exists() }.readText()
-        val resetSection = source.substring(
-            source.indexOf("// 重置状态"),
-            source.indexOf("// 监听 emoji 面板开关")
+    fun imageOnlyDraft_canBePublishedLikePiliPlus() {
+        assertTrue(
+            canPublishCommentDraft(
+                text = "",
+                selectedImageCount = 1,
+                canInputComment = true,
+                isSending = false
+            )
         )
-
-        assertTrue(resetSection.contains("LaunchedEffect(visible)"))
-        assertTrue(resetSection.contains("LaunchedEffect(\n").not())
+        assertFalse(
+            canPublishCommentDraft(
+                text = "",
+                selectedImageCount = 0,
+                canInputComment = true,
+                isSending = false
+            )
+        )
     }
+
 
     @Test
     fun activeMentionQuery_readsTextAfterLastAtBeforeCursor() {
@@ -97,15 +115,4 @@ class CommentInputDialogLayoutPolicyTest {
         assertEquals(text.length, selection.end)
     }
 
-    @Test
-    fun mentionPanel_exposesFriendNameSearchField() {
-        val source = listOf(
-            java.io.File("app/src/main/java/com/android/purebilibili/feature/video/ui/components/CommentInputDialog.kt"),
-            java.io.File("src/main/java/com/android/purebilibili/feature/video/ui/components/CommentInputDialog.kt")
-        ).first { it.exists() }.readText()
-
-        assertTrue(source.contains("placeholder = { Text(\"搜索好友昵称\") }"))
-        assertTrue(source.contains("onMentionSearchQueryChange(query)"))
-        assertTrue(source.contains("输入好友昵称搜索"))
-    }
 }

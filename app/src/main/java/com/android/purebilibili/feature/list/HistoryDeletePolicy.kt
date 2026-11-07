@@ -5,6 +5,7 @@ import com.android.purebilibili.data.model.response.HistoryItem
 
 internal enum class HistoryDeleteAnimationMode {
     SINGLE_DISSOLVE,
+    BATCH_DISSOLVE,
     DIRECT_DELETE
 }
 
@@ -21,6 +22,7 @@ internal fun resolveHistoryRenderKey(item: HistoryItem): String {
     val fallbackId = when (item.business) {
         HistoryBusiness.ARCHIVE -> item.videoItem.id
         HistoryBusiness.PGC -> item.seasonId.takeIf { it > 0L } ?: item.videoItem.id
+        HistoryBusiness.CHEESE -> item.seasonId.takeIf { it > 0L } ?: item.videoItem.id
         HistoryBusiness.LIVE -> item.roomId.takeIf { it > 0L } ?: item.videoItem.id
         HistoryBusiness.ARTICLE -> item.videoItem.id
         HistoryBusiness.UNKNOWN -> item.videoItem.id
@@ -39,6 +41,7 @@ internal fun resolveHistoryDeleteKid(item: HistoryItem): String? {
     val prefixAndId = when (item.business) {
         HistoryBusiness.ARCHIVE -> "archive" to item.videoItem.id
         HistoryBusiness.PGC -> "pgc" to item.seasonId
+        HistoryBusiness.CHEESE -> "cheese" to (item.seasonId.takeIf { it > 0L } ?: item.videoItem.id)
         HistoryBusiness.LIVE -> "live" to item.roomId
         HistoryBusiness.ARTICLE -> "article" to item.videoItem.id
         HistoryBusiness.UNKNOWN -> {
@@ -55,11 +58,14 @@ internal fun resolveHistoryDeleteKid(item: HistoryItem): String? {
     return "${prefix}_${targetId}"
 }
 
-internal fun resolveHistoryDeleteAnimationMode(itemCount: Int): HistoryDeleteAnimationMode {
-    return if (itemCount <= 1) {
-        HistoryDeleteAnimationMode.SINGLE_DISSOLVE
-    } else {
-        HistoryDeleteAnimationMode.DIRECT_DELETE
+internal fun resolveHistoryDeleteAnimationMode(
+    itemCount: Int,
+    dissolveAnimationSafe: Boolean = true
+): HistoryDeleteAnimationMode {
+    return when {
+        !dissolveAnimationSafe || itemCount <= 0 -> HistoryDeleteAnimationMode.DIRECT_DELETE
+        itemCount == 1 -> HistoryDeleteAnimationMode.SINGLE_DISSOLVE
+        else -> HistoryDeleteAnimationMode.BATCH_DISSOLVE
     }
 }
 
@@ -73,14 +79,20 @@ internal fun resolveDeleteBatchParallelism(itemCount: Int): Int {
 }
 
 internal fun createHistoryDeleteSession(
-    targetKeys: Set<String>
+    targetKeys: Set<String>,
+    dissolveAnimationSafe: Boolean = true,
+    visibleKeys: Set<String> = targetKeys
 ): HistoryDeleteSession? {
     val normalizedKeys = targetKeys.map(String::trim).filter(String::isNotEmpty).toSet()
     if (normalizedKeys.isEmpty()) return null
     return HistoryDeleteSession(
         targetKeys = normalizedKeys,
-        completedKeys = emptySet(),
-        animationMode = resolveHistoryDeleteAnimationMode(normalizedKeys.size)
+        // Lazy rows outside the viewport never create an animation or send its completion.
+        completedKeys = normalizedKeys - visibleKeys.map(String::trim).toSet(),
+        animationMode = resolveHistoryDeleteAnimationMode(
+            itemCount = normalizedKeys.size,
+            dissolveAnimationSafe = dissolveAnimationSafe
+        )
     )
 }
 

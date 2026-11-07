@@ -17,27 +17,13 @@ class HomeHeroFlyoutStructureTest {
         assertFalse(source.contains("pendingHeroFlyoutRequest"))
         assertFalse(source.contains("shouldRunHomeHeroFlyoutBeforeNavigation(request)"))
         assertFalse(source.contains("resolveHomeHeroFlyoutNavigationDelayMillis()"))
-        assertTrue(clickWrapperSource.contains("hideTopTabsForForwardDetailNav = true"))
-        assertTrue(clickWrapperSource.contains("setBottomBarVisible(false)"))
-        assertTrue(clickWrapperSource.contains("isVideoNavigating = true"))
+        assertFalse(clickWrapperSource.contains("setBottomBarVisible(false)"))
+        assertTrue(source.contains("BottomBarMatchedDockVisibility("))
+        assertTrue(source.contains("edge = BottomBarMatchedDockEdge.TOP"))
+        assertTrue(source.contains("shouldShowHomeOverlayChromeDuringVideoCardTransition("))
+        assertTrue(source.contains("shouldHomeFeedOwnVideoCardTransitionSnapshot("))
+        assertTrue(source.contains("videoCardTransitionBackgroundEffect("))
         assertTrue(clickWrapperSource.contains("onVideoClick(request)"))
-    }
-
-    @Test
-    fun homeTopTabsReturnRecoveryFollowsNavigationStateInsteadOfLifecycleStart() {
-        val source = loadSource("app/src/main/java/com/android/purebilibili/feature/home/HomeScreen.kt")
-        val navigationReturnEffect = source
-            .substringAfter("Navigation 返回不一定触发首页 Lifecycle.ON_START")
-            .substringBefore("从详情页返回时延后清理")
-        val lifecycleObserverSource = source
-            .substringAfter("DisposableEffect(lifecycleOwner, useSideNavigation)")
-            .substringBefore("lifecycleOwner.lifecycle.addObserver(observer)")
-
-        assertTrue(navigationReturnEffect.contains("LaunchedEffect(isReturningFromVideoDetail"))
-        assertTrue(navigationReturnEffect.contains("hideTopTabsForForwardDetailNav = false"))
-        assertTrue(navigationReturnEffect.contains("resolveHomeTopTabsRevealDelayMs("))
-        assertFalse(lifecycleObserverSource.contains("val returningFromDetail = isReturningFromVideoDetail"))
-        assertFalse(lifecycleObserverSource.contains("resolveHomeTopTabsRevealDelayMs("))
     }
 
     @Test
@@ -51,28 +37,57 @@ class HomeHeroFlyoutStructureTest {
         assertFalse(cardSource.contains("resolveHomeHeroFlyoutFrame("))
     }
 
-    @Test
-    fun ordinaryHomeVideoCardUsesCoverFirstSharedTransitionPolicy() {
-        val cardSource = loadSource("app/src/main/java/com/android/purebilibili/feature/home/components/cards/VideoCard.kt")
 
-        assertTrue(cardSource.contains("resolveVideoCardSharedTransitionMotionSpec("))
-        assertTrue(cardSource.contains("resolveVideoSharedTransitionVisualSpec("))
-        assertTrue(cardSource.contains("videoCardShellSharedBoundsOrEmpty("))
-        assertTrue(cardSource.contains("sharedElementSourceRoute"))
-        assertFalse(cardSource.contains("使用 renderInSharedTransitionScopeOverlayOption 控制可见性"))
+
+
+
+    @Test
+    fun homeHeroCarouselStatsTextUsesValidChineseUnits() {
+        val source = loadSource("app/src/main/java/com/android/purebilibili/feature/home/components/HomeHeroCarousel.kt")
+        // 可见统计文案：分隔符 · + 单位「播放」「弹幕」，禁止损坏字面量。
+        assertTrue(source.contains("\" · \""))
+        assertTrue(source.contains("formatStat(video.stat.view.toLong()) + \"播放\""))
+        assertTrue(source.contains("formatStat(video.stat.danmaku.toLong()) + \"弹幕\""))
+        assertFalse(source.contains("formatStat(video.stat.view.toLong()) + \"??\""))
+        assertFalse(source.contains("formatStat(video.stat.danmaku.toLong()) + \"??\""))
+        assertFalse(source.contains("\" \uFFFD \""))
     }
 
     @Test
-    fun homeHeroCarouselUsesWholeCardShellSharedTransition() {
-        val source = loadSource("app/src/main/java/com/android/purebilibili/feature/home/components/HomeHeroCarousel.kt")
+    fun homeHeroCarouselOwnsItsGestureBeforeOuterCategoryPager() {
+        val carouselSource = loadSource(
+            "app/src/main/java/com/android/purebilibili/feature/home/components/HomeHeroCarousel.kt"
+        )
+        val homeSource = loadSource(
+            "app/src/main/java/com/android/purebilibili/feature/home/HomeScreen.kt"
+        )
+        val gestureSource = loadSource(
+            "app/src/main/java/com/android/purebilibili/core/ui/common/VerticalPriorityPagerGesture.kt"
+        )
 
-        assertTrue(source.contains("videoCardShellSharedBoundsOrEmpty("))
-        assertTrue(source.contains("resolveVideoCardSharedTransitionMotionSpec("))
-        assertTrue(source.contains("LocalSharedTransitionEnabled.current"))
-        assertFalse(source.contains("videoCoverSharedElementKey("))
-        assertFalse(source.contains("videoViewsSharedElementKey("))
-        assertFalse(source.contains("videoDanmakuSharedElementKey("))
-        assertFalse(source.contains("videoDurationSharedElementKey("))
+        assertTrue(carouselSource.contains("pointerInput(Unit)"))
+        assertTrue(carouselSource.contains("onGestureActiveChangeLatest.value(true)"))
+        assertTrue(carouselSource.contains("onGestureActiveChangeLatest.value(false)"))
+        assertTrue(carouselSource.contains("userScrollEnabled = videos.size > 1"))
+        assertTrue(carouselSource.contains("AppHorizontalPager as HorizontalPager"))
+        assertFalse(carouselSource.contains("pointerInput(onGestureActiveChange)"))
+        assertFalse(carouselSource.contains("PageSize.Fixed("))
+        assertFalse(carouselSource.contains("contentPadding = PaddingValues(horizontal = sidePeek)"))
+        assertTrue(homeSource.contains("shouldYieldGesture = shouldYieldHomePagerToHeroCarousel"))
+        assertTrue(homeSource.contains("onHeroCarouselGestureActiveChange = onHeroCarouselGestureActiveChange"))
+        assertFalse(homeSource.contains("!isHeroCarouselGestureActive"))
+        assertTrue(gestureSource.contains("shouldYield: () -> Boolean = { false }"))
+        assertTrue(gestureSource.contains("if (latestShouldYield.value()) return@gesture"))
+    }
+
+    @Test
+    fun homeHeroCarouselUsesPageDotsInsteadOfNumericBadge() {
+        val source = loadSource(
+            "app/src/main/java/com/android/purebilibili/feature/home/components/HomeHeroCarousel.kt"
+        )
+        assertTrue(source.contains("repeat(videos.size)"))
+        assertTrue(source.contains("index == pagerState.currentPage"))
+        assertFalse(source.contains("\${pagerState.currentPage + 1} / \${videos.size}"))
     }
 
     @Test

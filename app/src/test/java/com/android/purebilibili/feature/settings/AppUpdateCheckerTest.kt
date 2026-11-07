@@ -48,7 +48,7 @@ class AppUpdateCheckerTest {
     }
 
     @Test
-    fun `selectLatestReleaseCandidate should allow prerelease when current version is beta`() {
+    fun `selectLatestReleaseCandidate should ignore prereleases even on a beta install`() {
         val release = AppUpdateChecker.selectLatestReleaseCandidate(
             rawReleaseJson = """
             [
@@ -68,14 +68,17 @@ class AppUpdateCheckerTest {
                 "published_at": "2026-03-14T10:00:00Z",
                 "draft": false,
                 "prerelease": false,
-                "assets": []
+                "assets": [{
+                  "name": "BiliPai-v6.9.9.apk",
+                  "browser_download_url": "https://example.com/stable.apk",
+                  "content_type": "application/vnd.android.package-archive"
+                }]
               }
             ]
-            """.trimIndent(),
-            currentVersion = "7.0.0 Beta1"
+            """.trimIndent()
         )
 
-        assertEquals("v7.0.0 Beta2", release?.tagName)
+        assertEquals("v6.9.9", release?.tagName)
     }
 
     @Test
@@ -99,33 +102,154 @@ class AppUpdateCheckerTest {
                 "published_at": "2026-03-14T10:00:00Z",
                 "draft": false,
                 "prerelease": false,
-                "assets": []
+                "assets": [{
+                  "name": "BiliPai-v7.0.0.apk",
+                  "browser_download_url": "https://example.com/stable.apk",
+                  "content_type": "application/vnd.android.package-archive"
+                }]
               }
             ]
-            """.trimIndent(),
-            currentVersion = "7.0.0"
+            """.trimIndent()
         )
 
         assertEquals("v7.0.0", release?.tagName)
     }
 
     @Test
-    fun `parseRepositoryVersionCandidate should read version from remote gradle file`() {
-        val candidate = AppUpdateChecker.parseRepositoryVersionCandidate(
-            rawBuildGradle = """
-            android {
-                defaultConfig {
-                    versionCode = 119
-                    versionName = "7.0.0 RC2"
-                }
-            }
+    fun `selectLatestReleaseCandidate should ignore stable releases without an apk`() {
+        val release = AppUpdateChecker.selectLatestReleaseCandidate(
+            rawReleaseJson = """
+            [{
+              "tag_name": "v8.0.0",
+              "draft": false,
+              "prerelease": false,
+              "assets": [{
+                "name": "build-metadata.json",
+                "browser_download_url": "https://example.com/build-metadata.json",
+                "content_type": "application/json"
+              }]
+            }]
             """.trimIndent()
         )
 
-        assertEquals("7.0.0 RC2", candidate?.tagName)
-        assertEquals("https://github.com/jay3-yy/BiliPai", candidate?.releaseUrl)
-        assertTrue(candidate?.releaseNotes?.contains("未创建 GitHub Release") == true)
-        assertTrue(candidate?.isPrerelease == true)
+        assertEquals(null, release)
+    }
+
+    @Test
+    fun `selectLatestReleaseCandidate should include prerelease with apk for beta channel`() {
+        val release = AppUpdateChecker.selectLatestReleaseCandidate(
+            rawReleaseJson = """
+            [
+              {
+                "tag_name": "v7.1.0 Beta1",
+                "html_url": "https://example.com/beta",
+                "body": "beta notes",
+                "published_at": "2026-03-15T10:00:00Z",
+                "draft": false,
+                "prerelease": true,
+                "assets": [{
+                  "name": "BiliPai-v7.1.0-Beta1.apk",
+                  "browser_download_url": "https://example.com/beta.apk",
+                  "content_type": "application/vnd.android.package-archive"
+                }]
+              },
+              {
+                "tag_name": "v7.0.0",
+                "html_url": "https://example.com/stable",
+                "body": "stable notes",
+                "published_at": "2026-03-14T10:00:00Z",
+                "draft": false,
+                "prerelease": false,
+                "assets": [{
+                  "name": "BiliPai-v7.0.0.apk",
+                  "browser_download_url": "https://example.com/stable.apk",
+                  "content_type": "application/vnd.android.package-archive"
+                }]
+              }
+            ]
+            """.trimIndent(),
+            includePrerelease = true
+        )
+
+        assertEquals("v7.1.0 Beta1", release?.tagName)
+    }
+
+    @Test
+    fun `beta channel should fall back to stable when prerelease has no apk`() {
+        val release = AppUpdateChecker.selectLatestReleaseCandidate(
+            rawReleaseJson = """
+            [
+              {
+                "tag_name": "v7.1.0 Beta1",
+                "html_url": "https://example.com/beta",
+                "body": "beta notes",
+                "published_at": "2026-03-15T10:00:00Z",
+                "draft": false,
+                "prerelease": true,
+                "assets": [{
+                  "name": "build-metadata.json",
+                  "browser_download_url": "https://example.com/build-metadata.json",
+                  "content_type": "application/json"
+                }]
+              },
+              {
+                "tag_name": "v7.0.0",
+                "html_url": "https://example.com/stable",
+                "body": "stable notes",
+                "published_at": "2026-03-14T10:00:00Z",
+                "draft": false,
+                "prerelease": false,
+                "assets": [{
+                  "name": "BiliPai-v7.0.0.apk",
+                  "browser_download_url": "https://example.com/stable.apk",
+                  "content_type": "application/vnd.android.package-archive"
+                }]
+              }
+            ]
+            """.trimIndent(),
+            includePrerelease = true
+        )
+
+        assertEquals("v7.0.0", release?.tagName)
+    }
+
+    @Test
+    fun `stable channel should keep ignoring prerelease when includePrerelease is false`() {
+        val release = AppUpdateChecker.selectLatestReleaseCandidate(
+            rawReleaseJson = """
+            [
+              {
+                "tag_name": "v7.1.0 Beta1",
+                "html_url": "https://example.com/beta",
+                "body": "beta notes",
+                "published_at": "2026-03-15T10:00:00Z",
+                "draft": false,
+                "prerelease": true,
+                "assets": [{
+                  "name": "BiliPai-v7.1.0-Beta1.apk",
+                  "browser_download_url": "https://example.com/beta.apk",
+                  "content_type": "application/vnd.android.package-archive"
+                }]
+              },
+              {
+                "tag_name": "v7.0.0",
+                "html_url": "https://example.com/stable",
+                "body": "stable notes",
+                "published_at": "2026-03-14T10:00:00Z",
+                "draft": false,
+                "prerelease": false,
+                "assets": [{
+                  "name": "BiliPai-v7.0.0.apk",
+                  "browser_download_url": "https://example.com/stable.apk",
+                  "content_type": "application/vnd.android.package-archive"
+                }]
+              }
+            ]
+            """.trimIndent(),
+            includePrerelease = false
+        )
+
+        assertEquals("v7.0.0", release?.tagName)
     }
 
     @Test
@@ -213,8 +337,7 @@ class AppUpdateCheckerTest {
                 ]
               }
             ]
-            """.trimIndent(),
-            currentVersion = "7.3.3"
+            """.trimIndent()
         )
 
         assertTrue(release?.isImmutable == true)
@@ -272,5 +395,81 @@ class AppUpdateCheckerTest {
         assertEquals("https://github.com/jay3-yy/BiliPai/attestations/123", metadata?.attestationUrl)
         assertEquals("build-provenance.intoto.jsonl", metadata?.bundleFileName)
         assertEquals("https://slsa.dev/provenance/v1", metadata?.predicateType)
+    }
+
+    @Test
+    fun `latest published stable release wins across version epochs`() {
+        val release = AppUpdateChecker.selectLatestReleaseCandidate(
+            rawReleaseJson = """
+            [
+              {
+                "tag_name": "v9.9.9.8.7",
+                "published_at": "2026-08-02T10:00:00Z",
+                "draft": false,
+                "prerelease": false,
+                "assets": [{
+                  "name": "BiliPai-9.9.9.8.7.apk",
+                  "browser_download_url": "https://example.com/legacy.apk",
+                  "content_type": "application/vnd.android.package-archive"
+                }]
+              },
+              {
+                "tag_name": "v0.1.0",
+                "published_at": "2026-08-04T10:00:00Z",
+                "draft": false,
+                "prerelease": false,
+                "assets": [{
+                  "name": "BiliPai-0.1.0.apk",
+                  "browser_download_url": "https://example.com/current.apk",
+                  "content_type": "application/vnd.android.package-archive"
+                }]
+              }
+            ]
+            """.trimIndent()
+        )
+
+        assertEquals("v0.1.0", release?.tagName)
+    }
+
+    @Test
+    fun `version code is authoritative when release metadata is available`() {
+        val metadata = AppReleaseBuildMetadata(versionName = "0.1.1", versionCode = 283)
+
+        assertTrue(
+            AppUpdateChecker.shouldOfferUpdate(
+                currentVersion = "0.1.0",
+                currentVersionCode = 282,
+                latestVersion = "0.1.1",
+                buildMetadata = metadata
+            )
+        )
+        assertFalse(
+            AppUpdateChecker.shouldOfferUpdate(
+                currentVersion = "0.1.0",
+                currentVersionCode = 283,
+                latestVersion = "0.1.1",
+                buildMetadata = metadata
+            )
+        )
+    }
+
+    @Test
+    fun `metadata fallback compares version names only within the same epoch`() {
+        assertTrue(
+            AppUpdateChecker.shouldOfferUpdate(
+                currentVersion = "0.1.0",
+                currentVersionCode = 282,
+                latestVersion = "0.1.1",
+                buildMetadata = null
+            )
+        )
+        assertFalse(
+            AppUpdateChecker.shouldOfferUpdate(
+                currentVersion = "9.9.9.8.7",
+                currentVersionCode = 281,
+                latestVersion = "0.1.0",
+                buildMetadata = null
+            )
+        )
     }
 }

@@ -68,7 +68,7 @@ fun resolveMiniPlayerOverlayLayoutPolicy(
             seekHintVerticalPaddingDp = 7,
             dragHintBottomPaddingDp = 8,
             dragHintFontSp = 10,
-            progressBarHeightDp = 4,
+            progressBarHeightDp = 2,
             stashedWidthDp = 44,
             stashedHeightDp = 52,
             stashedSideCornerExtraDp = 12,
@@ -106,7 +106,7 @@ fun resolveMiniPlayerOverlayLayoutPolicy(
             seekHintVerticalPaddingDp = 6,
             dragHintBottomPaddingDp = 7,
             dragHintFontSp = 10,
-            progressBarHeightDp = 3,
+            progressBarHeightDp = 2,
             stashedWidthDp = 42,
             stashedHeightDp = 50,
             stashedSideCornerExtraDp = 10,
@@ -144,7 +144,7 @@ fun resolveMiniPlayerOverlayLayoutPolicy(
             seekHintVerticalPaddingDp = 6,
             dragHintBottomPaddingDp = 6,
             dragHintFontSp = 9,
-            progressBarHeightDp = 3,
+            progressBarHeightDp = 2,
             stashedWidthDp = 40,
             stashedHeightDp = 48,
             stashedSideCornerExtraDp = 8,
@@ -181,11 +181,63 @@ fun resolveMiniPlayerOverlayLayoutPolicy(
         seekHintVerticalPaddingDp = 6,
         dragHintBottomPaddingDp = 6,
         dragHintFontSp = 9,
-        progressBarHeightDp = 3,
+        progressBarHeightDp = 2,
         stashedWidthDp = 40,
         stashedHeightDp = 48,
         stashedSideCornerExtraDp = 8,
         stashedIconSizeDp = 20,
         stashedShadowDp = 8
     )
+}
+
+data class AdaptiveMiniPlayerDimensions(
+    val widthDp: Float,
+    val heightDp: Float,
+    val aspectRatio: Float,
+)
+
+/**
+ * Resolves adaptive mini player dimensions based on the actual video aspect ratio.
+ * - Horizontal videos (aspect >= 1.0, e.g. 16:9, 4:3, 21:9): anchored by baseWidthDp, height = width / aspect.
+ * - Vertical videos (aspect < 1.0, e.g. 9:16 story/shorts): anchored by height, width = height * aspect.
+ * This guarantees zero black bars for vertical videos while maintaining a clean, compact floating card size.
+ */
+fun resolveAdaptiveMiniPlayerDimensions(
+    videoAspectRatio: Float,
+    currentWidthDp: Float,
+    defaultHeightDp: Float,
+    maxWidthDp: Float = Float.POSITIVE_INFINITY,
+    maxHeightDp: Float = Float.POSITIVE_INFINITY,
+): AdaptiveMiniPlayerDimensions {
+    val safeAspect = if (videoAspectRatio.isFinite() && videoAspectRatio > 0f) {
+        videoAspectRatio.coerceIn(0.45f, 2.39f)
+    } else {
+        16f / 9f
+    }
+
+    val dimensions = if (safeAspect >= 1.0f) {
+        val width = currentWidthDp.coerceAtLeast(120f)
+        val height = width / safeAspect
+        AdaptiveMiniPlayerDimensions(
+            widthDp = width,
+            heightDp = height,
+            aspectRatio = safeAspect,
+        )
+    } else {
+        val scale = (currentWidthDp / 220f).coerceAtLeast(0.5f)
+        val baseHeight = (defaultHeightDp * 1.55f).coerceIn(180f, 320f)
+        val height = (baseHeight * scale).coerceIn(160f, 450f)
+        val width = height * safeAspect
+        AdaptiveMiniPlayerDimensions(
+            widthDp = width,
+            heightDp = height,
+            aspectRatio = safeAspect,
+        )
+    }
+    val fitScale = minOf(
+        1f,
+        maxWidthDp.coerceAtLeast(1f) / dimensions.widthDp,
+        maxHeightDp.coerceAtLeast(1f) / dimensions.heightDp,
+    )
+    return dimensions.copy(widthDp = dimensions.widthDp * fitScale, heightDp = dimensions.heightDp * fitScale)
 }

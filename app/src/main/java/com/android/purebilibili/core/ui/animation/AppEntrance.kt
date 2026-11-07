@@ -4,7 +4,6 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -17,11 +16,13 @@ import androidx.compose.ui.layout.MeasureScope
 import androidx.compose.ui.node.CompositionLocalConsumerModifierNode
 import androidx.compose.ui.node.LayoutModifierNode
 import androidx.compose.ui.node.ModifierNodeElement
+import androidx.compose.ui.node.ObserverModifierNode
 import androidx.compose.ui.node.currentValueOf
+import androidx.compose.ui.node.invalidateMeasurement
+import androidx.compose.ui.node.observeReads
 import androidx.compose.ui.platform.InspectorInfo
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Constraints
-import com.android.purebilibili.core.store.SettingsManager
+import com.android.purebilibili.core.ui.LocalAppThemeConfig
 import com.android.purebilibili.core.ui.adaptive.resolveDeviceUiProfile
 import com.android.purebilibili.core.ui.motion.EntranceMotionSpec
 import com.android.purebilibili.core.ui.motion.rememberSystemReduceMotion
@@ -30,6 +31,7 @@ import com.android.purebilibili.core.ui.motion.resolveEntranceFrame
 import com.android.purebilibili.core.ui.motion.resolveEntranceStaggerDelayMs
 import com.android.purebilibili.core.util.LocalWindowSizeClass
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -69,13 +71,11 @@ internal val LocalAppEntrance = staticCompositionLocalOf<AppEntranceController?>
  */
 @Composable
 fun rememberEffectiveEntranceMotionSpec(): EntranceMotionSpec {
-    val context = LocalContext.current
     val widthSizeClass = LocalWindowSizeClass.current.widthSizeClass
     val deviceTier = remember(widthSizeClass) {
         resolveDeviceUiProfile(widthSizeClass).motionTier
     }
-    val appEnabled by SettingsManager.getUiEntranceAnimationEnabled(context)
-        .collectAsStateWithLifecycle(initialValue = true)
+    val appEnabled = LocalAppThemeConfig.current.uiEntranceAnimationEnabled
     val reduceMotion = rememberSystemReduceMotion()
     return remember(deviceTier, appEnabled, reduceMotion) {
         resolveEffectiveEntranceMotionSpec(
@@ -98,8 +98,12 @@ fun EntranceGroup(
 ) {
     val spec = rememberEffectiveEntranceMotionSpec()
     val controller = remember(spec) { AppEntranceController(spec) }
-    LaunchedEffect(controller, startWhen) {
-        if (startWhen) controller.start()
+    val navigationReady = LocalAppNavigationEntranceReady.current
+    LaunchedEffect(controller, startWhen, navigationReady) {
+        if (startWhen && spec.animate) {
+            snapshotFlow { navigationReady.value }.first { it }
+            controller.start()
+        }
     }
     CompositionLocalProvider(LocalAppEntrance provides controller) {
         content()
@@ -126,20 +130,47 @@ private object EntranceElement : ModifierNodeElement<EntranceNode>() {
 private class EntranceNode :
     Modifier.Node(),
     LayoutModifierNode,
-    CompositionLocalConsumerModifierNode {
+    CompositionLocalConsumerModifierNode,
+    ObserverModifierNode {
 
     private val progress = Animatable(0f)
+    private var controller: AppEntranceController? = null
+    private var animationJob: Job? = null
+    private var skipEntrance = false
 
     override fun onAttach() {
-        val controller = currentValueOf(LocalAppEntrance)
-        val spec = controller?.spec
-        if (controller == null || spec == null || !spec.animate) return
-        val index = controller.allocateIndex()
+        observeController()
+        val currentController = controller
+        if (skipEntrance || currentController == null || !currentController.spec.animate) {
+            // 已直接显示的内容不能在开关、窗口档位变化后重新退回透明的起始帧。
+            skipEntrance = true
+            return
+        }
+        val spec = currentController.spec
+        val index = currentController.allocateIndex()
         val delayMs = resolveEntranceStaggerDelayMs(index, spec)
-        coroutineScope.launch {
-            controller.awaitStart()
+        animationJob = coroutineScope.launch {
+            currentController.awaitStart()
             if (delayMs > 0) delay(delayMs.toLong())
             progress.animateTo(targetValue = 1f, animationSpec = spec.progressSpring())
+        }
+    }
+
+    override fun onObservedReadsChanged() {
+        val previousController = controller
+        observeController()
+        if (previousController !== controller) {
+            // 参数变化只影响新挂载内容；当前节点落在终态，取消旧协调器的等待与动画。
+            animationJob?.cancel()
+            animationJob = null
+            skipEntrance = true
+        }
+        invalidateMeasurement()
+    }
+
+    private fun observeController() {
+        observeReads {
+            controller = currentValueOf(LocalAppEntrance)
         }
     }
 
@@ -147,10 +178,10 @@ private class EntranceNode :
         measurable: Measurable,
         constraints: Constraints
     ): MeasureResult {
-        val spec = currentValueOf(LocalAppEntrance)?.spec
+        val spec = controller?.spec
         val placeable = measurable.measure(constraints)
         return layout(placeable.width, placeable.height) {
-            if (spec == null || !spec.animate) {
+            if (skipEntrance || spec == null || !spec.animate) {
                 placeable.place(0, 0)
                 return@layout
             }

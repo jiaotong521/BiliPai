@@ -1,8 +1,14 @@
 package com.android.purebilibili.feature.search
 
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Color
-import com.android.purebilibili.core.theme.AndroidNativeVariant
-import com.android.purebilibili.core.theme.UiPreset
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.LayoutDirection
+import com.android.purebilibili.core.theme.AppUiStyle
+import com.android.purebilibili.core.ui.resolveAppTopChromePolicy
+import com.android.purebilibili.feature.home.components.resolveHomeTopSearchContainerShape
+import com.android.purebilibili.feature.home.components.resolveHomeTopSearchPillHeight
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -11,47 +17,34 @@ import org.junit.Test
 class SearchChromePolicyTest {
 
     @Test
-    fun `md3 preset should use taller search chrome and filled action`() {
-        val spec = resolveSearchChromeVisualSpec(UiPreset.MD3)
-
-        assertEquals(56, spec.inputHeightDp)
-        assertEquals(28, spec.inputCornerRadiusDp)
-        assertEquals(48, spec.clearActionSizeDp)
-        assertEquals(48, spec.submitActionSizeDp)
-        assertEquals(24, spec.actionIconSizeDp)
-        assertEquals(12, spec.horizontalGapDp)
-        assertTrue(spec.useFilledSearchAction)
-        assertEquals(20, spec.suggestionContainerCornerRadiusDp)
-    }
-
-    @Test
-    fun `ios preset should preserve compact capsule search chrome`() {
-        val spec = resolveSearchChromeVisualSpec(UiPreset.IOS)
-
-        assertEquals(44, spec.inputHeightDp)
-        assertEquals(22, spec.inputCornerRadiusDp)
-        assertEquals(40, spec.clearActionSizeDp)
-        assertEquals(40, spec.submitActionSizeDp)
-        assertEquals(20, spec.actionIconSizeDp)
-        assertEquals(12, spec.inputHorizontalPaddingDp)
-        assertFalse(spec.useFilledSearchAction)
-        assertEquals(12, spec.suggestionContainerCornerRadiusDp)
-    }
-
-    @Test
-    fun `miuix variant should use denser rounded search chrome`() {
-        val spec = resolveSearchChromeVisualSpec(
-            uiPreset = UiPreset.MD3,
-            androidNativeVariant = AndroidNativeVariant.MIUIX
-        )
-
-        assertEquals(48, spec.inputHeightDp)
-        assertEquals(22, spec.inputCornerRadiusDp)
-        assertEquals(48, spec.clearActionSizeDp)
-        assertEquals(48, spec.submitActionSizeDp)
-        assertEquals(14, spec.inputHorizontalPaddingDp)
-        assertTrue(spec.useFilledSearchAction)
-        assertEquals(18, spec.suggestionContainerCornerRadiusDp)
+    fun `search fields keep rounded corners instead of semicircular ends at any width`() {
+        for (style in AppUiStyle.entries) {
+            val chrome = resolveAppTopChromePolicy(style)
+            val fields = listOf(
+                resolveSearchInputShape(chrome) to resolveSearchChromeVisualSpec(chrome).inputHeightDp.toFloat(),
+                resolveHomeTopSearchContainerShape(chrome) to resolveHomeTopSearchPillHeight(chrome).value,
+            )
+            for ((shape, heightDp) in fields) {
+                for (density in listOf(Density(1f), Density(2.75f))) {
+                    for (direction in LayoutDirection.entries) {
+                        val heightPx = heightDp * density.density
+                        val narrow = shape.createOutline(Size(200f * density.density, heightPx), direction, density) as Outline.Rounded
+                        val wide = shape.createOutline(Size(720f * density.density, heightPx), direction, density) as Outline.Rounded
+                        val corners = listOf(
+                            narrow.roundRect.topLeftCornerRadius,
+                            narrow.roundRect.topRightCornerRadius,
+                            narrow.roundRect.bottomLeftCornerRadius,
+                            narrow.roundRect.bottomRightCornerRadius,
+                        )
+                        for (corner in corners) {
+                            assertTrue("Search ends must not become a pill: $style", corner.x > 0f && corner.x < heightPx / 2f)
+                            assertEquals(corner.x, corner.y, 0.001f)
+                        }
+                        assertEquals(narrow.roundRect.topLeftCornerRadius, wide.roundRect.topLeftCornerRadius)
+                    }
+                }
+            }
+        }
     }
 
     @Test
@@ -81,15 +74,64 @@ class SearchChromePolicyTest {
     }
 
     @Test
+    fun `search header blur requires the preference and a usable source`() {
+        assertFalse(
+            shouldUseSearchTopBarHeaderBlur(
+                headerBlurRequested = false,
+                hazeSourceEnabled = true,
+                globalWallpaperVisible = false
+            )
+        )
+        assertFalse(
+            shouldUseSearchTopBarHeaderBlur(
+                headerBlurRequested = true,
+                hazeSourceEnabled = false,
+                globalWallpaperVisible = false
+            )
+        )
+        assertTrue(
+            shouldUseSearchTopBarHeaderBlur(
+                headerBlurRequested = true,
+                hazeSourceEnabled = true,
+                globalWallpaperVisible = false
+            )
+        )
+    }
+
+    @Test
+    fun `disabled top effects select an opaque search chrome independently of liquid glass`() {
+        assertTrue(
+            shouldUseSearchSolidTopChrome(
+                headerBlurRequested = false,
+                progressiveBlurRequested = false,
+            )
+        )
+        assertFalse(
+            shouldUseSearchSolidTopChrome(
+                headerBlurRequested = true,
+                progressiveBlurRequested = false,
+            )
+        )
+        assertFalse(
+            shouldUseSearchSolidTopChrome(
+                headerBlurRequested = false,
+                progressiveBlurRequested = true,
+            )
+        )
+    }
+
+    @Test
     fun `global wallpaper disables search header blur`() {
         assertFalse(
             shouldUseSearchTopBarHeaderBlur(
+                headerBlurRequested = true,
                 hazeSourceEnabled = true,
                 globalWallpaperVisible = true
             )
         )
         assertTrue(
             shouldUseSearchTopBarHeaderBlur(
+                headerBlurRequested = true,
                 hazeSourceEnabled = true,
                 globalWallpaperVisible = false
             )

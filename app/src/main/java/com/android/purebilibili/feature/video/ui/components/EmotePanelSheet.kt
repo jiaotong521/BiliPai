@@ -1,15 +1,23 @@
 // 文件路径: feature/video/ui/components/EmotePanelSheet.kt
 package com.android.purebilibili.feature.video.ui.components
 
+import com.android.purebilibili.core.ui.AppContentColors
+
+import coil3.request.crossfade
+import com.android.purebilibili.core.ui.components.AppSegmentOption
+import com.android.purebilibili.core.ui.components.AppThemeAdaptiveTabRow
+import com.android.purebilibili.core.ui.components.AppText
+import com.android.purebilibili.core.ui.components.AppHorizontalDivider
+
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import com.android.purebilibili.core.ui.components.AppLazyVerticalGrid as LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -17,14 +25,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
+import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
 import com.android.purebilibili.data.model.response.EmotePackage
 import com.android.purebilibili.data.model.response.EmoteItem
-import io.github.alexzhirkevich.cupertino.CupertinoActivityIndicator
+import com.android.purebilibili.core.ui.AdaptiveLoadingIndicator
+import com.android.purebilibili.core.ui.AppShapes
+import com.android.purebilibili.core.ui.ContainerLevel
 
 /**
  * [新增] 表情选择面板组件
@@ -40,8 +49,8 @@ fun EmotePanelSheet(
     onEmoteSelect: (EmoteItem) -> Unit
 ) {
     if (!visible) return
-    
-    com.android.purebilibili.core.ui.IOSModalBottomSheet(
+
+    com.android.purebilibili.core.ui.AppModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         dragHandle = null
@@ -58,14 +67,13 @@ fun EmotePanelSheet(
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 12.dp)
             ) {
-                Text(
+                AppText(
                     text = "表情",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
-                    color = MaterialTheme.colorScheme.onSurface
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = AppContentColors.primaryText()
                 )
             }
-            
+
             if (isLoading) {
                 Box(
                     modifier = Modifier
@@ -73,7 +81,7 @@ fun EmotePanelSheet(
                         .weight(1f),
                     contentAlignment = Alignment.Center
                 ) {
-                    CupertinoActivityIndicator()
+                    AdaptiveLoadingIndicator()
                 }
             } else if (packages.isEmpty()) {
                 Box(
@@ -82,58 +90,40 @@ fun EmotePanelSheet(
                         .weight(1f),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
+                    AppText(
                         text = "暂无表情包",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 14.sp
+                        color = AppContentColors.secondaryText(),
+                        style = MaterialTheme.typography.bodyMedium
                     )
                 }
             } else {
                 // 表情包 Tab 栏
                 var selectedPackageIndex by remember { mutableIntStateOf(0) }
-                
-                ScrollableTabRow(
-                    selectedTabIndex = selectedPackageIndex,
-                    modifier = Modifier.fillMaxWidth(),
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    contentColor = MaterialTheme.colorScheme.primary,
-                    edgePadding = 8.dp,
-                    indicator = { tabPositions ->
-                        if (tabPositions.isNotEmpty() && selectedPackageIndex < tabPositions.size) {
-                            TabRowDefaults.SecondaryIndicator(
-                                modifier = Modifier
-                                    .tabIndicatorOffset(tabPositions[selectedPackageIndex]),
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
+
+                AppThemeAdaptiveTabRow(
+                    // Glass indicator fills the measured slot; native geometry keeps its defaults.
+                    liquidGlassAdaptIndicatorToLabel = !com.android.purebilibili.core.ui.LocalAppThemeConfig.current.liquidGlassEnabled,
+                    role = com.android.purebilibili.core.ui.components.AppTabRowRole.SECONDARY,
+                    centerContent = false,
+                    options = packages.mapIndexed { index, pkg ->
+                        AppSegmentOption(index, pkg.text)
                     },
-                    divider = {}
-                ) {
-                    packages.forEachIndexed { index, pkg ->
-                        Tab(
-                            selected = selectedPackageIndex == index,
-                            onClick = { selectedPackageIndex = index },
-                            text = {
-                                Text(
-                                    text = pkg.text,
-                                    fontSize = 13.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        )
-                    }
-                }
-                
-                HorizontalDivider(
+                    selectedValue = selectedPackageIndex,
+                    onSelectionChange = { selectedPackageIndex = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    scrollable = true,
+                    labelFontSize = com.android.purebilibili.core.ui.appTabLabelFontSize(),
+                )
+
+                AppHorizontalDivider(
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
                     thickness = 0.5.dp
                 )
-                
+
                 // 表情网格
                 val selectedPackage = packages.getOrNull(selectedPackageIndex)
                 val emotes = selectedPackage?.emote ?: emptyList()
-                
+
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(7),
                     modifier = Modifier
@@ -166,7 +156,7 @@ private fun EmoteGridItem(
     Box(
         modifier = Modifier
             .aspectRatio(1f)
-            .clip(RoundedCornerShape(8.dp))
+            .clip(AppShapes.container(ContainerLevel.Chip))
             .clickable(onClick = onClick)
             .padding(4.dp),
         contentAlignment = Alignment.Center

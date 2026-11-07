@@ -1,5 +1,11 @@
 package com.android.purebilibili.feature.audio.screen
 
+import com.android.purebilibili.navigation.tabSelectedPage
+import com.android.purebilibili.navigation.tabIndicatorPosition
+import com.android.purebilibili.core.ui.AppContentColors
+
+import com.android.purebilibili.navigation.animatePagerSelection
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,42 +19,50 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
+import com.android.purebilibili.core.ui.components.AppLazyColumn as LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import com.android.purebilibili.core.ui.components.AppLazyVerticalGrid as LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.pager.HorizontalPager
+import com.android.purebilibili.core.ui.components.AppHorizontalPager as HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
+import com.android.purebilibili.core.ui.components.AppButton
+import com.android.purebilibili.core.ui.components.AppCircularProgressIndicator
+import com.android.purebilibili.core.ui.AdaptiveLoadingIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import com.android.purebilibili.core.ui.components.AppIcon
+import com.android.purebilibili.core.ui.AppShapes
+import com.android.purebilibili.core.ui.AppSurfaceTokens
+import com.android.purebilibili.core.ui.ContainerLevel
+import com.android.purebilibili.core.ui.components.AppIconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import com.android.purebilibili.core.ui.AppModalBottomSheet
+import com.android.purebilibili.core.ui.components.AppSurface
+import com.android.purebilibili.core.ui.components.AppText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,12 +71,16 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.android.purebilibili.core.store.HomeSettings
+import com.android.purebilibili.core.store.SettingsManager
+import com.android.purebilibili.core.ui.AppChromeSizeTokens
 import androidx.lifecycle.viewmodel.compose.viewModel
-import coil.compose.AsyncImage
+import coil3.compose.AsyncImage
 import com.android.purebilibili.feature.audio.library.ListenVideoAlbum
 import com.android.purebilibili.feature.audio.library.ListenVideoArtist
 import com.android.purebilibili.feature.audio.library.ListenVideoPlaylist
@@ -74,6 +92,8 @@ import com.android.purebilibili.feature.home.components.BottomBarLiquidSegmented
 import com.android.purebilibili.feature.video.player.PlaylistManager
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import top.yukonga.miuix.kmp.blur.layerBackdrop
+import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 
 internal data class ListenVideoNowPlaying(
     val bvid: String,
@@ -87,10 +107,13 @@ internal fun ListenVideoRoute(
     onPlayTracks: (List<ListenVideoTrack>, String) -> Unit,
     onNowPlayingClick: (bvid: String, coverUrl: String) -> Unit,
     onLogin: () -> Unit,
+    onPlayCollection: (mediaId: Long, seasonId: Long, title: String) -> Unit,
+    onPlayFromHistory: (bvid: String, cid: Long) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: ListenVideoViewModel = viewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    var showPlayHistory by rememberSaveable { mutableStateOf(false) }
     val playlistState by PlaylistManager.uiState.collectAsStateWithLifecycle(
         initialValue = com.android.purebilibili.feature.video.player.PlaylistUiState()
     )
@@ -105,10 +128,11 @@ internal fun ListenVideoRoute(
         }
     }
 
-    LaunchedEffect(viewModel) {
-        if (viewModel.uiState.value.generation == 0L) {
-            viewModel.refresh()
-        }
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+        viewModel.resumeBackgroundLoading()
+    }
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_PAUSE) {
+        viewModel.pauseBackgroundLoading()
     }
 
     ListenVideoScreen(
@@ -116,10 +140,22 @@ internal fun ListenVideoRoute(
         nowPlaying = nowPlaying,
         onNowPlayingClick = onNowPlayingClick,
         onRefresh = viewModel::refresh,
+        onOpenHistory = { showPlayHistory = true },
         onSectionSelected = viewModel::selectSection,
-        onPlaylistSelected = viewModel::openPlaylist,
-        onAlbumSelected = viewModel::openAlbum,
-        onArtistSelected = viewModel::openArtist,
+        onPlaylistSelected = { playlist ->
+            viewModel.pauseBackgroundLoading()
+            onPlayCollection(playlist.mediaId, 0L, playlist.title)
+        },
+        onAlbumSelected = { album ->
+            viewModel.pauseBackgroundLoading()
+            onPlayCollection(0L, album.seasonId, album.title)
+        },
+        onArtistSelected = { artist ->
+            artist.tracks.firstOrNull()?.let { first ->
+                viewModel.pauseBackgroundLoading()
+                onPlayTracks(artist.tracks, first.bvid)
+            }
+        },
         onCloseDetail = viewModel::closeDetail,
         onRetryDetail = viewModel::retryDetail,
         onRetryIndex = viewModel::retryFailedIndex,
@@ -127,6 +163,17 @@ internal fun ListenVideoRoute(
         onLogin = onLogin,
         modifier = modifier
     )
+
+    if (showPlayHistory) {
+        PlayHistorySheet(
+            onPlay = { entry ->
+                showPlayHistory = false
+                viewModel.pauseBackgroundLoading()
+                onPlayFromHistory(entry.bvid, entry.cid)
+            },
+            onDismiss = { showPlayHistory = false },
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -136,6 +183,7 @@ internal fun ListenVideoScreen(
     nowPlaying: ListenVideoNowPlaying?,
     onNowPlayingClick: (bvid: String, coverUrl: String) -> Unit,
     onRefresh: () -> Unit,
+    onOpenHistory: () -> Unit,
     onSectionSelected: (ListenVideoSection) -> Unit,
     onPlaylistSelected: (ListenVideoPlaylist) -> Unit,
     onAlbumSelected: (ListenVideoAlbum) -> Unit,
@@ -153,6 +201,11 @@ internal fun ListenVideoScreen(
         pageCount = { ListenVideoSection.entries.size }
     )
     val scope = rememberCoroutineScope()
+    val listenBackdrop = rememberLayerBackdrop()
+    val context = LocalContext.current
+    val homeSettings by SettingsManager
+        .getHomeSettings(context)
+        .collectAsStateWithLifecycle(initialValue = HomeSettings())
 
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.settledPage }
@@ -167,44 +220,71 @@ internal fun ListenVideoScreen(
                 Brush.verticalGradient(
                     listOf(
                         MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.34f),
-                        MaterialTheme.colorScheme.background,
-                        MaterialTheme.colorScheme.background
+                        AppSurfaceTokens.chromeBackground(),
+                        AppSurfaceTokens.chromeBackground()
                     )
                 )
             )
-            .statusBarsPadding()
     ) {
         val layout = resolveListenVideoLayout(maxWidth.value.toInt())
-        Column(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .layerBackdrop(listenBackdrop)
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.34f),
+                            AppSurfaceTokens.chromeBackground(),
+                            AppSurfaceTokens.chromeBackground(),
+                        )
+                    )
+                ),
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+        ) {
             ListenVideoHeader(
                 nowPlaying = nowPlaying,
                 onNowPlayingClick = onNowPlayingClick,
                 onRefresh = onRefresh,
+                onOpenHistory = onOpenHistory,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 20.dp, vertical = 12.dp)
             )
             BottomBarLiquidSegmentedControl(
+                // Glass indicator fills the measured slot; native geometry keeps its defaults.
+                liquidGlassAdaptIndicatorToLabel = !com.android.purebilibili.core.ui.LocalAppThemeConfig.current.liquidGlassEnabled,
                 items = sectionLabels,
-                selectedIndex = pagerState.currentPage,
+                selectedIndex = pagerState.tabSelectedPage,
                 onSelected = { index ->
-                    scope.launch { pagerState.animateScrollToPage(index) }
+                    scope.launch { animatePagerSelection(pagerState, index) }
                 },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 20.dp),
-                height = 52.dp,
-                indicatorHeight = 46.dp,
+                height = AppChromeSizeTokens.BottomBarMatchedSegmentedControlHeightDp.dp,
+                indicatorHeight = AppChromeSizeTokens.BottomBarMatchedSegmentedIndicatorHeightDp.dp,
+                // Center only the compact glass rail; native tabs retain their layout.
+                centerGlassContent = true,
                 preferInlineContentStyle = false,
+                miuixBackdrop = listenBackdrop,
+                liquidGlassEffectsEnabled = true,
+                dragSelectionEnabled = sectionLabels.size > 1,
+                tapPressRefractionEnabled = true,
                 indicatorPositionProvider = {
-                    pagerState.currentPage + pagerState.currentPageOffsetFraction
-                }
+                    pagerState.tabIndicatorPosition
+                },
+                isScrollInProgressProvider = { pagerState.isScrollInProgress },
+                externalPagerMotionEffectsEnabled = true,
             )
             Spacer(modifier = Modifier.height(8.dp))
             HorizontalPager(
                 state = pagerState,
-                modifier = Modifier
-                    .weight(1f)
+                modifier = Modifier.weight(1f)
             ) { page ->
                 ListenVideoPage(
                     section = ListenVideoSection.entries[page],
@@ -214,6 +294,7 @@ internal fun ListenVideoScreen(
                     onAlbumSelected = onAlbumSelected,
                     onArtistSelected = onArtistSelected,
                     onRetryIndex = onRetryIndex,
+                    onRefresh = onRefresh,
                     onLogin = onLogin,
                     modifier = Modifier.fillMaxSize()
                 )
@@ -222,9 +303,9 @@ internal fun ListenVideoScreen(
     }
 
     if (state.selectedTitle.isNotBlank()) {
-        ModalBottomSheet(
+        AppModalBottomSheet(
             onDismissRequest = onCloseDetail,
-            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)
+            containerColor = AppSurfaceTokens.surface().copy(alpha = 0.96f)
         ) {
             ListenVideoTrackSheet(
                 title = state.selectedTitle,
@@ -245,36 +326,42 @@ private fun ListenVideoHeader(
     nowPlaying: ListenVideoNowPlaying?,
     onNowPlayingClick: (bvid: String, coverUrl: String) -> Unit,
     onRefresh: () -> Unit,
+    onOpenHistory: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(
+                AppText(
                     text = "听视频",
-                    style = MaterialTheme.typography.headlineLarge,
+                    style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold
                 )
-                Text(
+                AppText(
                     text = "收藏夹是播放列表，视频集是专辑，UP 主是歌手",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = AppContentColors.secondaryText()
                 )
             }
-            IconButton(onClick = onRefresh, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Filled.Refresh, contentDescription = "刷新音乐资料")
+            AppIconButton(onClick = onOpenHistory, modifier = Modifier.size(40.dp)) {
+                AppIcon(Icons.Filled.History, contentDescription = "最近播放")
+            }
+            Spacer(modifier = Modifier.width(4.dp))
+            AppIconButton(onClick = onRefresh, modifier = Modifier.size(40.dp)) {
+                AppIcon(Icons.Filled.Refresh, contentDescription = "刷新音乐资料")
             }
         }
         nowPlaying?.let { item ->
-            Surface(
+            AppSurface(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable { onNowPlayingClick(item.bvid, item.coverUrl) },
-                shape = RoundedCornerShape(18.dp),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.58f),
+                shape = AppShapes.container(ContainerLevel.Card),
+                color = AppSurfaceTokens.surface().copy(alpha = 0.58f),
+                // primary 描边区分「正在播放」与下方实体卡
                 border = androidx.compose.foundation.BorderStroke(
                     1.dp,
-                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+                    AppContentColors.accent().copy(alpha = 0.45f)
                 )
             ) {
                 Row(
@@ -286,31 +373,39 @@ private fun ListenVideoHeader(
                         contentDescription = null,
                         modifier = Modifier
                             .size(44.dp)
-                            .clip(RoundedCornerShape(10.dp)),
+                            .clip(AppShapes.container(ContainerLevel.Field)),
                         contentScale = ContentScale.Crop
                     )
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "正在播放",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            AppIcon(
+                                Icons.Filled.MusicNote,
+                                contentDescription = null,
+                                tint = AppContentColors.accent(),
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            AppText(
+                                text = "正在播放",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = AppContentColors.accent()
+                            )
+                        }
+                        AppText(
                             text = item.title,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             fontWeight = FontWeight.SemiBold
                         )
-                        Text(
+                        AppText(
                             text = item.artist,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = AppContentColors.secondaryText()
                         )
                     }
-                    Icon(Icons.Filled.MusicNote, contentDescription = null)
                 }
             }
         }
@@ -326,6 +421,7 @@ private fun ListenVideoPage(
     onAlbumSelected: (ListenVideoAlbum) -> Unit,
     onArtistSelected: (ListenVideoArtist) -> Unit,
     onRetryIndex: () -> Unit,
+    onRefresh: () -> Unit,
     onLogin: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -338,13 +434,13 @@ private fun ListenVideoPage(
         )
 
         state.isLoading -> Box(modifier = modifier, contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
+            AdaptiveLoadingIndicator()
         }
 
         state.error != null && state.playlists.isEmpty() -> ListenVideoMessage(
             title = state.error,
             actionLabel = "重试",
-            onAction = onRetryIndex,
+            onAction = onRefresh,
             modifier = modifier
         )
 
@@ -407,6 +503,7 @@ private fun ListenVideoPlaylistPage(
                     coverUrl = playlist.coverUrl,
                     fallbackIcon = Icons.Filled.LibraryMusic,
                     onClick = { onSelected(playlist) },
+                    alignTitleLines = true,
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -462,6 +559,7 @@ private fun ListenVideoAlbumPage(
                         coverUrl = album.coverUrl,
                         fallbackIcon = Icons.Filled.Album,
                         onClick = { onSelected(album) },
+                        alignTitleLines = true,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -526,6 +624,7 @@ private fun ListenVideoArtistPage(
                         fallbackIcon = Icons.Filled.Person,
                         circularCover = true,
                         onClick = { onSelected(artist) },
+                        alignTitleLines = true,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -567,11 +666,11 @@ private fun ListenVideoIndexProgress(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-        Text(
+        AppCircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+        AppText(
             text = "正在整理收藏夹 $indexedCount/$totalCount",
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = AppContentColors.secondaryText()
         )
     }
 }
@@ -584,17 +683,18 @@ private fun MusicEntityCard(
     fallbackIcon: ImageVector,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    circularCover: Boolean = false
+    circularCover: Boolean = false,
+    alignTitleLines: Boolean = false,
 ) {
-    Surface(
+    AppSurface(
         modifier = modifier
-            .height(92.dp)
+            .heightIn(min = 92.dp)
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.62f),
+        shape = AppShapes.borderedContainer(ContainerLevel.Card),
+        color = AppSurfaceTokens.surface().copy(alpha = 0.62f),
         border = androidx.compose.foundation.BorderStroke(
             1.dp,
-            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+            AppContentColors.primaryText().copy(alpha = 0.12f)
         )
     ) {
         Row(
@@ -604,7 +704,9 @@ private fun MusicEntityCard(
             Box(
                 modifier = Modifier
                     .size(68.dp)
-                    .clip(if (circularCover) CircleShape else RoundedCornerShape(14.dp))
+                    .clip(
+                        if (circularCover) CircleShape else AppShapes.container(ContainerLevel.Dialog)
+                    )
                     .background(MaterialTheme.colorScheme.primaryContainer),
                 contentAlignment = Alignment.Center
             ) {
@@ -616,7 +718,7 @@ private fun MusicEntityCard(
                         contentScale = ContentScale.Crop
                     )
                 } else {
-                    Icon(
+                    AppIcon(
                         imageVector = fallbackIcon,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -626,22 +728,23 @@ private fun MusicEntityCard(
             }
             Spacer(modifier = Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(
+                AppText(
                     text = title,
+                    minLines = if (alignTitleLines) 2 else 1,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
-                Text(
+                AppText(
                     text = subtitle,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = AppContentColors.secondaryText()
                 )
             }
-            Icon(Icons.Filled.PlayArrow, contentDescription = null)
+            AppIcon(Icons.Filled.PlayArrow, contentDescription = null)
         }
     }
 }
@@ -658,18 +761,18 @@ private fun ListenVideoMessage(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Icon(
+        AppIcon(
             Icons.Filled.LibraryMusic,
             contentDescription = null,
             modifier = Modifier.size(48.dp),
-            tint = MaterialTheme.colorScheme.primary
+            tint = AppContentColors.accent()
         )
         Spacer(modifier = Modifier.height(12.dp))
-        Text(title, style = MaterialTheme.typography.titleMedium)
+        AppText(title, style = MaterialTheme.typography.titleMedium)
         actionLabel?.let { label ->
             Spacer(modifier = Modifier.height(16.dp))
-            Button(onClick = onAction, modifier = Modifier.height(48.dp)) {
-                Text(label)
+            AppButton(onClick = onAction, modifier = Modifier.height(48.dp)) {
+                AppText(label)
             }
         }
     }
@@ -693,7 +796,7 @@ private fun ListenVideoTrackSheet(
                 .padding(horizontal = 20.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
+            AppText(
                 text = title,
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.titleLarge,
@@ -701,8 +804,8 @@ private fun ListenVideoTrackSheet(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            IconButton(onClick = onClose, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Filled.Close, contentDescription = "关闭曲目列表")
+            AppIconButton(onClick = onClose) {
+                AppIcon(Icons.Filled.Close, contentDescription = "关闭曲目列表")
             }
         }
         when {
@@ -712,7 +815,7 @@ private fun ListenVideoTrackSheet(
                     .height(220.dp),
                 contentAlignment = Alignment.Center
             ) {
-                CircularProgressIndicator()
+                AdaptiveLoadingIndicator()
             }
 
             error != null -> ListenVideoMessage(
@@ -748,26 +851,26 @@ private fun ListenVideoTrackSheet(
                             contentDescription = null,
                             modifier = Modifier
                                 .size(52.dp)
-                                .clip(RoundedCornerShape(10.dp)),
+                                .clip(AppShapes.container(ContainerLevel.Field)),
                             contentScale = ContentScale.Crop
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(
+                            AppText(
                                 track.title,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 fontWeight = FontWeight.SemiBold
                             )
-                            Text(
+                            AppText(
                                 track.artistName,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = AppContentColors.secondaryText()
                             )
                         }
-                        Icon(Icons.Filled.PlayArrow, contentDescription = "播放 ${track.title}")
+                        AppIcon(Icons.Filled.PlayArrow, contentDescription = "播放 ${track.title}")
                     }
                 }
             }
@@ -775,6 +878,13 @@ private fun ListenVideoTrackSheet(
     }
 }
 
+@Composable
 private fun libraryContentPadding(): PaddingValues {
-    return PaddingValues(start = 20.dp, top = 10.dp, end = 20.dp, bottom = 120.dp)
+    val bottomDockClearance = com.android.purebilibili.core.ui.LocalBottomBarContentPadding.current
+    return PaddingValues(
+        start = 20.dp,
+        top = 10.dp,
+        end = 20.dp,
+        bottom = maxOf(120.dp, bottomDockClearance),
+    )
 }

@@ -1,52 +1,56 @@
 // 文件路径: feature/home/HomeViewModel.kt
 package com.android.purebilibili.feature.home
 
+import com.android.purebilibili.core.plugin.BuiltinPluginIds
+
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.android.purebilibili.core.coroutines.AccountScopedRequests
+import com.android.purebilibili.core.store.AccountSessionIdentity
+import com.android.purebilibili.core.store.TokenManager
+import com.android.purebilibili.plugin.sdk.FeedKind
 import com.android.purebilibili.core.plugin.PluginManager
-import com.android.purebilibili.core.plugin.RecommendationCreatorSignal
-import com.android.purebilibili.core.plugin.RecommendationFeedbackSignals
-import com.android.purebilibili.core.plugin.RecommendationGroup
-import com.android.purebilibili.core.plugin.RecommendationMode
-import com.android.purebilibili.core.plugin.RecommendationPluginApi
-import com.android.purebilibili.core.plugin.RecommendationRequest
-import com.android.purebilibili.core.plugin.RecommendationResult
-import com.android.purebilibili.core.plugin.RecommendationSceneSignals
-import com.android.purebilibili.feature.plugin.ADFILTER_PLUGIN_ID
+import com.android.purebilibili.plugin.sdk.RecommendationCreatorSignal
+import com.android.purebilibili.plugin.sdk.RecommendationFeedbackSignals
+import com.android.purebilibili.plugin.sdk.RecommendationMode
+import com.android.purebilibili.plugin.sdk.RecommendationRequest
+import com.android.purebilibili.plugin.sdk.RecommendationSceneSignals
+import com.android.purebilibili.plugin.sdk.RecommendationStrategy
 import com.android.purebilibili.core.store.SettingsManager
 import com.android.purebilibili.core.store.TodayWatchDislikedVideoSnapshot
 import com.android.purebilibili.core.store.TodayWatchFeedbackStore
 import com.android.purebilibili.core.store.TodayWatchProfileStore
 import com.android.purebilibili.core.store.withDislikedVideoFeedback
-import com.android.purebilibili.core.util.appendDistinctByKey
 import com.android.purebilibili.core.util.Logger
-import com.android.purebilibili.core.util.prependDistinctByKey
 import com.android.purebilibili.data.model.response.LiveRoom
 import com.android.purebilibili.data.model.response.RecommendationFeedbackLocalAction
 import com.android.purebilibili.data.model.response.RecommendationFeedbackReason
 import com.android.purebilibili.data.model.response.VideoItem
 import com.android.purebilibili.data.repository.ActionRepository
-import com.android.purebilibili.data.repository.HistoryRepository
+import com.android.purebilibili.data.repository.MessageImRepository
 import com.android.purebilibili.data.repository.MessageRepository
 import com.android.purebilibili.data.repository.VideoRepository
-import com.android.purebilibili.data.repository.LiveRepository
-import com.android.purebilibili.feature.message.totalMessageUnreadCount
-import com.android.purebilibili.feature.plugin.EyeProtectionPlugin
-import com.android.purebilibili.feature.plugin.TodayWatchPlugin
+import com.android.purebilibili.plugin.sdk.EyeProtectionPluginApi
+import com.android.purebilibili.feature.plugin.TodayWatchControls
 import com.android.purebilibili.feature.plugin.TodayWatchPluginConfig
+import com.android.purebilibili.feature.plugin.TodayWatchCandidatePoolMode
 import com.android.purebilibili.feature.plugin.TodayWatchPluginMode
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.channels.Channel
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.collections.immutable.toImmutableMap
@@ -54,89 +58,10 @@ import kotlinx.collections.immutable.toImmutableSet
 
 // 状态类已移至 HomeUiState.kt
 
-internal fun trimIncrementalRefreshVideosToEvenCount(videos: List<VideoItem>): List<VideoItem> {
-    val size = videos.size
-    if (size <= 1 || size % 2 == 0) return videos
-    return videos.dropLast(1)
-}
-
-internal fun resolveRecommendFeedRequestIndex(
-    isLoadMore: Boolean,
-    isManualRefresh: Boolean,
-    currentRefreshIndex: Int
-): Int {
-    return if (isLoadMore || isManualRefresh) {
-        currentRefreshIndex + 1
-    } else {
-        0
-    }
-}
-
-internal fun shouldAdvanceRecommendFeedRequestIndex(
-    category: HomeCategory,
-    isLoadMore: Boolean,
-    isManualRefresh: Boolean,
-    validVideoCount: Int
-): Boolean {
-    return category == HomeCategory.RECOMMEND &&
-        (isLoadMore || isManualRefresh) &&
-        validVideoCount > 0
-}
-
-internal data class HomeRefreshUndoSnapshot(
-    val videos: List<VideoItem>,
-    val pageIndex: Int,
-    val hasMore: Boolean
-)
-
-internal fun buildHomeRefreshUndoSnapshot(
-    refreshingCategory: HomeCategory,
-    recommendCategoryState: CategoryContent?,
-    fallbackVideos: List<VideoItem>,
-    maxItems: Int = 20
-): HomeRefreshUndoSnapshot? {
-    if (refreshingCategory != HomeCategory.RECOMMEND) return null
-    val sourceVideos = recommendCategoryState?.videos ?: fallbackVideos
-    if (sourceVideos.isEmpty()) return null
-    val sourcePageIndex = recommendCategoryState?.pageIndex ?: 1
-    val sourceHasMore = recommendCategoryState?.hasMore ?: true
-    return HomeRefreshUndoSnapshot(
-        videos = sourceVideos.take(maxItems.coerceAtLeast(1)),
-        pageIndex = sourcePageIndex,
-        hasMore = sourceHasMore
-    )
-}
-
-internal fun shouldExposeHomeRefreshUndo(
-    refreshingCategory: HomeCategory,
-    snapshot: HomeRefreshUndoSnapshot?
-): Boolean {
-    return refreshingCategory == HomeCategory.RECOMMEND && snapshot != null
-}
-
-internal fun shouldRefreshHomeUserInfoAfterFeedLoad(isLoadMore: Boolean): Boolean {
-    return !isLoadMore
-}
-
-internal fun shouldKeepHomeCategoryAutoPagingAfterFailure(isLoadMore: Boolean): Boolean {
-    return !isLoadMore
-}
-
-internal fun applyHomeRefreshUndoSnapshot(
-    oldState: CategoryContent,
-    snapshot: HomeRefreshUndoSnapshot
-): CategoryContent {
-    return oldState.copy(
-        videos = snapshot.videos.toImmutableList(),
-        pageIndex = snapshot.pageIndex,
-        hasMore = snapshot.hasMore,
-        isLoading = false,
-        error = null
-    )
-}
-
-private const val HISTORY_SAMPLE_CACHE_TTL_MS = 10 * 60 * 1000L
 private const val HOME_REFRESH_UNDO_TIMEOUT_MS = 5_000L
+
+/** 本地列表上限，到顶后停止加载。与官方 pegasus.max_card_count 默认值一致。 */
+private const val HOME_FEED_MAX_CARDS = 500
 
 private fun TodayWatchPluginMode.toUiMode(): TodayWatchMode {
     return when (this) {
@@ -159,41 +84,11 @@ private fun TodayWatchMode.toRecommendationMode(): RecommendationMode {
     }
 }
 
-private fun RecommendationMode.toTodayWatchMode(): TodayWatchMode {
-    return when (this) {
-        RecommendationMode.RELAX -> TodayWatchMode.RELAX
-        RecommendationMode.LEARN -> TodayWatchMode.LEARN
-    }
-}
-
-private fun RecommendationResult.toTodayWatchPlan(): TodayWatchPlan {
-    val creatorGroup = groups.firstOrNull { it.id == "preferred_creators" }
-    return TodayWatchPlan(
-        mode = mode.toTodayWatchMode(),
-        upRanks = creatorGroup.toTodayUpRanks().toImmutableList(),
-        videoQueue = items.map { it.video }.toImmutableList(),
-        explanationByBvid = items.associate { it.video.bvid to it.explanation }.toImmutableMap(),
-        historySampleCount = historySampleCount,
-        nightSignalUsed = sceneSignals.eyeCareNightActive,
-        generatedAt = generatedAt
-    )
-}
-
-private fun RecommendationGroup?.toTodayUpRanks(): List<TodayUpRank> {
-    return this?.items.orEmpty().mapNotNull { item ->
-        val mid = item.id.toLongOrNull() ?: return@mapNotNull null
-        TodayUpRank(
-            mid = mid,
-            name = item.title,
-            score = item.score ?: 0.0,
-            watchCount = 1
-        )
-    }
-}
-
 private data class TodayWatchRuntimeConfig(
     val enabled: Boolean,
     val mode: TodayWatchMode,
+    val recommendationStrategy: RecommendationStrategy,
+    val candidatePoolMode: TodayWatchCandidatePoolMode,
     val upRankLimit: Int,
     val queueBuildLimit: Int,
     val queuePreviewLimit: Int,
@@ -207,6 +102,7 @@ private data class TodayWatchRuntimeConfig(
 )
 
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
+    private val accountRequests = AccountScopedRequests(viewModelScope)
     private val _uiState = MutableStateFlow(
         HomeUiState(
             isLoading = true,
@@ -216,10 +112,11 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         )
     )
     val uiState = _uiState.asStateFlow()
+    private val _pendingMemoryRecovery = MutableStateFlow<HomeFeedMemorySnapshot?>(null)
+    internal val pendingMemoryRecovery = _pendingMemoryRecovery.asStateFlow()
     val currentCategory = homeStateFlow { it.currentCategory }
     val displayedTabIndex = homeStateFlow { it.displayedTabIndex }
     val popularSubCategory = homeStateFlow { it.popularSubCategory }
-    val liveSubCategory = homeStateFlow { it.liveSubCategory }
     val user = homeStateFlow { it.user }
     val messageUnreadCount = homeStateFlow { it.messageUnreadCount }
     val refreshKey = homeStateFlow { it.refreshKey }
@@ -242,10 +139,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     val undoAvailable = homeStateFlow { it.undoAvailable }
 
     private val categoryStateFlows = HomeCategory.entries.associateWith { category ->
-        homeStateFlow { it.categoryStates[category] ?: CategoryContent() }
+        homeStateFlow { it.homeCategoryContent(category) }
     }
     private val popularCategoryStateFlows = PopularSubCategory.entries.associateWith { subCategory ->
-        homeStateFlow { it.popularCategoryStates[subCategory] ?: CategoryContent() }
+        homeStateFlow { it.homeCategoryContent(HomeCategory.POPULAR, subCategory) }
     }
 
     fun getCategoryState(category: HomeCategory): StateFlow<CategoryContent> = categoryStateFlows.getValue(category)
@@ -253,39 +150,25 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     fun getPopularCategoryState(subCategory: PopularSubCategory): StateFlow<CategoryContent> =
         popularCategoryStateFlows.getValue(subCategory)
 
-    fun getPreloadVideosSnapshot(
-        category: HomeCategory,
-        popularSubCategory: PopularSubCategory
-    ): List<VideoItem> {
-        val state = _uiState.value
-        return if (category == HomeCategory.POPULAR) {
-            state.popularCategoryStates[popularSubCategory]?.videos ?: state.videos
-        } else {
-            state.categoryStates[category]?.videos ?: state.videos
-        }
-    }
-
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing = _isRefreshing.asStateFlow()
 
     private fun <T> homeStateFlow(selector: (HomeUiState) -> T): StateFlow<T> {
-        return _uiState
-            .map(selector)
-            .distinctUntilChanged()
-            .stateIn(
-                scope = viewModelScope,
-                started = SharingStarted.Eagerly,
-                initialValue = selector(_uiState.value)
-            )
+        return HomeStateProjection(_uiState, selector)
     }
 
     private var refreshIdx = 0
-    private var livePage = 1     //  直播分页
-    private var hasMoreLiveData = true  //  是否还有更多直播数据
+    private var committedRecommendRefreshIdx = 0
+    private var committedFollowPagination: com.android.purebilibili.data.repository.DynamicPaginationState? = null
+    private val feedRequests = HomeFeedRequestCoordinator()
+    private val followFeedSource = HomeFollowFeedSource()
+    /** 当前网格列数，由 UI 同步过来，用来决定每次请求多少条。 */
+    private var feedGridColumns: Int = 2
     private var incrementalTimelineRefreshEnabled = false
+
+    // 推荐保留与位置提示独立；动态流仍使用自己的增量刷新配置。
+    private var keepRecommendOldContent = true
     
-    //  [新增] 会话级去重集合 (避免重复推荐)
-    private val sessionSeenBvids = mutableSetOf<String>()
     //  [新增] 刷新撤销快照
     private var _undoSnapshot: HomeRefreshUndoSnapshot? = null
     private var undoDismissJob: Job? = null
@@ -295,22 +178,73 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     // [Feature] Blocked UPs
     private val blockedUpRepository = com.android.purebilibili.data.repository.BlockedUpRepository(application)
     private var blockedMids: Set<Long> = emptySet()
-    private var historySampleCache: List<VideoItem> = emptyList()
-    private var historySampleLoadedAtMs: Long = 0L
+    private val todayWatchHistory = TodayWatchHistorySource()
+    private var expandedCandidateCache: TodayWatchExpandedCandidateCache? = null
+    private var todayWatchRebuildJob: Job? = null
+    private var todayWatchBuildGeneration: Long = 0L
     private val todayConsumedBvids = mutableSetOf<String>()
     private val todayDislikedBvids = mutableSetOf<String>()
     private val todayDislikedCreatorMids = mutableSetOf<Long>()
     private val todayDislikedKeywords = linkedSetOf<String>()
     private val pendingNotInterestedRefilterBvids = mutableSetOf<String>()
+    private var lastHomeFeedNotice: Pair<AccountSessionIdentity, String?>? = null
     private val _feedbackEvents = Channel<String>(capacity = Channel.BUFFERED)
     val feedbackEvents = _feedbackEvents.receiveAsFlow()
     private var todayWatchPluginObserverJob: Job? = null
-    private var observedTodayWatchPlugin: TodayWatchPlugin? = null
+    private var observedTodayWatchPlugin: TodayWatchControls? = null
+
+    private suspend fun ensureAccountCurrent(identity: AccountSessionIdentity) {
+        currentCoroutineContext().ensureActive()
+        if (!accountRequests.isCurrent(identity)) throw CancellationException("Home account changed")
+    }
+
+    private fun resetForAccountChange() {
+        feedRequests.cancelInitial()
+        userInfoRefreshJob = null
+        messageUnreadRefreshJob = null
+        undoDismissJob = null
+        todayWatchRebuildJob = null
+        _isRefreshing.value = false
+        _undoSnapshot = null
+        refreshIdx = 0
+        committedRecommendRefreshIdx = 0
+        committedFollowPagination = null
+        _pendingMemoryRecovery.value = null
+        todayWatchHistory.clear()
+        expandedCandidateCache = null
+        todayWatchBuildGeneration += 1L
+        todayConsumedBvids.clear()
+        pendingNotInterestedRefilterBvids.clear()
+        val previous = _uiState.value
+        // Keep navigation and global plugin settings, never the previous account's content.
+        _uiState.value = HomeUiState(
+            isLoading = true,
+            currentCategory = previous.currentCategory,
+            displayedTabIndex = previous.displayedTabIndex,
+            popularSubCategory = previous.popularSubCategory,
+            liveSubCategory = if (TokenManager.sessDataCache.isNullOrEmpty()) {
+                LiveSubCategory.POPULAR
+            } else previous.liveSubCategory,
+            categoryStates = HomeCategory.entries.associateWith { CategoryContent() }.toImmutableMap(),
+            popularCategoryStates = PopularSubCategory.entries.associateWith { CategoryContent() }.toImmutableMap(),
+            todayWatchMode = previous.todayWatchMode,
+            todayWatchPluginEnabled = previous.todayWatchPluginEnabled,
+            todayWatchCollapsed = previous.todayWatchCollapsed,
+            todayWatchCardConfig = previous.todayWatchCardConfig
+        )
+        refreshUserInfoInBackground()
+        loadData()
+    }
 
     init {
         viewModelScope.launch {
             SettingsManager.getIncrementalTimelineRefresh(getApplication()).collect { enabled ->
                 incrementalTimelineRefreshEnabled = enabled
+            }
+        }
+        viewModelScope.launch {
+            com.android.purebilibili.core.store.ContentDisplayPreferences.keepRecommend(getApplication()).collect { keep ->
+                keepRecommendOldContent = keep
             }
         }
         // Monitor blocked list
@@ -324,12 +258,19 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         }
         syncTodayWatchFeedbackFromStore()
         viewModelScope.launch {
-            PluginManager.awaitPluginReady(ADFILTER_PLUGIN_ID)
+            PluginManager.awaitPluginReady(BuiltinPluginIds.AD_FILTER)
+            //  推荐流过滤插件的「启用态 + 配置」是在注册协程里异步回填的(DataStore)。
+            //  若不等待就重过滤, 冷启动的首个请求会在“无规则”状态下被过滤, 表现为
+            //  首次展示漏过滤、必须手动刷新一次才生效。
+            PluginManager.awaitPluginReady(BuiltinPluginIds.FEED_FILTER)
             reFilterAllContent()
         }
         viewModelScope.launch {
-            PluginManager.pluginsFlow.collect { plugins ->
-                val plugin = plugins.find { it.plugin.id == TodayWatchPlugin.PLUGIN_ID }?.plugin as? TodayWatchPlugin
+            // 其它插件的注册或开关不应取消并重建今日推荐；配置变化由下方专属监听处理。
+            PluginManager.pluginsFlow.map {
+                PluginManager.getPlugin(TodayWatchControls::class) to
+                    PluginManager.isEnabled(BuiltinPluginIds.TODAY_WATCH)
+            }.distinctUntilChanged().collect { (plugin, _) ->
                 if (plugin !== observedTodayWatchPlugin) {
                     todayWatchPluginObserverJob?.cancel()
                     observedTodayWatchPlugin = plugin
@@ -344,6 +285,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                                     )
                                 ) {
                                     rebuildTodayWatchPlan()
+                                } else if (runtime.collapsed) {
+                                    cancelTodayWatchPlanRebuild()
                                 }
                             }
                         }
@@ -359,40 +302,36 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 ) {
                     rebuildTodayWatchPlan()
+                } else if (runtime.collapsed) {
+                    cancelTodayWatchPlanRebuild()
                 }
             }
         }
+        accountRequests.observe { resetForAccountChange() }
+        viewModelScope.launch {
+            MessageRepository.readEvents.collect {
+                messageUnreadRefreshJob?.cancel()
+                messageUnreadRefreshJob = accountRequests.launch { refreshMessageUnreadCount() }
+            }
+        }
+        refreshUserInfoInBackground()
         loadData()
     }
     
     // [Feature] Re-filter all content when block list changes
     private fun reFilterAllContent() {
         val oldState = _uiState.value
-        val newCategoryStates = oldState.categoryStates.mapValues { (_, content) ->
+        _uiState.value = oldState.mapHomeCategoryContent { category, subCategory, content ->
             content.copy(
                 videos = PluginManager.filterFeedItems(
-                    filterHomeFeedbackVideos(content.videos.filter { it.owner.mid !in blockedMids })
+                    filterHomeFeedbackVideos(content.videos.filter { it.owner.mid !in blockedMids }),
+                    feedKind = category.toFeedKind(subCategory),
                 ).toImmutableList(),
-                // Filter live rooms if possible (assuming uid matches mid)
                 liveRooms = content.liveRooms.filter { it.uid !in blockedMids }.toImmutableList(),
-                followedLiveRooms = content.followedLiveRooms.filter { it.uid !in blockedMids }.toImmutableList()
-            )
-        }.toImmutableMap()
-        
-        var newState = oldState.copy(categoryStates = newCategoryStates)
-        
-        // Sync legacy fields for current category
-        val currentContent = newCategoryStates[newState.currentCategory]
-        if (currentContent != null) {
-            newState = newState.copy(
-                videos = currentContent.videos,
-                liveRooms = currentContent.liveRooms,
-                followedLiveRooms = currentContent.followedLiveRooms
+                followedLiveRooms = content.followedLiveRooms.filter { it.uid !in blockedMids }.toImmutableList(),
             )
         }
-        
-        _uiState.value = newState
-        viewModelScope.launch {
+        accountRequests.launch {
             val runtime = syncTodayWatchPluginState(clearWhenDisabled = true)
             if (shouldAutoRebuildTodayWatchPlan(
                     currentCategory = _uiState.value.currentCategory,
@@ -412,6 +351,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         return TodayWatchRuntimeConfig(
             enabled = pluginEnabled,
             mode = config.currentMode.toUiMode(),
+            recommendationStrategy = config.recommendationStrategy,
+            candidatePoolMode = config.candidatePoolMode,
             upRankLimit = config.upRankLimit,
             queueBuildLimit = config.queueBuildLimit,
             queuePreviewLimit = config.queuePreviewLimit,
@@ -426,9 +367,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun syncTodayWatchPluginState(clearWhenDisabled: Boolean): TodayWatchRuntimeConfig {
-        val info = PluginManager.plugins.find { it.plugin.id == TodayWatchPlugin.PLUGIN_ID }
-        val pluginEnabled = info?.enabled == true
-        val plugin = info?.plugin as? TodayWatchPlugin
+        val pluginEnabled = PluginManager.isEnabled(BuiltinPluginIds.TODAY_WATCH)
+        val plugin = PluginManager.getPlugin(TodayWatchControls::class)
         val config = plugin?.configState?.value ?: TodayWatchPluginConfig()
         val runtime = resolveTodayWatchRuntimeConfig(pluginEnabled = pluginEnabled, config = config)
 
@@ -447,6 +387,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         if (!runtime.enabled && clearWhenDisabled) {
+            cancelTodayWatchPlanRebuild(clearExpandedCache = true)
             nextState = nextState.copy(
                 todayWatchPlan = null,
                 todayWatchLoading = false,
@@ -460,28 +401,26 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun switchTodayWatchMode(mode: TodayWatchMode) {
-        val info = PluginManager.plugins.find { it.plugin.id == TodayWatchPlugin.PLUGIN_ID }
-        if (info?.enabled != true) return
+        if (!PluginManager.isEnabled(BuiltinPluginIds.TODAY_WATCH)) return
 
-        val plugin = info.plugin as? TodayWatchPlugin
+        val plugin = PluginManager.getPlugin(TodayWatchControls::class)
         plugin?.setCurrentMode(mode.toPluginMode())
         _uiState.value = _uiState.value.copy(todayWatchMode = mode)
-        viewModelScope.launch {
-            rebuildTodayWatchPlan()
-        }
+        rebuildTodayWatchPlan()
     }
 
     fun setTodayWatchCollapsed(collapsed: Boolean) {
-        val info = PluginManager.plugins.find { it.plugin.id == TodayWatchPlugin.PLUGIN_ID }
-        val plugin = info?.plugin as? TodayWatchPlugin
-        plugin?.updateConfig { current -> current.copy(collapsed = collapsed) }
+        val plugin = PluginManager.getPlugin(TodayWatchControls::class)
+        plugin?.setCollapsed(collapsed)
 
         val current = _uiState.value
         if (current.todayWatchCollapsed == collapsed) return
         _uiState.value = current.copy(todayWatchCollapsed = collapsed)
 
-        if (!collapsed) {
-            viewModelScope.launch {
+        if (collapsed) {
+            cancelTodayWatchPlanRebuild()
+        } else {
+            accountRequests.launch {
                 val runtime = syncTodayWatchPluginState(clearWhenDisabled = true)
                 if (shouldAutoRebuildTodayWatchPlan(
                         currentCategory = _uiState.value.currentCategory,
@@ -503,12 +442,36 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             plan = _uiState.value.todayWatchPlan,
             previewLimit = _uiState.value.todayWatchCardConfig.queuePreviewLimit
         )
-        viewModelScope.launch {
-            rebuildTodayWatchPlan(forceReloadHistory = false)
+        rebuildTodayWatchPlan(forceReloadHistory = false)
+    }
+
+    private fun rebuildTodayWatchPlan(forceReloadHistory: Boolean = false) {
+        if (forceReloadHistory) {
+            expandedCandidateCache = null
+        }
+        val generation = ++todayWatchBuildGeneration
+        todayWatchRebuildJob?.cancel()
+        todayWatchRebuildJob = accountRequests.launch {
+            performTodayWatchPlanRebuild(
+                forceReloadHistory = forceReloadHistory,
+                generation = generation
+            )
         }
     }
 
-    private suspend fun rebuildTodayWatchPlan(forceReloadHistory: Boolean = false) {
+    private fun cancelTodayWatchPlanRebuild(clearExpandedCache: Boolean = false) {
+        todayWatchBuildGeneration += 1L
+        todayWatchRebuildJob?.cancel()
+        todayWatchRebuildJob = null
+        if (clearExpandedCache) expandedCandidateCache = null
+    }
+
+    private suspend fun performTodayWatchPlanRebuild(
+        forceReloadHistory: Boolean,
+        generation: Long
+    ) {
+        val identity = accountRequests.identity
+        ensureAccountCurrent(identity)
         val runtime = syncTodayWatchPluginState(clearWhenDisabled = true)
         if (!runtime.enabled) {
             return
@@ -527,10 +490,20 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
         _uiState.value = _uiState.value.copy(todayWatchLoading = true, todayWatchError = null)
 
-        val historySample = loadHistorySample(
+        val history = todayWatchHistory.load(
             forceReload = forceReloadHistory,
-            sampleLimit = runtime.historySampleLimit
+            sampleLimit = runtime.historySampleLimit,
+            ensureCurrent = { ensureAccountCurrent(identity) },
         )
+        val historySample = history.videos
+        if (history.unavailable) {
+            _uiState.value = _uiState.value.copy(
+                todayWatchLoading = false,
+                todayWatchError = "历史记录不可用，已按当前推荐生成",
+            )
+        }
+        ensureAccountCurrent(identity)
+        if (!shouldApplyTodayWatchBuildResult(generation, todayWatchBuildGeneration)) return
         val creatorSignals = TodayWatchProfileStore.getCreatorSignals(
             context = getApplication(),
             limit = runtime.historySampleLimit / 4
@@ -543,11 +516,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         val eyeCareNightActive = runtime.linkEyeCareSignal &&
-            EyeProtectionPlugin.getInstance()?.isNightModeActive?.value == true
+            PluginManager.getPlugin(EyeProtectionPluginApi::class)?.isNightModeActive?.value == true
 
-        val recommendationPlugin = PluginManager.plugins
-            .firstOrNull { it.enabled && it.plugin.id == TodayWatchPlugin.PLUGIN_ID }
-            ?.plugin as? RecommendationPluginApi
+        val recommendationPlugin = PluginManager.getEnabledRecommendationPlugins().firstOrNull()
         if (recommendationPlugin == null) {
             _uiState.value = _uiState.value.copy(
                 todayWatchPlan = null,
@@ -557,140 +528,227 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        val result = recommendationPlugin.buildRecommendations(
-            RecommendationRequest(
-                historyVideos = historySample,
-                candidateVideos = recommendVideos,
-                mode = runtime.mode.toRecommendationMode(),
-                sceneSignals = RecommendationSceneSignals(
-                    eyeCareNightActive = eyeCareNightActive
-                ),
-                groupLimit = runtime.upRankLimit,
-                queueLimit = runtime.queueBuildLimit,
-                creatorSignals = creatorSignals,
-                feedbackSignals = RecommendationFeedbackSignals(
-                    consumedBvids = todayConsumedBvids.toSet(),
-                    dislikedBvids = todayDislikedBvids.toSet(),
-                    dislikedCreatorMids = todayDislikedCreatorMids.toSet(),
-                    dislikedKeywords = todayDislikedKeywords.toSet()
-                )
+        val recommendationRequest = RecommendationRequest(
+            historyVideos = historySample,
+            candidateVideos = recommendVideos,
+            mode = runtime.mode.toRecommendationMode(),
+            strategy = runtime.recommendationStrategy,
+            sceneSignals = RecommendationSceneSignals(
+                eyeCareNightActive = eyeCareNightActive,
+                nowEpochSec = System.currentTimeMillis() / 1000L
+            ),
+            groupLimit = runtime.upRankLimit,
+            queueLimit = runtime.queueBuildLimit,
+            creatorSignals = creatorSignals,
+            feedbackSignals = RecommendationFeedbackSignals(
+                consumedBvids = todayConsumedBvids.toSet(),
+                dislikedBvids = todayDislikedBvids.toSet(),
+                dislikedCreatorMids = todayDislikedCreatorMids.toSet(),
+                dislikedKeywords = todayDislikedKeywords.toSet()
             )
         )
-        val plan = result.toTodayWatchPlan()
+
+        suspend fun buildResult(candidates: List<VideoItem>): TodayWatchPlan =
+            buildTodayWatchRecommendation(
+                plugin = recommendationPlugin,
+                request = recommendationRequest.copy(candidateVideos = candidates),
+            )
+
+        val localResult = buildResult(recommendVideos)
+        ensureAccountCurrent(identity)
+        if (!shouldApplyTodayWatchBuildResult(generation, todayWatchBuildGeneration)) return
 
         _uiState.value = _uiState.value.copy(
-            todayWatchPlan = plan,
+            todayWatchPlan = localResult,
             todayWatchMode = runtime.mode,
             todayWatchLoading = false,
             todayWatchError = null
         )
-    }
 
-    private suspend fun loadHistorySample(forceReload: Boolean, sampleLimit: Int): List<VideoItem> {
-        val now = System.currentTimeMillis()
-        if (!forceReload &&
-            historySampleCache.isNotEmpty() &&
-            now - historySampleLoadedAtMs < HISTORY_SAMPLE_CACHE_TTL_MS
-        ) {
-            return historySampleCache.take(sampleLimit.coerceIn(20, 120))
+        if (runtime.candidatePoolMode != TodayWatchCandidatePoolMode.EXPANDED) return
+
+        val baseSignature = buildTodayWatchCandidateSignature(recommendVideos)
+        val nowMillis = System.currentTimeMillis()
+        val cached = expandedCandidateCache
+        if (canReuseTodayWatchExpandedCache(cached, baseSignature, nowMillis)) {
+            val currentCandidates = filterTodayWatchExpandedCandidates(cached?.candidates.orEmpty())
+            ensureAccountCurrent(identity)
+            val mergedCandidates = mergeTodayWatchCandidates(recommendVideos, currentCandidates)
+            if (mergedCandidates.size > recommendVideos.size &&
+                shouldApplyTodayWatchBuildResult(generation, todayWatchBuildGeneration)
+            ) {
+                val expandedPlan = buildResult(mergedCandidates)
+                ensureAccountCurrent(identity)
+                if (!shouldApplyTodayWatchBuildResult(generation, todayWatchBuildGeneration)) return
+                _uiState.value = _uiState.value.copy(
+                    todayWatchPlan = expandedPlan,
+                    todayWatchError = null
+                )
+            }
+            return
         }
 
-        val firstPage = HistoryRepository.getHistoryList(ps = 50, max = 0, viewAt = 0).getOrNull()
-        if (firstPage == null) {
-            _uiState.value = _uiState.value.copy(
-                todayWatchLoading = false,
-                todayWatchError = "历史记录不可用，已按当前推荐生成"
+        val expandedResult = VideoRepository.getHomeVideos(refreshIdx + 1)
+        ensureAccountCurrent(identity)
+        if (!shouldApplyTodayWatchBuildResult(generation, todayWatchBuildGeneration)) return
+
+        expandedResult.onSuccess { rawCandidates ->
+            val expandedCandidates = filterTodayWatchExpandedCandidates(rawCandidates)
+            ensureAccountCurrent(identity)
+            if (!shouldApplyTodayWatchBuildResult(generation, todayWatchBuildGeneration)) return
+            expandedCandidateCache = TodayWatchExpandedCandidateCache(
+                baseSignature = baseSignature,
+                candidates = rawCandidates,
+                loadedAtMillis = System.currentTimeMillis()
             )
-            return emptyList()
-        }
-
-        val merged = firstPage.list.map { it.toVideoItem() }.toMutableList()
-        val cursor = firstPage.cursor
-        if (cursor != null && cursor.max > 0 && merged.size < 80) {
-            val secondPage = HistoryRepository.getHistoryList(
-                ps = 50,
-                max = cursor.max,
-                viewAt = cursor.view_at,
-                business = cursor.business
-            ).getOrNull()
-            if (secondPage != null) {
-                merged += secondPage.list.map { it.toVideoItem() }
+            val mergedCandidates = mergeTodayWatchCandidates(recommendVideos, expandedCandidates)
+            if (mergedCandidates.size > recommendVideos.size &&
+                shouldApplyTodayWatchBuildResult(generation, todayWatchBuildGeneration)
+            ) {
+                val expandedPlan = buildResult(mergedCandidates)
+                ensureAccountCurrent(identity)
+                if (!shouldApplyTodayWatchBuildResult(generation, todayWatchBuildGeneration)) return
+                _uiState.value = _uiState.value.copy(
+                    todayWatchPlan = expandedPlan,
+                    todayWatchError = null
+                )
+            }
+        }.onFailure { error ->
+            if (error is CancellationException) throw error
+            if (shouldApplyTodayWatchBuildResult(generation, todayWatchBuildGeneration)) {
+                _uiState.value = _uiState.value.copy(
+                    todayWatchError = "扩充候选失败，已使用本地候选"
+                )
             }
         }
+    }
 
-        historySampleCache = merged
-            .filter { it.bvid.isNotBlank() }
-            .distinctBy { it.bvid }
-        historySampleLoadedAtMs = now
-        return historySampleCache.take(sampleLimit.coerceIn(20, 120))
+    private suspend fun filterTodayWatchExpandedCandidates(videos: List<VideoItem>): List<VideoItem> {
+        val validVideos = videos.filter {
+            it.bvid.isNotBlank() && it.title.isNotBlank() && it.contentType !in setOf("bangumi", "picture")
+        }
+        val blockedFiltered = validVideos.filter { it.owner.mid !in blockedMids }
+        val feedbackFiltered = filterHomeFeedbackVideos(blockedFiltered)
+        val builtinFiltered = PluginManager.filterFeedItems(
+            feedbackFiltered,
+            feedKind = FeedKind.HOME_RECOMMEND
+        )
+        return com.android.purebilibili.feature.plugin.filterVideoTagMatches(
+            com.android.purebilibili.core.plugin.json.JsonPluginManager.filterVideos(builtinFiltered)
+                .distinctBy { it.bvid },
+            bvid = { it.bvid },
+            asVideoItem = { it },
+        )
     }
 
     private fun getRecommendCandidates(): List<VideoItem> {
         val state = _uiState.value
         val recommendVideos = state.categoryStates[HomeCategory.RECOMMEND]?.videos.orEmpty()
-        return if (recommendVideos.isNotEmpty()) {
+        return (if (recommendVideos.isNotEmpty()) {
             recommendVideos
         } else if (state.currentCategory == HomeCategory.RECOMMEND) {
             state.videos
         } else {
             emptyList()
-        }
+        }).filter { it.contentType !in setOf("bangumi", "picture") }
     }
 
-    //  [新增] 切换分类
+    // 分类选择同步发布，加载任务只消费入口捕获的分类身份。
     fun switchCategory(category: HomeCategory) {
-        val currentState = _uiState.value
-        if (currentState.currentCategory == category) return
-        
-        //  [修复] 标记正在切换分类，避免入场动画产生收缩效果
+        val current = _uiState.value
+        if (current.currentCategory == category) return
         com.android.purebilibili.core.util.CardPositionManager.isSwitchingCategory = true
-        
-        viewModelScope.launch {
-            //  [修复] 如果切换到直播分类，未登录用户默认显示热门
-            val liveSubCategory = if (category == HomeCategory.LIVE) {
-                val isLoggedIn = !com.android.purebilibili.core.store.TokenManager.sessDataCache.isNullOrEmpty()
-                if (isLoggedIn) currentState.liveSubCategory else LiveSubCategory.POPULAR
-            } else {
-                currentState.liveSubCategory
-            }
-            
-            _uiState.value = currentState.copy(
-                currentCategory = category,
-                liveSubCategory = liveSubCategory,
-                displayedTabIndex = currentState.displayedTabIndex
-            )
-
-            //  [修复] 恢复“追番”分类的数据拉取逻辑，确保滑动到这些页面时有内容显示
-            /* 之前禁用了此处拉取，导致滑动展示空白页。现在移除提前返回。 */
-
-            val targetState = _uiState.value
-            val targetCategoryState = if (category == HomeCategory.POPULAR) {
-                targetState.popularCategoryStates[targetState.popularSubCategory] ?: CategoryContent()
-            } else {
-                targetState.categoryStates[category] ?: CategoryContent()
-            }
-            val needFetch = targetCategoryState.videos.isEmpty() && 
-                           targetCategoryState.liveRooms.isEmpty() && 
-                           !targetCategoryState.isLoading && 
-                           targetCategoryState.error == null
-
-            // 如果目标分类没有数据，则加载
-            if (needFetch) {
-                 fetchData(isLoadMore = false)
-            } else if (category == HomeCategory.RECOMMEND) {
-                val runtime = syncTodayWatchPluginState(clearWhenDisabled = true)
-                if (shouldAutoRebuildTodayWatchPlan(
-                        currentCategory = category,
-                        isTodayWatchEnabled = runtime.enabled,
-                        isTodayWatchCollapsed = runtime.collapsed
-                    )
-                ) {
-                    rebuildTodayWatchPlan()
-                }
-            }
-        }
+        val liveSubCategory = if (category == HomeCategory.LIVE && TokenManager.sessDataCache.isNullOrEmpty()) {
+            LiveSubCategory.POPULAR
+        } else current.liveSubCategory
+        _uiState.value = current.selectHomeCategory(category).copy(liveSubCategory = liveSubCategory)
+        startCategoryLoad(category, current.popularSubCategory)
     }
-    
+
+    /** 只在内存终止通知采样；分页标记始终对应已发布的列表。 */
+    internal fun captureMemorySnapshot(
+        category: HomeCategory,
+        subCategory: PopularSubCategory,
+        anchor: HomeFeedScrollAnchor?,
+        headerOffsetDp: Float,
+        tabsCollapsed: Boolean,
+    ): HomeFeedMemorySnapshot? {
+        if (!supportsHomeFeedMemoryRecovery(category)) return null
+        val content = _uiState.value.homeCategoryContent(category, subCategory)
+        if (content.videos.isEmpty()) return null
+        val follow = committedFollowPagination.takeIf { category == HomeCategory.FOLLOW }
+        if (category == HomeCategory.FOLLOW && follow == null) return null
+        return HomeFeedMemorySnapshot(
+            id = java.util.UUID.randomUUID().toString(),
+            category = category.name,
+            popularSubCategory = subCategory.name,
+            videos = content.videos,
+            pageIndex = content.pageIndex,
+            hasMore = content.hasMore,
+            recommendRequestIndex = committedRecommendRefreshIdx,
+            followOffset = follow?.offset,
+            followBaseline = follow?.updateBaseline,
+            anchor = anchor,
+            headerOffsetDp = headerOffsetDp,
+            tabsCollapsed = tabsCollapsed,
+        )
+    }
+
+    internal suspend fun restoreMemorySnapshot(snapshot: HomeFeedMemorySnapshot) {
+        val category = HomeCategory.entries.firstOrNull { it.name == snapshot.category } ?: return
+        val subCategory = PopularSubCategory.entries.firstOrNull { it.name == snapshot.popularSubCategory } ?: return
+        if (!supportsHomeFeedMemoryRecovery(category) || snapshot.videos.isEmpty()) return
+        if (category == HomeCategory.FOLLOW && snapshot.followOffset == null) return
+        val recoveryAccountMid = TokenManager.midCache ?: 0L
+        val identity = accountRequests.awaitCurrentIdentity()
+        if ((identity.mid ?: 0L) != recoveryAccountMid) return
+        feedRequests.cancelAndJoinForMemoryRecovery()
+        if (!accountRequests.isCurrent(identity)) return
+        var blocked: Set<Long>
+        var videos: kotlinx.collections.immutable.ImmutableList<VideoItem>
+        do {
+            blocked = blockedMids
+            videos = withContext(Dispatchers.Default) {
+                PluginManager.filterFeedItems(
+                    filterHomeFeedbackVideos(snapshot.videos.filter { it.owner.mid !in blocked }),
+                    feedKind = category.toFeedKind(subCategory),
+                ).toImmutableList()
+            }
+            if (!accountRequests.isCurrent(identity)) return
+        } while (blockedMids !== blocked)
+        if (category == HomeCategory.FOLLOW) {
+            com.android.purebilibili.data.repository.DynamicRepository.syncPaginationAfterRefresh(
+                scope = com.android.purebilibili.data.repository.DynamicFeedScope.HOME_FOLLOW,
+                type = "video",
+                offset = requireNotNull(snapshot.followOffset),
+                updateBaseline = snapshot.followBaseline.orEmpty(),
+                hasMore = snapshot.hasMore,
+            )
+            committedFollowPagination = com.android.purebilibili.data.repository.DynamicRepository.snapshotPagination(
+                com.android.purebilibili.data.repository.DynamicFeedScope.HOME_FOLLOW, "video",
+            )
+        }
+        refreshIdx = snapshot.recommendRequestIndex
+        committedRecommendRefreshIdx = snapshot.recommendRequestIndex
+        val content = CategoryContent(videos = videos, pageIndex = snapshot.pageIndex, hasMore = snapshot.hasMore)
+        _uiState.update { current ->
+            val updated = if (category == HomeCategory.POPULAR) {
+                current.updateHomePopularContent(subCategory) { content }
+            } else current.updateHomeCategoryContent(category) { content }
+            updated.copy(popularSubCategory = subCategory).selectHomeCategory(category).copy(
+                refreshNewItemsCount = null,
+                recommendOldContentAnchorBvid = null,
+                recommendOldContentStartIndex = null,
+            )
+        }
+        _pendingMemoryRecovery.value = snapshot.copy(videos = emptyList())
+        if (videos.isEmpty()) startCategoryLoad(category, subCategory, force = true)
+    }
+
+    internal fun consumeMemoryRecovery(id: String) {
+        _pendingMemoryRecovery.update { if (it?.id == id) null else it }
+    }
+
     //  [新增] 更新显示的标签页索引（用于特殊分类，不改变内容只更新标签高亮）
     fun updateDisplayedTabIndex(index: Int) {
         val normalized = index.coerceAtLeast(0)
@@ -726,7 +784,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             reFilterAllContent()
         }
         if (currentCategory == HomeCategory.RECOMMEND) {
-            viewModelScope.launch {
+            accountRequests.launch {
                 val runtime = syncTodayWatchPluginState(clearWhenDisabled = true)
                 if (shouldAutoRebuildTodayWatchPlan(
                         currentCategory = currentCategory,
@@ -755,60 +813,27 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
         _uiState.value = currentState.copy(todayWatchPlan = consumeUpdate.updatedPlan)
         if (consumeUpdate.shouldRefill && currentState.currentCategory == HomeCategory.RECOMMEND) {
-            viewModelScope.launch {
-                rebuildTodayWatchPlan()
-            }
+            rebuildTodayWatchPlan()
         }
     }
     
     
-    //  [新增] 切换直播子分类
-    fun switchLiveSubCategory(subCategory: LiveSubCategory) {
-        if (_uiState.value.liveSubCategory == subCategory) return
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(
-                liveSubCategory = subCategory,
-                liveRooms = emptyList<LiveRoom>().toImmutableList(),
-                isLoading = true,
-                error = null
-            )
-            livePage = 1
-            hasMoreLiveData = true  //  修复：切换分类时重置分页标志
-            fetchLiveRooms(isLoadMore = false)
-        }
-    }
-
     fun switchPopularSubCategory(subCategory: PopularSubCategory) {
         if (_uiState.value.popularSubCategory == subCategory) return
         val current = _uiState.value
-        val targetState = current.popularCategoryStates[subCategory] ?: CategoryContent()
-        var nextState = current.copy(popularSubCategory = subCategory)
-        if (current.currentCategory == HomeCategory.POPULAR) {
-            val nextCategoryStates = current.categoryStates.toMutableMap()
-            nextCategoryStates[HomeCategory.POPULAR] = targetState
-            nextState = nextState.copy(
-                categoryStates = nextCategoryStates.toImmutableMap(),
-                videos = targetState.videos,
-                isLoading = targetState.isLoading,
-                error = targetState.error
-            )
-        }
-        _uiState.value = nextState
+        _uiState.value = current.selectHomePopularSubCategory(subCategory)
 
-        val needFetch = targetState.videos.isEmpty() &&
-            !targetState.isLoading &&
-            targetState.error == null
-        if (current.currentCategory == HomeCategory.POPULAR && needFetch) {
-            viewModelScope.launch {
-                fetchData(isLoadMore = false)
-            }
+        if (current.currentCategory == HomeCategory.POPULAR) {
+            startCategoryLoad(HomeCategory.POPULAR, subCategory)
         }
     }
     
     //  [新增] 添加到稍后再看
     fun addToWatchLater(bvid: String, aid: Long) {
-        viewModelScope.launch {
+        accountRequests.launch {
+            val identity = accountRequests.identity
             val result = com.android.purebilibili.data.repository.ActionRepository.toggleWatchLater(aid, true)
+            ensureAccountCurrent(identity)
             result.onSuccess {
                 android.widget.Toast.makeText(getApplication(), "已添加到稍后再看", android.widget.Toast.LENGTH_SHORT).show()
             }.onFailure { e ->
@@ -820,9 +845,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     fun markNotInterested(
         video: VideoItem,
         reason: RecommendationFeedbackReason,
-        cardAnimationEnabled: Boolean = true
+        dissolveAnimationEnabled: Boolean = true
     ) {
-        viewModelScope.launch {
+        accountRequests.launch {
+            val identity = accountRequests.identity
             val action = resolveHomeNotInterestedAction(video, reason)
             recordTodayWatchNegativeFeedback(video, action)
             if (action.shouldBlockCreator) {
@@ -831,15 +857,16 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     name = action.creatorName,
                     face = action.creatorFace
                 )
+                ensureAccountCurrent(identity)
                 blockedMids = blockedMids + action.creatorMid
             }
             if (action.shouldBlockCreator || action.keywords.isNotEmpty()) {
                 pendingNotInterestedRefilterBvids += video.bvid
             }
 
-            val transition = resolveHomeDismissVisualTransition(
+            val transition = resolveHomeNotInterestedVisualTransition(
                 isFeedbackRecorded = true,
-                cardAnimationEnabled = cardAnimationEnabled
+                isDissolveAnimationAvailable = dissolveAnimationEnabled
             )
             if (transition.shouldStartDissolve) {
                 startVideoDissolve(video.bvid)
@@ -848,24 +875,28 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             if (action.shouldSyncCreatorToBilibiliBlockedList) {
-                viewModelScope.launch {
+                accountRequests.launch {
+                    val identity = accountRequests.identity
                     val writeResult = blockedUpRepository.blockUpWithBilibiliSync(
                         mid = action.creatorMid,
                         name = action.creatorName,
                         face = action.creatorFace
                     )
+                    ensureAccountCurrent(identity)
                     Logger.d("HomeVM", writeResult.message)
                 }
             }
 
             val metadata = video.recommendationFeedback
-            val supportsServerSync = metadata?.supportsServerSync == true && reason.id != null
+            val supportsServerSync = metadata?.supportsServerSync == true && (reason.id ?: 0L) > 0L
             if (supportsServerSync) {
-                viewModelScope.launch {
-                    ActionRepository.submitRecommendationFeedback(metadata, reason)
-                        .onSuccess {
+                accountRequests.launch {
+                    val identity = accountRequests.identity
+                    val result = ActionRepository.submitRecommendationFeedback(metadata, reason)
+                    ensureAccountCurrent(identity)
+                    result.onSuccess {
                             _feedbackEvents.send(
-                                reason.toast.ifBlank { "已减少相关内容推荐" }
+                                reason.toast.ifBlank { "已提交推荐反馈" }
                             )
                         }
                         .onFailure {
@@ -873,7 +904,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                         }
                 }
             } else {
-                _feedbackEvents.send(reason.toast.ifBlank { "已减少相关内容推荐" })
+                _feedbackEvents.send("已在本地屏蔽所选内容，未同步推荐偏好")
             }
             Logger.d("HomeVM", "已记录不感兴趣: ${video.bvid}, reason=${reason.name}")
         }
@@ -891,12 +922,14 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             android.widget.Toast.makeText(getApplication(), "无法获取 UP 主信息", android.widget.Toast.LENGTH_SHORT).show()
             return
         }
-        viewModelScope.launch {
+        accountRequests.launch {
+            val identity = accountRequests.identity
             val writeResult = blockedUpRepository.blockUpWithBilibiliSync(
                 mid = action.creatorMid,
                 name = action.creatorName,
                 face = action.creatorFace
             )
+            ensureAccountCurrent(identity)
             blockedMids = blockedMids + action.creatorMid
             reFilterAllContent()
             android.widget.Toast.makeText(getApplication(), writeResult.message, android.widget.Toast.LENGTH_SHORT).show()
@@ -960,86 +993,164 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun loadData() {
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true, error = null)
-            fetchData(isLoadMore = false)
-        }
-    }
-
-    fun refresh(category: HomeCategory = _uiState.value.currentCategory) {
-        if (_isRefreshing.value) return
-        viewModelScope.launch {
-            _isRefreshing.value = true
-            val refreshingCategory = category
-            syncCurrentCategoryForRefresh(refreshingCategory)
-            _undoSnapshot = buildHomeRefreshUndoSnapshot(
-                refreshingCategory = refreshingCategory,
-                recommendCategoryState = _uiState.value.categoryStates[HomeCategory.RECOMMEND],
-                fallbackVideos = _uiState.value.videos
-            )
-            //  [新增] 刷新前保存推荐视频快照（用于撤销）
-            val previousRecommendTopBvid = if (refreshingCategory == HomeCategory.RECOMMEND) {
-                (_uiState.value.categoryStates[HomeCategory.RECOMMEND]?.videos
-                    ?: _uiState.value.videos).firstOrNull()?.bvid?.takeIf { it.isNotBlank() }
-            } else null
-            val newItemsCount = fetchData(
-                isLoadMore = false,
-                isManualRefresh = true,
-                category = refreshingCategory
-            )
-            
-            //  数据加载完成后再更新 refreshKey，避免闪烁
-            //  刷新成功后显示趣味提示
-            val refreshMessage = com.android.purebilibili.core.util.EasterEggs.getRefreshMessage()
-            val oldBoundary = _uiState.value.recommendOldContentStartIndex
-            val newBoundary = if (refreshingCategory == HomeCategory.RECOMMEND) {
-                if ((newItemsCount ?: 0) > 0) newItemsCount else null
-            } else {
-                oldBoundary
-            }
-            val oldAnchor = _uiState.value.recommendOldContentAnchorBvid
-            val newAnchor = if (refreshingCategory == HomeCategory.RECOMMEND) {
-                if ((newItemsCount ?: 0) > 0) previousRecommendTopBvid else null
-            } else {
-                oldAnchor
-            }
-            val undoAvailable = shouldExposeHomeRefreshUndo(
-                refreshingCategory = refreshingCategory,
-                snapshot = _undoSnapshot
-            )
-            _uiState.value = _uiState.value.copy(
-                refreshKey = System.currentTimeMillis(),
-                refreshMessage = refreshMessage,
-                refreshNewItemsCount = newItemsCount,
-                refreshNewItemsKey = if (newItemsCount != null) System.currentTimeMillis() else _uiState.value.refreshNewItemsKey,
-                recommendOldContentAnchorBvid = newAnchor,
-                recommendOldContentStartIndex = newBoundary,
-                recommendOldContentRevealKey = if (refreshingCategory == HomeCategory.RECOMMEND) 0L else _uiState.value.recommendOldContentRevealKey,
-                //  刷新成功且是推荐分类时标记可撤销
-                undoAvailable = undoAvailable
-            )
-            if (undoAvailable) {
-                scheduleUndoDismiss()
-            } else {
-                cancelUndoDismiss()
-            }
-            _isRefreshing.value = false
-        }
-    }
-
-    private fun syncCurrentCategoryForRefresh(category: HomeCategory) {
         val current = _uiState.value
-        if (current.currentCategory == category) return
-        val categoryState = current.categoryStates[category] ?: CategoryContent()
-        // 下拉刷新发生在具体 Pager 页上，先同步当前分类，避免刷新态和数据请求落到旧页面。
-        _uiState.value = current.copy(
-            currentCategory = category,
-            videos = categoryState.videos,
-            liveRooms = categoryState.liveRooms,
-            followedLiveRooms = categoryState.followedLiveRooms,
-            isLoading = categoryState.isLoading,
-            error = categoryState.error
-        )
+        startCategoryLoad(current.currentCategory, current.popularSubCategory, force = true)
+    }
+
+    private fun startCategoryLoad(
+        category: HomeCategory,
+        popularSubCategory: PopularSubCategory,
+        force: Boolean = false,
+    ) {
+        // 直播列表由独立页面持有；首页只同步导航，不重复请求、缓存直播数据。
+        if (shouldEmbedLivePageInHomeTopTab(category)) {
+            feedRequests.cancelInitial()
+            return
+        }
+        launchFeedRequest(category, popularSubCategory, HomeFeedRequestKind.INITIAL) {
+            // 前一请求的取消清理已结束，此时再判断缓存，避免把旧 isLoading 当成新请求。
+            val current = _uiState.value
+            val target = if (category == HomeCategory.POPULAR) {
+                current.popularCategoryStates[popularSubCategory] ?: CategoryContent()
+            } else {
+                current.categoryStates[category] ?: CategoryContent()
+            }
+            val needsLoad = force || (target.videos.isEmpty() && target.liveRooms.isEmpty() &&
+                !target.isLoading && target.error == null)
+            if (needsLoad) {
+                fetchData(isLoadMore = false, category = category, popularSubCategory = popularSubCategory)
+            } else if (category == HomeCategory.RECOMMEND) {
+                val runtime = syncTodayWatchPluginState(clearWhenDisabled = true)
+                if (shouldAutoRebuildTodayWatchPlan(
+                        currentCategory = category,
+                        isTodayWatchEnabled = runtime.enabled,
+                        isTodayWatchCollapsed = runtime.collapsed,
+                    )
+                ) {
+                    rebuildTodayWatchPlan()
+                }
+            }
+        }
+    }
+
+    private fun launchFeedRequest(
+        category: HomeCategory,
+        popularSubCategory: PopularSubCategory,
+        kind: HomeFeedRequestKind,
+        load: suspend () -> Unit,
+    ): Boolean = feedRequests.start(
+        target = homeFeedRequestTarget(category, popularSubCategory),
+        kind = kind,
+        launchRequest = { block -> accountRequests.launch { block() } },
+    ) {
+        try {
+            load()
+        } catch (error: CancellationException) {
+            // 此时仍持有该分类的执行权；下一请求在清理完成后才能开始写入加载态。
+            val clearLoading: (CategoryContent) -> CategoryContent = { it.copy(isLoading = false) }
+            if (category == HomeCategory.POPULAR) updatePopularCategoryState(popularSubCategory, clearLoading)
+            else updateCategoryState(category, clearLoading)
+            throw error
+        }
+    }
+
+    fun refresh(
+        category: HomeCategory = _uiState.value.currentCategory,
+        popularSubCategory: PopularSubCategory = _uiState.value.popularSubCategory,
+    ) {
+        if (shouldEmbedLivePageInHomeTopTab(category)) return
+        if (_isRefreshing.value) return
+        launchFeedRequest(category, popularSubCategory, HomeFeedRequestKind.REFRESH) {
+            com.android.purebilibili.core.util.Logger.d(
+                "HomeFeed",
+                "refresh 触发 category=$category 实际列=$feedGridColumns " +
+                    "请求column=${com.android.purebilibili.data.repository.HOME_FEED_REQUEST_COLUMN}",
+            )
+            _isRefreshing.value = true
+            try {
+                val refreshingCategory = category
+                _undoSnapshot = buildHomeRefreshUndoSnapshot(
+                    refreshingCategory = refreshingCategory,
+                    recommendCategoryState = _uiState.value.categoryStates[HomeCategory.RECOMMEND],
+                    fallbackVideos = _uiState.value.videos
+                )
+                //  [新增] 刷新前保存推荐视频快照（用于撤销）
+                val previousRecommendTopBvid = if (refreshingCategory == HomeCategory.RECOMMEND) {
+                    (_uiState.value.categoryStates[HomeCategory.RECOMMEND]?.videos
+                        ?: _uiState.value.videos).firstOrNull()?.bvid?.takeIf { it.isNotBlank() }
+                } else null
+                val newItemsCount = fetchData(
+                    isLoadMore = false,
+                    isManualRefresh = true,
+                    category = refreshingCategory,
+                    popularSubCategory = popularSubCategory,
+                )
+                val refreshedState = if (refreshingCategory == HomeCategory.POPULAR) {
+                    _uiState.value.popularCategoryStates[popularSubCategory]
+                } else {
+                    _uiState.value.categoryStates[refreshingCategory]
+                }
+                if (refreshedState?.error != null || refreshedState?.refreshError != null) {
+                    _undoSnapshot = null
+                    cancelUndoDismiss()
+                    _uiState.value = _uiState.value.copy(
+                        refreshMessage = null,
+                        refreshNewItemsCount = null,
+                        undoAvailable = false,
+                    )
+                    return@launchFeedRequest
+                }
+            
+                //  数据加载完成后再更新 refreshKey，避免闪烁
+                //  刷新成功后显示趣味提示
+                val refreshMessage = com.android.purebilibili.core.util.EasterEggs.getRefreshMessage()
+                val oldBoundary = _uiState.value.recommendOldContentStartIndex
+                val newBoundary = if (refreshingCategory == HomeCategory.RECOMMEND) {
+                    if ((newItemsCount ?: 0) > 0) newItemsCount else null
+                } else {
+                    oldBoundary
+                }
+                val oldAnchor = _uiState.value.recommendOldContentAnchorBvid
+                val newAnchor = if (refreshingCategory == HomeCategory.RECOMMEND) {
+                    if ((newItemsCount ?: 0) > 0) previousRecommendTopBvid else null
+                } else {
+                    oldAnchor
+                }
+                val undoAvailable = shouldExposeHomeRefreshUndo(
+                    refreshingCategory = refreshingCategory,
+                    snapshot = _undoSnapshot
+                )
+                val stateRefreshKey = System.currentTimeMillis()
+                _uiState.value = _uiState.value.copy(
+                    refreshKey = stateRefreshKey,
+                    refreshMessage = refreshMessage,
+                    refreshNewItemsCount = newItemsCount,
+                    refreshNewItemsKey = if (newItemsCount != null) stateRefreshKey else _uiState.value.refreshNewItemsKey,
+                    recommendOldContentAnchorBvid = newAnchor,
+                    recommendOldContentStartIndex = newBoundary,
+                    // 对齐 PiliPlus：刷新完成横幅即在列表中就位（它本身位于新旧内容分界，
+                    // 只有滑到那里才可见），不再依赖下滑触发的 reveal 检测。
+                    recommendOldContentRevealKey = if (
+                        refreshingCategory == HomeCategory.RECOMMEND && newAnchor != null && (newItemsCount ?: 0) > 0
+                    ) {
+                        stateRefreshKey
+                    } else if (refreshingCategory == HomeCategory.RECOMMEND) {
+                        0L
+                    } else {
+                        _uiState.value.recommendOldContentRevealKey
+                    },
+                    //  刷新成功且是推荐分类时标记可撤销
+                    undoAvailable = undoAvailable
+                )
+                if (undoAvailable) {
+                    scheduleUndoDismiss()
+                } else {
+                    cancelUndoDismiss()
+                }
+            } finally {
+                _isRefreshing.value = false
+            }
+        }
     }
 
     fun markRefreshNewItemsHandled(key: Long) {
@@ -1060,6 +1171,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     //  [新增] 撤销刷新：恢复刷新前的推荐视频列表
     fun undoRefresh() {
+        if (!accountRequests.isCurrent()) return
         val snapshot = _undoSnapshot ?: return
         cancelUndoDismiss()
         updateCategoryState(HomeCategory.RECOMMEND) { oldState ->
@@ -1086,7 +1198,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun scheduleUndoDismiss() {
         cancelUndoDismiss()
-        undoDismissJob = viewModelScope.launch {
+        undoDismissJob = accountRequests.launch {
             delay(HOME_REFRESH_UNDO_TIMEOUT_MS)
             dismissUndo()
         }
@@ -1097,92 +1209,152 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         undoDismissJob = null
     }
 
-    fun loadMore() {
-        val currentCategory = _uiState.value.currentCategory
+    /**
+     * UI 把当前网格列数同步过来。
+     *
+     * 官方客户端不传每页条数，由服务端按屏幕形态（2/3/4 列）决定下发多少；
+     * 这里用同样的思路，按列数换算请求条数。
+     */
+    fun updateFeedGridColumns(columns: Int) {
+        val next = columns.coerceIn(1, 8)
+        if (next != feedGridColumns) {
+            com.android.purebilibili.core.util.Logger.d(
+                "HomeFeed",
+                "列数变化 $feedGridColumns → $next（实际列只影响本地排版，" +
+                    "请求固定 column=${com.android.purebilibili.data.repository.HOME_FEED_REQUEST_COLUMN}）",
+            )
+        }
+        feedGridColumns = next
+    }
+
+    fun loadMore(
+        category: HomeCategory = _uiState.value.currentCategory,
+        popularSubCategory: PopularSubCategory = _uiState.value.popularSubCategory,
+        retry: Boolean = false,
+    ) {
+        if (shouldEmbedLivePageInHomeTopTab(category)) return
+        val currentCategory = category
         val categoryState = if (currentCategory == HomeCategory.POPULAR) {
-            _uiState.value.popularCategoryStates[_uiState.value.popularSubCategory] ?: return
+            _uiState.value.popularCategoryStates[popularSubCategory] ?: return
         } else {
             _uiState.value.categoryStates[currentCategory] ?: return
         }
-        
-        if (categoryState.isLoading || _isRefreshing.value || !categoryState.hasMore) return
+
+        if (categoryState.isLoading || _isRefreshing.value || !categoryState.hasMore) {
+            com.android.purebilibili.core.util.Logger.d(
+                "HomeFeed",
+                "skip loadMore: isLoading=${categoryState.isLoading} refreshing=${_isRefreshing.value} " +
+                    "hasMore=${categoryState.hasMore} category=$currentCategory",
+            )
+            return
+        }
+        if (!retry && categoryState.loadMoreError != null) return
         if (currentCategory == HomeCategory.POPULAR &&
-            !supportsPopularLoadMore(_uiState.value.popularSubCategory)
+            !supportsPopularLoadMore(popularSubCategory)
         ) {
             return
         }
-        
-        //  修复：如果是直播分类且没有更多数据，不再加载
-        if (currentCategory == HomeCategory.LIVE && !hasMoreLiveData) {
-            com.android.purebilibili.core.util.Logger.d("HomeVM", "🔴 No more live data, skipping loadMore")
+
+        // 列表到上限后停止加载，避免无限翻页把内存吃满。
+        if (categoryState.videos.size >= HOME_FEED_MAX_CARDS) {
+            com.android.purebilibili.core.util.Logger.d(
+                "HomeFeed",
+                "stop loadMore: 已到上限 size=${categoryState.videos.size} max=$HOME_FEED_MAX_CARDS",
+            )
+            if (currentCategory == HomeCategory.POPULAR) {
+                updatePopularCategoryState(popularSubCategory) { it.copy(hasMore = false) }
+            } else {
+                updateCategoryState(currentCategory) { it.copy(hasMore = false) }
+            }
             return
         }
-        
-        viewModelScope.launch {
-            fetchData(isLoadMore = true)
+
+        launchFeedRequest(category, popularSubCategory, HomeFeedRequestKind.APPEND) {
+            com.android.purebilibili.core.util.Logger.d(
+                "HomeFeed",
+                "loadMore 触发 category=$currentCategory 实际列=$feedGridColumns " +
+                    "请求column=${com.android.purebilibili.data.repository.HOME_FEED_REQUEST_COLUMN} " +
+                    "current=${categoryState.videos.size}",
+            )
+            fetchData(isLoadMore = true, category = category, popularSubCategory = popularSubCategory)
         }
     }
 
     private fun refreshUserInfoInBackground() {
         if (userInfoRefreshJob?.isActive == true) return
-        userInfoRefreshJob = viewModelScope.launch {
+        userInfoRefreshJob = accountRequests.launch {
             fetchUserInfo()
         }
     }
 
     private fun refreshMessageUnreadInBackground() {
         if (messageUnreadRefreshJob?.isActive == true) return
-        messageUnreadRefreshJob = viewModelScope.launch {
+        messageUnreadRefreshJob = accountRequests.launch {
             refreshMessageUnreadCount()
         }
     }
 
+    /** 回首页时重拉角标。 */
+    fun refreshMessageUnread() {
+        refreshMessageUnreadInBackground()
+    }
+
     private suspend fun refreshMessageUnreadCount() {
+        val identity = accountRequests.identity
+        ensureAccountCurrent(identity)
         if (com.android.purebilibili.core.store.TokenManager.sessDataCache.isNullOrEmpty()) {
             _uiState.value = _uiState.value.copy(messageUnreadCount = 0)
             return
         }
 
-        val unreadResult = MessageRepository.getUnreadCount()
-        val feedUnreadResult = MessageRepository.getFeedUnread()
-        if (unreadResult.isSuccess && feedUnreadResult.isSuccess) {
-            _uiState.value = _uiState.value.copy(
-                messageUnreadCount = totalMessageUnreadCount(
-                    unreadData = unreadResult.getOrNull(),
-                    feedUnread = feedUnreadResult.getOrNull()
-                )
-            )
+        // 优先官方 gateway 的总未读 + 四项；失败回退私信 + REST 加总。
+        val mid = com.android.purebilibili.core.store.TokenManager.midCache ?: 0L
+        val center = MessageRepository.getMessageCenterUnread()
+        ensureAccountCurrent(identity)
+        val total = center.getOrNull()?.total ?: run {
+            val imUnread = MessageImRepository.totalUnread()
+            ensureAccountCurrent(identity)
+            val privateTotal = imUnread.getOrNull()?.number?.coerceIn(0L, Int.MAX_VALUE.toLong())?.toInt()
+                ?: return
+            val feedUnread = MessageRepository.getFeedUnread().getOrNull()
+            ensureAccountCurrent(identity)
+            privateTotal + (feedUnread?.let { it.reply + it.at + it.like + it.sysMsg } ?: 0)
         }
+        // 清理状态只决定显示 0 还是完整总数；总数上涨视为新消息。
+        val displayed = com.android.purebilibili.core.store.MessageBadgeCleanState.resolve(mid, total)
+        _uiState.value = _uiState.value.copy(messageUnreadCount = displayed)
     }
 
     private suspend fun fetchData(
         isLoadMore: Boolean,
         isManualRefresh: Boolean = false,
-        category: HomeCategory = _uiState.value.currentCategory
+        category: HomeCategory = _uiState.value.currentCategory,
+        popularSubCategory: PopularSubCategory = _uiState.value.popularSubCategory,
     ): Int? {
+        val identity = accountRequests.identity
+        ensureAccountCurrent(identity)
         val currentCategory = category
-        val popularSubCategory = _uiState.value.popularSubCategory
         var refreshNewItemsCount: Int? = null
         
         // 更新当前分类为加载状态
         if (currentCategory == HomeCategory.POPULAR) {
-            updatePopularCategoryState(popularSubCategory) { it.copy(isLoading = true, error = null) }
+            updatePopularCategoryState(popularSubCategory) {
+                it.copy(isLoading = true, error = null, loadMoreError = null, refreshError = null)
+            }
         } else {
-            updateCategoryState(currentCategory) { it.copy(isLoading = true, error = null) }
-        }
-        
-        //  直播分类单独处理 (TODO: Adapt fetchLiveRooms to use categoryStates)
-        if (currentCategory == HomeCategory.LIVE) {
-            fetchLiveRooms(isLoadMore)
-            return refreshNewItemsCount
+            updateCategoryState(currentCategory) {
+                it.copy(isLoading = true, error = null, loadMoreError = null, refreshError = null)
+            }
         }
         
         //  关注动态分类单独处理 (TODO: Adapt fetchFollowFeed to use categoryStates)
         if (currentCategory == HomeCategory.FOLLOW) {
-            return fetchFollowFeed(
+            val result = fetchFollowFeed(
                 isLoadMore = isLoadMore,
                 isManualRefresh = isManualRefresh
             )
+            currentCoroutineContext().ensureActive()
+            return result
         }
         
         val currentCategoryState = if (currentCategory == HomeCategory.POPULAR) {
@@ -1190,109 +1362,145 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             _uiState.value.categoryStates[currentCategory] ?: CategoryContent()
         }
-        // 获取当前页码 (如果是刷新则为0/1，加载更多则+1)
-        val pageToFetch = if (isLoadMore) currentCategoryState.pageIndex + 1 else 1 // Assuming 1-based pagination for simplicity in general, adjust per API
+        val advanceOnManualRefresh = shouldAdvancePagedFeedOnManualRefresh(
+            category = currentCategory,
+            popularSubCategory = popularSubCategory
+        )
+        // 分区/热门综合：手动刷新翻下一页换一批；其它分类仍回第 1 页
+        val pageToFetch = resolvePagedFeedPageToFetch(
+            isLoadMore = isLoadMore,
+            isManualRefresh = isManualRefresh,
+            currentPageIndex = currentCategoryState.pageIndex,
+            advanceOnManualRefresh = advanceOnManualRefresh
+        )
         val recommendRequestIndex = resolveRecommendFeedRequestIndex(
             isLoadMore = isLoadMore,
             isManualRefresh = isManualRefresh,
             currentRefreshIndex = refreshIdx
         )
 
-        //  视频类分类处理
-        val videoResult = when (currentCategory) {
-            HomeCategory.RECOMMEND -> VideoRepository.getHomeVideos(recommendRequestIndex) // Recommend uses idx, slightly different
-            HomeCategory.POPULAR -> {
-                when (popularSubCategory) {
-                    PopularSubCategory.COMPREHENSIVE -> VideoRepository.getPopularVideos(pageToFetch)
-                    PopularSubCategory.RANKING -> VideoRepository.getRankingVideos(rid = 0, type = "all")
-                    PopularSubCategory.WEEKLY -> VideoRepository.getWeeklyMustWatchVideos()
-                    PopularSubCategory.PRECIOUS -> VideoRepository.getPreciousVideos()
-                }
+        val response = loadHomeFeedVideos(
+            category = currentCategory,
+            popularSubCategory = popularSubCategory,
+            pageToFetch = pageToFetch,
+            recommendRequestIndex = recommendRequestIndex,
+            columns = feedGridColumns,
+            isLoadMore = isLoadMore,
+            isManualRefresh = isManualRefresh,
+        )
+        val homeFeedNotice = response.getOrNull()?.notice
+        val videoResult = response.map { it.videos }
+        ensureAccountCurrent(identity)
+        if (currentCategory == HomeCategory.RECOMMEND && videoResult.isSuccess) {
+            val notice = identity to homeFeedNotice
+            if (lastHomeFeedNotice != notice) {
+                homeFeedNotice?.let { _feedbackEvents.send(it) }
+                lastHomeFeedNotice = notice
             }
-            else -> {
-                //  Generic categories (Game, Tech, etc.)
-                if (currentCategory.tid > 0) {
-                     VideoRepository.getRegionVideos(tid = currentCategory.tid, page = pageToFetch)
-                } else {
-                     Result.failure(Exception("Unknown category"))
-                }
-            }
+        }
+        videoResult.exceptionOrNull()?.let { error ->
+            if (error is CancellationException) throw error
         }
         
         if (shouldRefreshHomeUserInfoAfterFeedLoad(isLoadMore)) {
             refreshUserInfoInBackground()
         }
 
-        if (isLoadMore) delay(100)
+        // Keep local rules off the UI dispatcher; opt-in tag rules additionally await archive metadata.
+        val preparedHomeFeed = videoResult.getOrNull()?.let { videos ->
+            withContext(Dispatchers.Default) {
+                prepareHomeFeedVideos(
+                    videos = videos,
+                    blockedMids = blockedMids,
+                    feedKind = currentCategory.toFeedKind(popularSubCategory),
+                    feedbackFilter = ::filterHomeFeedbackVideos,
+                )
+            }
+        }
+        ensureAccountCurrent(identity)
 
         videoResult.onSuccess { videos ->
-            val validVideos = videos.filter { it.bvid.isNotEmpty() && it.title.isNotEmpty() }
+            val prepared = preparedHomeFeed ?: return@onSuccess
+            com.android.purebilibili.core.util.Logger.d(
+                "HomeFeed",
+                "响应 category=$currentCategory isLoadMore=$isLoadMore " +
+                    "原始=${videos.size} 过滤后=${prepared.validVideoCount}",
+            )
             if (shouldAdvanceRecommendFeedRequestIndex(
                     category = currentCategory,
                     isLoadMore = isLoadMore,
                     isManualRefresh = isManualRefresh,
-                    validVideoCount = validVideos.size
+                    validVideoCount = prepared.validVideoCount
                 )
             ) {
                 refreshIdx = maxOf(refreshIdx, recommendRequestIndex)
             }
             
-            //  [Feature] 应用屏蔽 + 原生插件 + JSON 规则插件过滤器
-            val blockedFiltered = validVideos.filter { video -> video.owner.mid !in blockedMids }
-            val feedbackFiltered = filterHomeFeedbackVideos(blockedFiltered)
-            val builtinFiltered = PluginManager.filterFeedItems(feedbackFiltered)
-            val filteredVideos = com.android.purebilibili.core.plugin.json.JsonPluginManager
-                .filterVideos(builtinFiltered)
-            
-            // Global deduplication for RECOMMEND only? Or per category? 
-            // Usually Recommend needs global deduplication. Other categories might just need simple append.
-            // For now, let's keep sessionSeenBvids for RECOMMEND, or apply globally to avoid seeing same video across tabs?
-            // Let's apply globally for now as per existing logic, but maybe we should scope it?
-            // Existing logic had a single sessionSeenBvids.
-            
-            val uniqueNewVideos = if (currentCategory == HomeCategory.RECOMMEND) {
-                filteredVideos.filter { it.bvid !in sessionSeenBvids }
-            } else {
-                filteredVideos
-            }
+            // Filtering and de-duplication already ran on Dispatchers.Default above.
+            val validVideoCount = prepared.validVideoCount
+            val filteredVideos = prepared.filteredVideos
             
             val useIncrementalRecommendRefresh = !isLoadMore &&
                 currentCategory == HomeCategory.RECOMMEND &&
-                incrementalTimelineRefreshEnabled
+                keepRecommendOldContent
 
-            val incomingVideos = if (useIncrementalRecommendRefresh) {
-                trimIncrementalRefreshVideosToEvenCount(uniqueNewVideos)
+            // The list may change while CPU work is suspended (dismiss/feedback/account).
+            // Rebase on the latest immutable list before committing; never restore a removed card.
+            fun latestVideos() = if (currentCategory == HomeCategory.POPULAR) {
+                _uiState.value.popularCategoryStates[popularSubCategory]?.videos
             } else {
-                uniqueNewVideos
-            }
+                _uiState.value.categoryStates[currentCategory]?.videos
+            } ?: kotlinx.collections.immutable.persistentListOf<VideoItem>()
 
-            if (currentCategory == HomeCategory.RECOMMEND) {
-                sessionSeenBvids.addAll(incomingVideos.map { it.bvid })
-            }
-            
+            var mergeBase: kotlinx.collections.immutable.ImmutableList<VideoItem>
+            var merge: PreparedHomeFeedMerge
+            do {
+                mergeBase = latestVideos()
+                merge = withContext(Dispatchers.Default) {
+                    prepareHomeFeedMerge(
+                        currentVideos = mergeBase,
+                        responseVideos = filteredVideos,
+                        isLoadMore = isLoadMore,
+                        isIncrementalRefresh = useIncrementalRecommendRefresh,
+                        keySelector = HomeFeedMergePolicy::keyOf,
+                        requestVideos = currentCategoryState.videos,
+                        filterRetainedVideos = { retained ->
+                            com.android.purebilibili.feature.plugin.filterVideoTagMatches(
+                                retained,
+                                bvid = { it.bvid },
+                                asVideoItem = { it },
+                            )
+                        },
+                    )
+                }
+                ensureAccountCurrent(identity)
+            } while (latestVideos() !== mergeBase)
+            // No suspension from this identity check through the synchronous state update.
+            val incomingVideos = merge.incomingVideos
+            val addedCount = merge.addedCount
             if (incomingVideos.isNotEmpty() || useIncrementalRecommendRefresh) {
-                var addedCount = 0
                 val updateContent: (CategoryContent) -> CategoryContent = { oldState ->
-                    val mergedVideos = when {
-                        isLoadMore -> appendDistinctByKey(oldState.videos, incomingVideos, ::videoItemKey).toImmutableList()
-                        useIncrementalRecommendRefresh -> {
-                            val merged = prependDistinctByKey(oldState.videos, incomingVideos, ::videoItemKey)
-                            addedCount = (merged.size - oldState.videos.size).coerceAtLeast(0)
-                            merged.toImmutableList()
-                        }
-                        else -> incomingVideos.toImmutableList()
-                    }
-
                     oldState.copy(
-                        videos = mergedVideos,
+                        videos = merge.videos,
                         liveRooms = emptyList<LiveRoom>().toImmutableList(),
                         isLoading = false,
                         error = null,
-                        pageIndex = if (isLoadMore) oldState.pageIndex + 1 else if (useIncrementalRecommendRefresh) oldState.pageIndex else 1,
+                        pageIndex = if (useIncrementalRecommendRefresh) {
+                            oldState.pageIndex
+                        } else {
+                            resolvePagedFeedPageIndexAfterFetch(
+                                isLoadMore = isLoadMore,
+                                isManualRefresh = isManualRefresh,
+                                advanceOnManualRefresh = advanceOnManualRefresh,
+                                pageToFetch = pageToFetch,
+                                incomingCount = incomingVideos.size,
+                                previousPageIndex = oldState.pageIndex
+                            )
+                        },
                         hasMore = if (currentCategory == HomeCategory.POPULAR) {
                             supportsPopularLoadMore(popularSubCategory)
                         } else {
-                            true
+                            merge.videos.size < HOME_FEED_MAX_CARDS
                         }
                     )
                 }
@@ -1305,13 +1513,22 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 if (useIncrementalRecommendRefresh && isManualRefresh) {
                     refreshNewItemsCount = addedCount
                 }
+                if (currentCategory == HomeCategory.RECOMMEND) committedRecommendRefreshIdx = refreshIdx
             } else {
                  //  全被过滤掉了 OR 空列表
                  val updateContent: (CategoryContent) -> CategoryContent = { oldState ->
                     oldState.copy(
                         isLoading = false,
                         error = if (!isLoadMore && oldState.videos.isEmpty()) "没有更多内容了" else null,
-                        hasMore = false
+                        hasMore = false,
+                        pageIndex = resolvePagedFeedPageIndexAfterFetch(
+                            isLoadMore = isLoadMore,
+                            isManualRefresh = isManualRefresh,
+                            advanceOnManualRefresh = advanceOnManualRefresh,
+                            pageToFetch = pageToFetch,
+                            incomingCount = 0,
+                            previousPageIndex = oldState.pageIndex
+                        )
                     )
                  }
                  if (currentCategory == HomeCategory.POPULAR) {
@@ -1321,7 +1538,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                  }
             }
             if (currentCategory == HomeCategory.RECOMMEND) {
-                viewModelScope.launch {
+                accountRequests.launch {
                     val runtime = syncTodayWatchPluginState(clearWhenDisabled = true)
                     if (shouldAutoRebuildTodayWatchPlan(
                             currentCategory = currentCategory,
@@ -1335,15 +1552,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             }
         }.onFailure { error ->
             val updateContent: (CategoryContent) -> CategoryContent = { oldState ->
-                oldState.copy(
-                    isLoading = false,
-                    error = if (!isLoadMore && oldState.videos.isEmpty()) error.message ?: "网络错误" else null,
-                    hasMore = if (shouldKeepHomeCategoryAutoPagingAfterFailure(isLoadMore)) {
-                        oldState.hasMore
-                    } else {
-                        false
-                    }
-                )
+                applyHomeFeedLoadFailure(oldState, isLoadMore, error.message ?: "网络错误")
             }
             if (currentCategory == HomeCategory.POPULAR) {
                 updatePopularCategoryState(popularSubCategory, updateContent)
@@ -1365,285 +1574,116 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun updatePopularCategoryState(
         subCategory: PopularSubCategory,
-        update: (CategoryContent) -> CategoryContent
+        update: (CategoryContent) -> CategoryContent,
     ) {
-        val current = _uiState.value
-        val currentSubCategoryState = current.popularCategoryStates[subCategory] ?: CategoryContent()
-        val newSubCategoryState = update(currentSubCategoryState)
-        val newPopularStates = current.popularCategoryStates.toMutableMap()
-        newPopularStates[subCategory] = newSubCategoryState
-
-        var newState = current.copy(popularCategoryStates = newPopularStates.toImmutableMap())
-        if (current.currentCategory == HomeCategory.POPULAR && current.popularSubCategory == subCategory) {
-            val newCategoryStates = current.categoryStates.toMutableMap()
-            newCategoryStates[HomeCategory.POPULAR] = newSubCategoryState
-            newState = newState.copy(
-                categoryStates = newCategoryStates.toImmutableMap(),
-                videos = newSubCategoryState.videos,
-                liveRooms = newSubCategoryState.liveRooms,
-                followedLiveRooms = newSubCategoryState.followedLiveRooms,
-                isLoading = newSubCategoryState.isLoading,
-                error = newSubCategoryState.error
-            )
-        }
-        _uiState.value = newState
+        _uiState.update { it.updateHomePopularContent(subCategory, update) }
     }
-    
-    // Helper to update state for a specific category
+
     private fun updateCategoryState(category: HomeCategory, update: (CategoryContent) -> CategoryContent) {
-        val currentStates = _uiState.value.categoryStates
-        val currentCategoryState = currentStates[category] ?: CategoryContent()
-        val newCategoryState = update(currentCategoryState)
-        val newStates = currentStates.toMutableMap()
-        newStates[category] = newCategoryState
-        
-        // Also update legacy fields if it is current category, to keep UI working until full migration
-        // Or if we fully migrated UI, we don't need to update legacy fields 'videos', 'liveRooms' etc in HomeUiState root.
-        // But HomeScreen.kt still uses `state.videos`. So we MUST sync variables.
-        
-        var newState = _uiState.value.copy(categoryStates = newStates.toImmutableMap())
-        
-        if (category == newState.currentCategory) {
-            newState = newState.copy(
-                videos = newCategoryState.videos,
-                liveRooms = newCategoryState.liveRooms,
-                followedLiveRooms = newCategoryState.followedLiveRooms,
-                isLoading = newCategoryState.isLoading,
-                error = newCategoryState.error
-            )
-        }
-        _uiState.value = newState
+        _uiState.update { it.updateHomeCategoryContent(category, update) }
     }
 
-    //  [新增] 获取关注动态列表
-    //  [新增] 获取关注动态列表
     private suspend fun fetchFollowFeed(
         isLoadMore: Boolean,
-        isManualRefresh: Boolean
+        isManualRefresh: Boolean,
     ): Int? {
-        if (com.android.purebilibili.core.store.TokenManager.sessDataCache.isNullOrEmpty()) {
-             updateCategoryState(HomeCategory.FOLLOW) { oldState ->
-                oldState.copy(
+        val identity = accountRequests.identity
+        ensureAccountCurrent(identity)
+        if (TokenManager.sessDataCache.isNullOrEmpty()) {
+            updateCategoryState(HomeCategory.FOLLOW) {
+                it.copy(
                     isLoading = false,
                     error = "未登录，请先登录以查看关注内容",
-                    videos = emptyList<VideoItem>().toImmutableList() // Ensure empty to trigger error state
+                    videos = emptyList<VideoItem>().toImmutableList(),
                 )
             }
             return null
         }
-
-        if (!isLoadMore) {
-            fetchUserInfo()
-        }
-        
-        val result = com.android.purebilibili.data.repository.DynamicRepository.getDynamicFeed(
-            refresh = !isLoadMore,
-            scope = com.android.purebilibili.data.repository.DynamicFeedScope.HOME_FOLLOW,
-            type = "video",
-            incrementalRefresh = incrementalTimelineRefreshEnabled
+        if (!isLoadMore) refreshUserInfoInBackground()
+        val requestVideos = _uiState.value.categoryStates.getValue(HomeCategory.FOLLOW).videos
+        val incrementalRefresh = incrementalTimelineRefreshEnabled
+        val result = followFeedSource.load(
+            isLoadMore = isLoadMore,
+            isManualRefresh = isManualRefresh,
+            incrementalRefreshEnabled = incrementalRefresh,
+            ensureCurrent = { ensureAccountCurrent(identity) },
         )
-        
-        if (isLoadMore) delay(100)
-        var addedCount = 0
-        result.onSuccess { items ->
-            //  将 DynamicItem 转换为首页卡片：
-            // - 仅保留可直接跳转的视频动态，避免与“动态”页图文流重复
-            val videos = items.mapNotNull { item ->
-                // Check if author is blocked
-                if ((item.modules.module_author?.mid ?: 0) in blockedMids) return@mapNotNull null
-
-                val archive = item.modules.module_dynamic?.major?.archive ?: return@mapNotNull null
-                if (!shouldIncludeHomeFollowDynamicInVideoFeed(archive.bvid)) {
-                    return@mapNotNull null
-                }
-
-                val resolvedAid = resolveDynamicArchiveAid(
-                    archiveAid = archive.aid,
-                    fallbackId = 0L
-                )
-                com.android.purebilibili.data.model.response.VideoItem(
-                    id = resolvedAid,
-                    bvid = archive.bvid,
-                    dynamicId = item.id_str.trim(),
-                    aid = resolvedAid,
-                    title = archive.title,
-                    pic = archive.cover,
-                    duration = parseDurationText(archive.duration_text),
-                    owner = com.android.purebilibili.data.model.response.Owner(
-                        mid = item.modules.module_author?.mid ?: 0,
-                        name = item.modules.module_author?.name ?: "",
-                        face = item.modules.module_author?.face ?: ""
-                    ),
-                    stat = com.android.purebilibili.data.model.response.Stat(
-                        view = parseStatText(archive.stat.play),
-                        danmaku = parseStatText(archive.stat.danmaku)
-                    )
-                )
+        val response = result.getOrElse { error ->
+            updateCategoryState(HomeCategory.FOLLOW) {
+                applyHomeFeedLoadFailure(it, isLoadMore, error.message ?: "加载关注内容失败")
             }
-            
-            updateCategoryState(HomeCategory.FOLLOW) { oldState ->
-                val oldSize = oldState.videos.size
-                val mergedVideos = when {
-                    isLoadMore -> appendDistinctByKey(oldState.videos, videos, ::videoItemKey).toImmutableList()
-                    incrementalTimelineRefreshEnabled -> prependDistinctByKey(oldState.videos, videos, ::videoItemKey).toImmutableList()
-                    else -> videos.toImmutableList()
-                }
-                if (isManualRefresh && !isLoadMore) {
-                    addedCount = if (incrementalTimelineRefreshEnabled) {
-                        (mergedVideos.size - oldSize).coerceAtLeast(0)
-                    } else {
-                        videos.size
-                    }
-                }
-                oldState.copy(
-                    videos = mergedVideos,
-                    liveRooms = emptyList<LiveRoom>().toImmutableList(),
-                    isLoading = false,
-                    error = if (!isLoadMore && mergedVideos.isEmpty()) "暂无关注动态，请先关注一些UP主" else null,
-                    hasMore = com.android.purebilibili.data.repository.DynamicRepository.hasMoreData(
-                        scope = com.android.purebilibili.data.repository.DynamicFeedScope.HOME_FOLLOW,
-                        type = "video"
-                    )
-                )
-            }
-        }.onFailure { error ->
-             updateCategoryState(HomeCategory.FOLLOW) { oldState ->
-                oldState.copy(
-                    isLoading = false,
-                    error = if (!isLoadMore && oldState.videos.isEmpty()) error.message ?: "请先登录" else null
-                )
-            }
+            return null
         }
-        return addedCount
+        val feed = response.feed
+        fun currentVideos() = _uiState.value.categoryStates.getValue(HomeCategory.FOLLOW).videos
+        var base: kotlinx.collections.immutable.ImmutableList<VideoItem>
+        var blocked: Set<Long>
+        var merge: HomeFollowFeedMerge
+        do {
+            base = currentVideos()
+            blocked = blockedMids
+            merge = withContext(Dispatchers.Default) {
+                mergeHomeFollowFeed(
+                    currentVideos = base,
+                    incomingVideos = mapHomeFollowDynamicItemsToVideos(feed.items, blocked),
+                    isLoadMore = isLoadMore,
+                    incrementalRefreshEnabled = incrementalRefresh,
+                    usedUpdateBaseline = feed.usedUpdateBaseline,
+                    forceReplace = response.forceReplace,
+                    requestVideos = requestVideos,
+                )
+            }
+            ensureAccountCurrent(identity)
+        } while (currentVideos() !== base || blockedMids !== blocked)
+        // 从身份检查到分页与列表提交之间不挂起，避免覆盖后台计算期间的列表或屏蔽变更。
+        if (!isLoadMore && !merge.canPrepend && !response.forceReplace && feed.nextOffset.isNotBlank()) {
+            followFeedSource.syncPagination(feed)
+        }
+        val hasMore = if (!isLoadMore && !merge.canPrepend && !response.forceReplace) {
+            feed.hasMore
+        } else followFeedSource.hasMore()
+        updateCategoryState(HomeCategory.FOLLOW) {
+            it.copy(
+                videos = merge.videos,
+                liveRooms = emptyList<LiveRoom>().toImmutableList(),
+                isLoading = false,
+                error = if (!isLoadMore && merge.videos.isEmpty()) "暂无关注动态，请先关注一些UP主" else null,
+                hasMore = hasMore,
+            )
+        }
+        committedFollowPagination = com.android.purebilibili.data.repository.DynamicRepository.snapshotPagination(
+            com.android.purebilibili.data.repository.DynamicFeedScope.HOME_FOLLOW, "video",
+        )
+        return if (response.forceReplace || (isManualRefresh && !isLoadMore)) {
+            resolveHomeFollowRefreshNewItemsCount(
+                usedUpdateBaseline = response.forceReplace || feed.usedUpdateBaseline,
+                apiUpdateNum = response.refreshUpdateNum,
+                insertedVideoCount = if (response.forceReplace) response.refreshUpdateNum else merge.insertedCount,
+            )
+        } else null
     }
 
-    private fun videoItemKey(item: com.android.purebilibili.data.model.response.VideoItem): String {
-        if (item.dynamicId.isNotBlank()) return "dyn:${item.dynamicId}"
-        if (item.bvid.isNotBlank()) return "bvid:${item.bvid}"
-        if (item.aid > 0) return "aid:${item.aid}"
-        if (item.id > 0) return "id:${item.id}"
-        return "${item.owner.mid}:${item.title}:${item.pubdate}"
-    }
-    
-    //  解析时长文本 "10:24" -> 624 秒
-    private fun parseDurationText(text: String): Int {
-        val parts = text.split(":")
-        return try {
-            when (parts.size) {
-                2 -> parts[0].toInt() * 60 + parts[1].toInt()
-                3 -> parts[0].toInt() * 3600 + parts[1].toInt() * 60 + parts[2].toInt()
-                else -> 0
-            }
-        } catch (e: Exception) { 0 }
-    }
-    
-    //  解析统计文本 "123.4万" -> 1234000
-    private fun parseStatText(text: String): Int {
-        return try {
-            if (text.contains("万")) {
-                (text.replace("万", "").toFloat() * 10000).toInt()
-            } else if (text.contains("亿")) {
-                (text.replace("亿", "").toFloat() * 100000000).toInt()
-            } else {
-                text.toIntOrNull() ?: 0
-            }
-        } catch (e: Exception) { 0 }
-    }
-    
-    //  🔴 [改进] 获取直播间列表（同时获取关注和热门）
-    private suspend fun fetchLiveRooms(isLoadMore: Boolean) {
-        val page = if (isLoadMore) livePage else 1
-        
-        com.android.purebilibili.core.util.Logger.d("HomeVM", "🔴 fetchLiveRooms: isLoadMore=$isLoadMore, page=$page")
-        
-        if (!isLoadMore) {
-            fetchUserInfo()
-            
-            // 🔴 [改进] 首次加载时同时获取关注和热门直播
-            val isLoggedIn = !com.android.purebilibili.core.store.TokenManager.sessDataCache.isNullOrEmpty()
-            
-            // 并行获取关注和热门直播
-            val followedResult = if (isLoggedIn) LiveRepository.getFollowedLive(1) else Result.success(emptyList())
-            val popularResult = LiveRepository.getLiveRooms(1)
-            
-            // 处理关注直播结果
-            val followedRooms = followedResult.getOrDefault(emptyList())
-            
-            // 处理热门直播结果
-            popularResult.onSuccess { rooms ->
-                if (rooms.isNotEmpty() || followedRooms.isNotEmpty()) {
-                    updateCategoryState(HomeCategory.LIVE) { oldState ->
-                        oldState.copy(
-                            followedLiveRooms = followedRooms.toImmutableList(),
-                            liveRooms = rooms.toImmutableList(),
-                            videos = emptyList<VideoItem>().toImmutableList(),
-                            isLoading = false,
-                            error = null,
-                            hasMore = true
-                        )
-                    }
-                } else {
-                     updateCategoryState(HomeCategory.LIVE) { oldState ->
-                        oldState.copy(
-                            isLoading = false,
-                            error = "暂无直播",
-                            hasMore = false
-                        )
-                    }
-                }
-            }.onFailure { e ->
-                 updateCategoryState(HomeCategory.LIVE) { oldState ->
-                    oldState.copy(
-                        followedLiveRooms = followedRooms.toImmutableList(),
-                        isLoading = false,
-                        error = if (followedRooms.isEmpty()) e.message ?: "网络错误" else null
-                    )
-                }
-            }
-        } else {
-            // 加载更多时只加载热门直播（关注的主播数量有限，不需要分页）
-            val result = LiveRepository.getLiveRooms(page)
-            delay(100)
-            
-            result.onSuccess { rooms ->
-                if (rooms.isNotEmpty()) {
-                    val currentLiveRooms = _uiState.value.categoryStates[HomeCategory.LIVE]?.liveRooms ?: emptyList()
-                    val existingRoomIds = currentLiveRooms.map { it.roomid }.toSet()
-                    // [Feature] Block Filter
-                    val newRooms = rooms.filter { it.roomid !in existingRoomIds && it.uid !in blockedMids }
-                    
-                    if (newRooms.isEmpty()) {
-                        hasMoreLiveData = false
-                        updateCategoryState(HomeCategory.LIVE) { it.copy(isLoading = false, hasMore = false) }
-                        return@onSuccess
-                    }
-                    
-                    updateCategoryState(HomeCategory.LIVE) { oldState ->
-                        oldState.copy(
-                            liveRooms = (oldState.liveRooms + newRooms).toImmutableList(),
-                            isLoading = false,
-                            error = null,
-                            hasMore = true
-                        )
-                    }
-                } else {
-                    hasMoreLiveData = false
-                    updateCategoryState(HomeCategory.LIVE) { it.copy(isLoading = false, hasMore = false) }
-                }
-            }.onFailure { e ->
-                updateCategoryState(HomeCategory.LIVE) { it.copy(isLoading = false) }
-            }
-        }
-    }
-    
     //  提取用户信息获取逻辑
     private suspend fun fetchUserInfo() {
+        val identity = accountRequests.identity
+        ensureAccountCurrent(identity)
         val navResult = VideoRepository.getNavInfo()
+        ensureAccountCurrent(identity)
         navResult.onSuccess { navData ->
+            val resolvedMid = navData.mid.takeIf { navData.isLogin && it > 0L }
+            if (identity.mid != resolvedMid) {
+                // MID discovery changes identity; publish outside the scope it will cancel.
+                // The observer reloads once with that identity; equal MIDs never emit again.
+                viewModelScope.launch {
+                    if (accountRequests.isCurrent(identity)) {
+                        TokenManager.saveMid(getApplication(), resolvedMid ?: 0L)
+                    }
+                }
+                return@onSuccess
+            }
             if (navData.isLogin) {
                 val isVip = navData.vip.status == 1
                 com.android.purebilibili.core.store.TokenManager.isVipCache = isVip
-                com.android.purebilibili.core.store.TokenManager.midCache = navData.mid
                 com.android.purebilibili.core.util.AnalyticsHelper.syncUserContext(
                     mid = navData.mid,
                     isVip = isVip,
@@ -1657,9 +1697,15 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                         name = navData.uname,
                         mid = navData.mid,
                         level = navData.level_info.current_level,
+                        currentLevelMinExp = navData.level_info.current_min ?: 0,
+                        currentLevelExp = navData.level_info.current_exp ?: 0,
+                        nextLevelExp = navData.level_info.next_exp ?: 0,
                         coin = navData.money,
                         bcoin = navData.wallet.bcoin_balance,
-                        isVip = isVip
+                        isVip = isVip,
+                        vipLabel = navData.vip.label.text.orEmpty(),
+                        vipType = navData.vip.type,
+                        officialVerifyType = navData.officialVerify.type,
                     )
                 )
                 refreshMessageUnreadInBackground()
@@ -1670,7 +1716,6 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 messageUnreadRefreshJob?.cancel()
                 messageUnreadRefreshJob = null
                 com.android.purebilibili.core.store.TokenManager.isVipCache = false
-                com.android.purebilibili.core.store.TokenManager.midCache = null
                 com.android.purebilibili.core.util.AnalyticsHelper.syncUserContext(
                     mid = null,
                     isVip = false,
@@ -1688,6 +1733,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     
     //  获取关注列表（并行分页获取，支持更多关注，带本地缓存）
     private suspend fun fetchFollowingList(mid: Long) {
+        val identity = accountRequests.identity
+        ensureAccountCurrent(identity)
+        if (identity.mid != mid) return
         val context = getApplication<android.app.Application>()
         val prefs = context.getSharedPreferences("following_cache", android.content.Context.MODE_PRIVATE)
         val cacheKey = "following_mids_$mid"
@@ -1700,6 +1748,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             val cachedMids = prefs.getStringSet(cacheKey, null)
             if (!cachedMids.isNullOrEmpty()) {
                 val mids = cachedMids.mapNotNull { it.toLongOrNull() }.toSet()
+                ensureAccountCurrent(identity)
                 _uiState.value = _uiState.value.copy(followingMids = mids.toImmutableSet())
                 com.android.purebilibili.core.util.Logger.d("HomeVM", " Loaded ${mids.size} following mids from cache")
                 return
@@ -1714,9 +1763,12 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 var page = 1
                 while (true) {  //  无限循环，直到获取完所有关注
                     try {
+                        ensureAccountCurrent(identity)
                         val result = com.android.purebilibili.core.network.NetworkModule.api.getFollowings(mid, page, 50)
+                        ensureAccountCurrent(identity)
                         if (result.code == 0 && result.data != null) {
-                            val list = result.data.list ?: break
+                            val checkedResultData = requireNotNull(result.data)
+                            val list = checkedResultData.list ?: break
                             if (list.isEmpty()) break
                             
                             list.forEach { user -> allMids.add(user.mid) }
@@ -1731,12 +1783,14 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                             break
                         }
                     } catch (e: Exception) {
+                        if (e is CancellationException) throw e
                         com.android.purebilibili.core.util.Logger.e("HomeVM", " Error at page $page", e)
                         break
                     }
                 }
             }
             
+            ensureAccountCurrent(identity)
             //  保存到本地缓存
             prefs.edit()
                 .putStringSet(cacheKey, allMids.map { it.toString() }.toSet())
@@ -1746,6 +1800,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.value = _uiState.value.copy(followingMids = allMids.toImmutableSet())
             com.android.purebilibili.core.util.Logger.d("HomeVM", " Total following mids fetched and cached: ${allMids.size}")
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             com.android.purebilibili.core.util.Logger.e("HomeVM", " Error fetching following list", e)
         }
     }
@@ -1754,6 +1809,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     suspend fun getPreviewVideoUrl(bvid: String, cid: Long): String? {
         return try {
             com.android.purebilibili.data.repository.VideoRepository.getPreviewVideoUrl(bvid, cid)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (e: Exception) {
             e.printStackTrace()
             null

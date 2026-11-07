@@ -6,7 +6,6 @@ import com.android.purebilibili.feature.video.playback.session.PlaybackSeekSessi
 import com.android.purebilibili.feature.video.playback.session.startPlaybackSeekInteraction
 import com.android.purebilibili.feature.video.playback.session.syncPlaybackSeekSession
 import com.android.purebilibili.feature.video.playback.session.updatePlaybackSeekInteraction
-import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -16,9 +15,164 @@ import kotlin.test.assertTrue
 class VideoPlayerSectionPolicyTest {
 
     @Test
+    fun inlineAmbientCapture_stopsWhenPortraitFullscreenOwnsPlayback() {
+        assertTrue(
+            shouldCaptureInlineStatusBarAmbientFrame(
+                contentTopInsetPx = 48f,
+                isFullscreen = false,
+                isPortraitFullscreen = false,
+                isInPipMode = false,
+                hostLifecycleStarted = true,
+                statusBarHazeEnabled = true,
+            )
+        )
+        assertFalse(
+            shouldCaptureInlineStatusBarAmbientFrame(
+                contentTopInsetPx = 48f,
+                isFullscreen = false,
+                isPortraitFullscreen = true,
+                isInPipMode = false,
+                hostLifecycleStarted = true,
+                statusBarHazeEnabled = true,
+            )
+        )
+        assertFalse(
+            shouldCaptureInlineStatusBarAmbientFrame(
+                contentTopInsetPx = 0f,
+                isFullscreen = false,
+                isPortraitFullscreen = false,
+                isInPipMode = false,
+                hostLifecycleStarted = true,
+                statusBarHazeEnabled = true,
+            )
+        )
+    }
+
+    @Test
+    fun inlinePlayerGestures_disabledWhilePortraitFullscreenOwnsTouch() {
+        assertTrue(shouldEnableInlinePlayerGestures(isPortraitFullscreen = false))
+        assertFalse(shouldEnableInlinePlayerGestures(isPortraitFullscreen = true))
+    }
+
+    @Test
+    fun inlineDanmakuHostEffects_stoppedDuringPortraitFullscreen() {
+        assertTrue(
+            shouldRunVideoPlayerDanmakuHostEffects(
+                danmakuHostActive = true,
+                hostLifecycleStarted = true,
+                isPortraitFullscreen = false,
+            )
+        )
+        assertFalse(
+            shouldRunVideoPlayerDanmakuHostEffects(
+                danmakuHostActive = true,
+                hostLifecycleStarted = true,
+                isPortraitFullscreen = true,
+            )
+        )
+    }
+
+
+    @Test
+    fun progressPolling_stopsWhenPlayerChromeAndSeekInteractionsAreIdle() {
+        assertFalse(
+            shouldPollVideoPlayerProgress(
+                controlsVisible = false,
+                gestureVisible = false,
+                isSliderMoving = false,
+                hasPendingSeek = false
+            )
+        )
+        assertTrue(
+            shouldPollVideoPlayerProgress(
+                controlsVisible = true,
+                gestureVisible = false,
+                isSliderMoving = false,
+                hasPendingSeek = false
+            )
+        )
+        assertTrue(
+            shouldPollVideoPlayerProgress(
+                controlsVisible = false,
+                gestureVisible = false,
+                isSliderMoving = true,
+                hasPendingSeek = false
+            )
+        )
+        assertTrue(
+            shouldPollVideoPlayerProgress(
+                controlsVisible = false,
+                gestureVisible = false,
+                isSliderMoving = false,
+                hasPendingSeek = true
+            )
+        )
+    }
+
+
+    @Test
+    fun autoFullscreen_snapshotDoesNotReenterAfterFullscreenPlayerIsRecreated() {
+        assertFalse(
+            shouldToggleAutoFullscreenForCurrentPlaybackSnapshot(
+                autoEnterFullscreenEnabled = true,
+                autoExitFullscreenEnabled = false,
+                allowPlaybackStateAutoFullscreen = true,
+                playbackState = Player.STATE_READY,
+                playWhenReady = true,
+                hasAutoEnteredFullscreen = false,
+                isFullscreen = false,
+            )
+        )
+    }
+
+    @Test
+    fun coverCorner_sharedReturnKeepsFrozenSourceCardCorner() {
+        assertEquals(
+            18,
+            resolveVideoPlayerCoverCornerDp(
+                sourceCornerDp = 18,
+                playerCornerDp = 12,
+                preserveSourceCardCornerDuringSharedReturn = true,
+            )
+        )
+    }
+
+    @Test
+    fun coverCorner_normalPlayerKeepsPlayerCorner() {
+        assertEquals(
+            12,
+            resolveVideoPlayerCoverCornerDp(
+                sourceCornerDp = 18,
+                playerCornerDp = 12,
+                preserveSourceCardCornerDuringSharedReturn = false,
+            )
+        )
+    }
+
+    @Test
     fun playerControls_areHiddenWhenEnteringVideo() {
         assertFalse(INITIAL_PLAYER_CONTROLS_VISIBLE)
         assertTrue(INITIAL_PLAYER_CHROME_AUTO_HIDE_HANDLED)
+    }
+
+    @Test
+    fun playerInteractionIdentity_tracksActualMediaAcrossAutoAdvance() {
+        assertEquals(
+            "BV-next_202",
+            resolvePlayerInteractionIdentity(
+                routeBvid = "BV-route",
+                playbackBvid = "BV-next",
+                playbackCid = 202L
+            )
+        )
+        assertEquals(
+            "BV-route_303",
+            resolvePlayerInteractionIdentity(
+                routeBvid = "BV-route",
+                playbackBvid = "",
+                playbackCid = 303L
+            )
+        )
     }
 
     @Test
@@ -46,49 +200,13 @@ class VideoPlayerSectionPolicyTest {
     }
 
     @Test
-    fun bottomGestureExclusion_includesExpandedProgressPreviewContainer() {
-        assertEquals(
-            186,
-            resolveVideoPlayerBottomGestureExclusionHeightDp(
-                controlBarBottomPaddingDp = 14,
-                progressSpacingDp = 10,
-                progressContainerHeightDp = 120,
-                controlRowHeightDp = 30,
-                extraBufferDp = 12
-            )
-        )
+    fun fullscreenDragStart_ignoresHorizontalSystemGestureEdges() {
+        assertTrue(shouldIgnoreVideoPlayerHorizontalEdgeDragStart(20f, 1_000f, true, 48f))
+        assertTrue(shouldIgnoreVideoPlayerHorizontalEdgeDragStart(980f, 1_000f, true, 48f))
+        assertFalse(shouldIgnoreVideoPlayerHorizontalEdgeDragStart(500f, 1_000f, true, 48f))
+        assertFalse(shouldIgnoreVideoPlayerHorizontalEdgeDragStart(20f, 1_000f, false, 48f))
     }
 
-    @Test
-    fun bottomGestureExclusion_allowsLandscapeCenterDragWhenProgressPreviewIsHidden() {
-        val visibleControlExclusionPx = resolveVideoPlayerBottomGestureExclusionHeightDp(
-            controlBarBottomPaddingDp = 14,
-            progressSpacingDp = 10,
-            progressContainerHeightDp = 40,
-            controlRowHeightDp = 40,
-            extraBufferDp = 12
-        ).toFloat()
-
-        assertFalse(
-            shouldIgnoreVideoPlayerDragStart(
-                offsetY = 210f,
-                containerHeightPx = 360f,
-                topGestureExclusionPx = 48f,
-                bottomGestureExclusionPx = visibleControlExclusionPx
-            )
-        )
-    }
-
-    @Test
-    fun bottomGestureExclusion_usesVisibleProgressHeightInVideoPlayerSection() {
-        val source = File("src/main/java/com/android/purebilibili/feature/video/ui/section/VideoPlayerSection.kt")
-            .readText()
-
-        assertTrue(
-            source.contains("progressContainerHeightDp = videoProgressBarLayoutPolicy.baseHeightWithChapterDp"),
-            "Background drag exclusion should use the visible idle progress bar height; the expanded preview height is only visible while the progress bar itself is scrubbing."
-        )
-    }
 
     @Test
     fun dragStart_ignoresProgressPreviewZoneAboveBottomControls() {
@@ -316,20 +434,58 @@ class VideoPlayerSectionPolicyTest {
     }
 
     @Test
-    fun danmakuLayerTopOffset_keepsInlinePortraitDanmakuAnchoredToViewportTop() {
+    fun danmakuSettingsScope_usesFullscreenFontProfileForBothFullscreenRoutes() {
         assertEquals(
-            0,
-            resolveDanmakuLayerTopOffsetPx(
-                isFullscreen = false,
-                statusBarHeightPx = 96
+            com.android.purebilibili.core.store.DanmakuSettingsScope.LANDSCAPE,
+            resolveVideoPlayerDanmakuSettingsScope(
+                isFullscreen = true,
+                isPortraitFullscreen = false
             )
         )
         assertEquals(
-            0,
-            resolveDanmakuLayerTopOffsetPx(
+            com.android.purebilibili.core.store.DanmakuSettingsScope.LANDSCAPE,
+            resolveVideoPlayerDanmakuSettingsScope(
                 isFullscreen = true,
-                statusBarHeightPx = 96
+                isPortraitFullscreen = true
             )
+        )
+        assertEquals(
+            com.android.purebilibili.core.store.DanmakuSettingsScope.PORTRAIT,
+            resolveVideoPlayerDanmakuSettingsScope(
+                isFullscreen = false,
+                isPortraitFullscreen = false
+            )
+        )
+        assertEquals(
+            com.android.purebilibili.core.store.DanmakuSettingsScope.LANDSCAPE,
+            resolveVideoPlayerDanmakuSettingsScope(
+                isFullscreen = false,
+                isPortraitFullscreen = true
+            )
+        )
+    }
+
+    @Test
+    fun tabletEmbeddedDanmaku_usesSameProfileAsFullscreenRegardlessOfOrientation() {
+        for (isFullscreen in listOf(false, true)) {
+            for (isPortraitFullscreen in listOf(false, true)) {
+                assertEquals(
+                    com.android.purebilibili.core.store.DanmakuSettingsScope.LANDSCAPE,
+                    resolveVideoPlayerDanmakuSettingsScope(
+                        isFullscreen = isFullscreen,
+                        isPortraitFullscreen = isPortraitFullscreen,
+                        useTabletLayout = true,
+                    ),
+                )
+            }
+        }
+        assertEquals(
+            com.android.purebilibili.core.store.DanmakuSettingsScope.PORTRAIT,
+            resolveVideoPlayerDanmakuSettingsScope(
+                isFullscreen = false,
+                isPortraitFullscreen = false,
+                useTabletLayout = false,
+            ),
         )
     }
 
@@ -455,6 +611,19 @@ class VideoPlayerSectionPolicyTest {
                 hasSharedTransitionScope = true,
                 hasAnimatedVisibilityScope = true,
                 forceCoverDuringReturnAnimation = true
+            )
+        )
+    }
+
+    @Test
+    fun livePlayerSharedElement_disabledUnderHdrSurfaceOutput() {
+        assertFalse(
+            shouldEnableLivePlayerSharedElement(
+                transitionEnabled = true,
+                allowLivePlayerSharedElement = true,
+                hasSharedTransitionScope = true,
+                hasAnimatedVisibilityScope = true,
+                requiresHdrSurfaceOutput = true
             )
         )
     }
@@ -738,6 +907,35 @@ class VideoPlayerSectionPolicyTest {
     }
 
     @Test
+    fun inlinePlayerBinding_retainsExistingOutputDuringForegroundCardReturnOnly() {
+        val retain = shouldRetainInlineSurfaceForCardReturn(
+            cardMorphEnabled = true,
+            entryRemoving = true,
+            windowStarted = true,
+            hasBoundPlayer = true,
+        )
+        assertTrue(retain)
+        // 导航退场已把 entry 降为 CREATED，但前台原输出继续参与卡片交接。
+        assertTrue(shouldBindInlinePlayerViewToPlayer(
+            isPortraitFullscreen = false,
+            hostLifecycleStarted = false,
+            isInPipMode = false,
+            retainBoundSurfaceForReturn = retain,
+        ))
+        // 竖屏播放器接管时，不能因外层卡片退场继续占用内联输出。
+        assertFalse(shouldBindInlinePlayerViewToPlayer(
+            isPortraitFullscreen = true,
+            hostLifecycleStarted = false,
+            isInPipMode = false,
+            retainBoundSurfaceForReturn = retain,
+        ))
+        assertFalse(shouldRetainInlineSurfaceForCardReturn(true, true, false, true))
+        assertFalse(shouldRetainInlineSurfaceForCardReturn(true, true, true, false))
+        assertFalse(shouldRetainInlineSurfaceForCardReturn(true, false, true, true))
+        assertFalse(shouldRetainInlineSurfaceForCardReturn(false, true, true, true))
+    }
+
+    @Test
     fun predictiveBackCancelRecovery_runsOnlyForTheCurrentBoundInlinePlayer() {
         assertTrue(
             shouldRecoverInlinePlayerAfterPredictiveBackCancel(
@@ -937,7 +1135,7 @@ class VideoPlayerSectionPolicyTest {
     fun playbackReadyAutoFullscreen_enabledForPhonesInOrientationDrivenMode() {
         assertTrue(
             shouldAllowPlaybackStateAutoFullscreen(
-                smallestScreenWidthDp = 411
+                hasValidWindow = true
             )
         )
     }
@@ -946,14 +1144,16 @@ class VideoPlayerSectionPolicyTest {
     fun playbackReadyAutoFullscreen_allowsTabletsBecauseSettingIsExplicit() {
         assertTrue(
             shouldAllowPlaybackStateAutoFullscreen(
-                smallestScreenWidthDp = 600
+                hasValidWindow = true
             )
         )
     }
 
     @Test
     fun playbackStateAutoFullscreen_triggersWhenAttachedAfterPlaybackAlreadyStarted() {
-        assertTrue(
+        // 快照路径刻意恒 false：退出全屏后的重组会把「重新组合」误认成「开始播放」，
+        // 自动全屏只能由 Player 的实际状态事件补发（见 shouldToggleAutoFullscreenForPlaybackEvent）。
+        assertFalse(
             shouldToggleAutoFullscreenForCurrentPlaybackSnapshot(
                 autoEnterFullscreenEnabled = true,
                 autoExitFullscreenEnabled = true,
@@ -962,6 +1162,36 @@ class VideoPlayerSectionPolicyTest {
                 playWhenReady = true,
                 hasAutoEnteredFullscreen = false,
                 isFullscreen = false
+            )
+        )
+
+        // 事件路径在挂载后采样时补发自动全屏（播放已开始、无 playWhenReady 跳变）
+        assertTrue(
+            shouldToggleAutoFullscreenForPlaybackEvent(
+                autoEnterFullscreenEnabled = true,
+                autoExitFullscreenEnabled = true,
+                allowPlaybackStateAutoFullscreen = true,
+                playbackState = Player.STATE_READY,
+                playWhenReady = true,
+                hasAutoEnteredFullscreen = false,
+                isFullscreen = false,
+                previousPlayWhenReady = true,
+            )
+        )
+    }
+
+    @Test
+    fun playbackSnapshot_doesNotAutoExitFullscreenFromStaleEndedStateDuringContinuousPlayback() {
+        assertFalse(
+            shouldToggleAutoFullscreenForCurrentPlaybackSnapshot(
+                autoEnterFullscreenEnabled = false,
+                autoExitFullscreenEnabled = true,
+                allowPlaybackStateAutoFullscreen = true,
+                playbackState = Player.STATE_ENDED,
+                playWhenReady = true,
+                hasAutoEnteredFullscreen = true,
+                isFullscreen = true,
+                willContinueToNextItem = false,
             )
         )
     }
@@ -977,6 +1207,65 @@ class VideoPlayerSectionPolicyTest {
                 playWhenReady = true,
                 hasAutoEnteredFullscreen = false,
                 isFullscreen = false
+            )
+        )
+    }
+
+    @Test
+    fun autoExitFullscreen_allPartsKeepsFullscreenWhenNextPartWillPlay() {
+        assertFalse(
+            shouldAutoExitFullscreenOnPlaybackEnded(
+                mode = com.android.purebilibili.core.store.AutoExitFullscreenMode.ALL_PARTS,
+                isFullscreen = true,
+                playbackState = Player.STATE_ENDED,
+                willContinueToNextItem = true,
+            )
+        )
+        assertTrue(
+            shouldAutoExitFullscreenOnPlaybackEnded(
+                mode = com.android.purebilibili.core.store.AutoExitFullscreenMode.ALL_PARTS,
+                isFullscreen = true,
+                playbackState = Player.STATE_ENDED,
+                willContinueToNextItem = false,
+            )
+        )
+        assertTrue(
+            shouldAutoExitFullscreenOnPlaybackEnded(
+                mode = com.android.purebilibili.core.store.AutoExitFullscreenMode.CURRENT_PART,
+                isFullscreen = true,
+                playbackState = Player.STATE_ENDED,
+                willContinueToNextItem = true,
+            )
+        )
+    }
+
+    @Test
+    fun willContinueAfterCurrentItem_detectsMultiPartAndSeason() {
+        assertTrue(
+            resolveWillContinuePlaybackAfterCurrentItem(
+                pageCount = 3,
+                currentPageIndex = 0,
+                hasUgcSeasonNext = false,
+                hasPlaylistNext = false,
+                completionAdvancesToNext = true,
+            )
+        )
+        assertFalse(
+            resolveWillContinuePlaybackAfterCurrentItem(
+                pageCount = 3,
+                currentPageIndex = 2,
+                hasUgcSeasonNext = false,
+                hasPlaylistNext = false,
+                completionAdvancesToNext = true,
+            )
+        )
+        assertTrue(
+            resolveWillContinuePlaybackAfterCurrentItem(
+                pageCount = 1,
+                currentPageIndex = 0,
+                hasUgcSeasonNext = true,
+                hasPlaylistNext = false,
+                completionAdvancesToNext = true,
             )
         )
     }
@@ -1212,86 +1501,127 @@ class VideoPlayerSectionPolicyTest {
         assertTrue(visual.centerMarkerAlpha > visual.edgeGradientAlpha)
         assertEquals(4, visual.centerMarkerHeightDp)
         assertEquals(0.22f, visual.centerMarkerWidthFraction)
-        assertEquals(10, visual.bottomVisualOffsetDp)
+        assertEquals(0, visual.bottomVisualOffsetDp)
     }
 
     @Test
-    fun longPressSpeedFeedback_usesLightweightTextAndNoDefaultLockInstruction() {
-        val source = loadVideoPlayerSectionSource()
+    fun subtitleBottomOffset_tracksChromeAndSafeInsetsAcrossScreenShapes() {
+        val density = 3f
+        val hidden = resolveSubtitleBottomOffsetPx(
+            isFullscreen = true,
+            controlsVisible = false,
+            navigationInsetPx = 0,
+            bottomControlsHeightPx = 180,
+            density = density
+        )
+        val visible = resolveSubtitleBottomOffsetPx(
+            isFullscreen = true,
+            controlsVisible = true,
+            navigationInsetPx = 24,
+            bottomControlsHeightPx = 132,
+            density = density
+        )
 
-        assertTrue(source.contains("\"倍速播放中 ${'$'}{effectiveLongPressSpeed}x\""))
-        assertFalse(source.contains("拖至上下区域锁定"))
-        assertFalse(source.contains("rememberInfiniteTransition(label = \"fast_forward\")"))
+        assertEquals(72, hidden)
+        assertEquals(180, visible)
+        assertEquals(
+            96,
+            resolveSubtitleBottomOffsetPx(
+                isFullscreen = false,
+                controlsVisible = false,
+                navigationInsetPx = 0,
+                bottomControlsHeightPx = 0,
+                density = density
+            )
+        )
+        assertEquals(
+            204,
+            resolveSubtitleBottomOffsetPx(
+                isFullscreen = false,
+                controlsVisible = true,
+                navigationInsetPx = 96,
+                bottomControlsHeightPx = 180,
+                density = density,
+            ),
+        )
     }
 
     @Test
-    fun longPressSpeedLockHint_usesNonModalPromptActions() {
-        val source = loadVideoPlayerSectionSource()
+    fun subtitleBottomOffset_staysFixedWhenPositionIsLocked() {
+        val hidden = resolveSubtitleBottomOffsetPx(
+            isFullscreen = true,
+            controlsVisible = false,
+            positionLocked = true,
+            navigationInsetPx = 12,
+            bottomControlsHeightPx = 80,
+            density = 2f
+        )
+        val visible = resolveSubtitleBottomOffsetPx(
+            isFullscreen = true,
+            controlsVisible = true,
+            positionLocked = true,
+            navigationInsetPx = 12,
+            bottomControlsHeightPx = 80,
+            density = 2f
+        )
 
-        assertTrue(source.contains("需要长按锁定倍速吗？"))
-        assertTrue(source.contains("开启锁定"))
-        assertTrue(source.contains("不再提示"))
-        assertFalse(source.contains("AlertDialog"))
+        assertEquals(hidden, visible)
     }
 
     @Test
-    fun longPressSpeedLockHint_dismissActionEndsCurrentLongPressSpeed() {
-        val source = loadVideoPlayerSectionSource()
-        val dismissAction = source
-            .substringAfter("TextButton(\n                            onClick = {\n                                showLongPressSpeedLockHint = false")
-            .substringBefore("Text(\"不再提示\")")
-
-        assertTrue(dismissAction.contains("finishLongPressSpeedGesture(gestureEnded = true)"))
-    }
-
-    @Test
-    fun longPressSpeedLockHint_promptActionsMarkLocalHintAsShownImmediately() {
-        val source = loadVideoPlayerSectionSource()
-        val hintPrompt = source
-            .substringAfter("text = \"需要长按锁定倍速吗？\"")
-            .substringBefore("Text(\"不再提示\")")
-        val dismissAction = source
-            .substringAfter("TextButton(\n                            onClick = {\n                                showLongPressSpeedLockHint = false")
-            .substringBefore("Text(\"不再提示\")")
-
-        assertTrue(hintPrompt.contains("hasShownLongPressSpeedLockHintLocally = true"))
-        assertTrue(dismissAction.contains("hasShownLongPressSpeedLockHintLocally = true"))
-    }
-
-    @Test
-    fun longPressSpeedDrag_usesSingleLongPressDragGestureDetector() {
-        val source = loadVideoPlayerSectionSource()
-
+    fun longPressSpeedLockHint_waitsUntilAccelerationEnds() {
+        assertFalse(
+            shouldShowLongPressSpeedLockHint(
+                hintRequested = true,
+                isLongPressing = true,
+                isInPipMode = false,
+            )
+        )
         assertTrue(
-            source.contains("detectDragGesturesAfterLongPress("),
-            "Long-press speed drag must be handled by the same gesture detector that owns the long press."
+            shouldShowLongPressSpeedLockHint(
+                hintRequested = true,
+                isLongPressing = false,
+                isInPipMode = false,
+            )
+        )
+    }
+
+    @Test
+    fun longPressSpeedFeedback_canBeDismissedWithoutChangingGestureState() {
+        assertTrue(
+            shouldShowLongPressSpeedFeedback(
+                isLongPressing = true,
+                isPlaybackSurfaceActive = true,
+                hintDismissed = false,
+                hintHidden = false,
+            )
         )
         assertFalse(
-            source.contains("onLongPress ="),
-            "detectTapGestures long-press handling consumes post-long-press moves before drag locking can see them."
+            shouldShowLongPressSpeedFeedback(
+                isLongPressing = true,
+                isPlaybackSurfaceActive = true,
+                hintDismissed = true,
+                hintHidden = false,
+            )
+        )
+        assertFalse(
+            shouldShowLongPressSpeedFeedback(
+                isLongPressing = true,
+                isPlaybackSurfaceActive = false,
+                hintDismissed = false,
+                hintHidden = false,
+            )
+        )
+        assertFalse(
+            shouldShowLongPressSpeedFeedback(
+                isLongPressing = true,
+                isPlaybackSurfaceActive = true,
+                hintDismissed = false,
+                hintHidden = true,
+            )
         )
     }
 
-    @Test
-    fun volumeGesture_usesSystemMusicStreamInsteadOfPlayerVolume() {
-        val source = loadVideoPlayerSectionSource()
-        val dragStartBlock = source
-            .substringAfter("onDragStart = { offset ->")
-            .substringBefore("onDragEnd = {")
-        val volumeGestureBlock = source
-            .substringAfter("VideoGestureMode.Volume -> {")
-            .substringBefore("VideoGestureMode.Seek ->")
-            .substringBefore("else ->")
-
-        assertTrue(dragStartBlock.contains("startVolumeStep = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)"))
-        assertTrue(volumeGestureBlock.contains("resolveSystemStreamVolumeFromGesture("))
-        assertTrue(volumeGestureBlock.contains("screenHeightPx = context.resources.displayMetrics.heightPixels.toFloat()"))
-        assertFalse(volumeGestureBlock.contains("screenHeightPx = size.height.toFloat()"))
-        assertTrue(volumeGestureBlock.contains("audioManager.setStreamVolume("))
-        assertTrue(volumeGestureBlock.contains("AudioManager.STREAM_MUSIC"))
-        assertFalse(volumeGestureBlock.contains("playerState.player.volume ="))
-        assertFalse(source.contains("SettingsManager.setPreferredPlayerVolume("))
-    }
 
     @Test
     fun longPressExclusiveDrag_onlyConsumesBeforeSpeedIsLocked() {
@@ -1367,13 +1697,6 @@ class VideoPlayerSectionPolicyTest {
         )
     }
 
-    private fun loadVideoPlayerSectionSource(): String {
-        val sourceFile = listOf(
-            File("app/src/main/java/com/android/purebilibili/feature/video/ui/section/VideoPlayerSection.kt"),
-            File("src/main/java/com/android/purebilibili/feature/video/ui/section/VideoPlayerSection.kt")
-        ).first { it.exists() }
-        return sourceFile.readText()
-    }
 
     @Test
     fun lockedLongPressSpeed_reappliesWhenPlaybackSpeedUnexpectedlyResets() {
@@ -1458,28 +1781,6 @@ class VideoPlayerSectionPolicyTest {
     }
 
     @Test
-    fun tapAfterLongPressSpeedRelease_doesNotToggleControls() {
-        assertFalse(
-            shouldToggleControlsForVideoTap(
-                longPressSpeedEndedAtMs = 1_000L,
-                nowMs = 1_120L
-            )
-        )
-        assertTrue(
-            shouldToggleControlsForVideoTap(
-                longPressSpeedEndedAtMs = 1_000L,
-                nowMs = 1_700L
-            )
-        )
-        assertTrue(
-            shouldToggleControlsForVideoTap(
-                longPressSpeedEndedAtMs = 0L,
-                nowMs = 1_120L
-            )
-        )
-    }
-
-    @Test
     fun longPressSpeedGesture_disabledWhenScreenLockedOrVideoScaled() {
         assertFalse(
             shouldEnableLongPressSpeedGesture(
@@ -1512,17 +1813,30 @@ class VideoPlayerSectionPolicyTest {
     }
 
     @Test
-    fun viewportTransformGesture_disabledDuringPlaybackEvenWhenUnlocked() {
-        assertFalse(
+    fun viewportTransformGesture_supportsFullscreenAndVerticalVideoOnlyWhenUnlocked() {
+        assertTrue(
             shouldEnableViewportTransformGesture(
-                isScreenLocked = false
+                isScreenLocked = false,
+                isFullscreen = true,
+                isPortraitFullscreen = false,
+                isVerticalVideo = false,
             )
+        )
+        assertTrue(
+            shouldEnableViewportTransformGesture(false, false, true, false)
+        )
+        assertTrue(
+            shouldEnableViewportTransformGesture(false, false, false, true)
         )
         assertFalse(
             shouldEnableViewportTransformGesture(
-                isScreenLocked = true
+                isScreenLocked = true,
+                isFullscreen = true,
+                isPortraitFullscreen = false,
+                isVerticalVideo = true,
             )
         )
+        assertFalse(shouldEnableViewportTransformGesture(false, false, false, false))
     }
 
     @Test
@@ -1607,36 +1921,6 @@ class VideoPlayerSectionPolicyTest {
         )
     }
 
-    @Test
-    fun longPressSpeedStart_resetsSeekSessionToCurrentPlaybackPosition() {
-        val source = loadVideoPlayerSectionSource()
-        val startBlock = source
-            .substringAfter("fun startLongPressSpeedGesture(startOffset: Offset? = null) {")
-            .substringBefore("fun unlockLockedLongPressSpeedFromGesture()")
-
-        assertTrue(startBlock.contains("resetPlaybackSeekSessionForActivePlayback("))
-        assertTrue(startBlock.contains("gestureMode = VideoGestureMode.None"))
-    }
-
-    @Test
-    fun seekDragCancel_restoresDanmakuAfterScrubCancel() {
-        val source = loadVideoPlayerSectionSource()
-        val cancelBlock = source
-            .substringAfter("onSeekDragCancel = {")
-            .substringBefore("isSeekScrubbing =")
-
-        assertTrue(cancelBlock.contains("cancelPlaybackSeekInteraction"))
-        assertTrue(cancelBlock.contains("danmakuManager.cancelSeekScrub()"))
-    }
-
-    fun longPressSpeedDragStart_ignoresRegularDragWhileLongPressSpeedIsActive() {
-        val source = loadVideoPlayerSectionSource()
-        val dragStartBlock = source
-            .substringAfter("onDragStart = { offset ->")
-            .substringBefore("onDragEnd = {")
-
-        assertTrue(dragStartBlock.contains("if (isLongPressing || longPressSpeedLocked)"))
-    }
 
     @Test
     fun returnCoverPresentation_usesSharedBoundsDuringForcedReturn() {
@@ -1662,6 +1946,8 @@ class VideoPlayerSectionPolicyTest {
         )
 
         assertTrue(spec.coverUsesSharedBounds)
+        assertTrue(spec.fillCoverViewport)
+        assertEquals(VideoPlayerCoverContentScaleMode.Crop, spec.coverContentScaleMode)
         assertTrue(spec.showManualStartPlayButton)
     }
 
@@ -1676,5 +1962,112 @@ class VideoPlayerSectionPolicyTest {
 
         assertFalse(spec.coverUsesSharedBounds)
         assertFalse(spec.showManualStartPlayButton)
+    }
+
+    @Test
+    fun `swipe hint fraction follows trigger direction and clamps to threshold`() {
+        // 非全屏上滑(负距离)推进进度;下滑钳为 0。
+        assertEquals(
+            0.5f,
+            resolveSwipeToFullscreenHintFraction(
+                isFullscreen = false,
+                reverseGesture = false,
+                totalDragDistanceY = -25f,
+                thresholdPx = 50f,
+            ),
+        )
+        assertEquals(
+            0f,
+            resolveSwipeToFullscreenHintFraction(
+                isFullscreen = false,
+                reverseGesture = false,
+                totalDragDistanceY = 25f,
+                thresholdPx = 50f,
+            ),
+        )
+        // 全屏退出路径方向相反:下滑推进,上滑钳为 0。
+        assertEquals(
+            1f,
+            resolveSwipeToFullscreenHintFraction(
+                isFullscreen = true,
+                reverseGesture = false,
+                totalDragDistanceY = 80f,
+                thresholdPx = 50f,
+            ),
+        )
+        assertEquals(
+            0f,
+            resolveSwipeToFullscreenHintFraction(
+                isFullscreen = true,
+                reverseGesture = false,
+                totalDragDistanceY = -80f,
+                thresholdPx = 50f,
+            ),
+        )
+        // reverseGesture 翻转有效方向。
+        assertEquals(
+            1f,
+            resolveSwipeToFullscreenHintFraction(
+                isFullscreen = false,
+                reverseGesture = true,
+                totalDragDistanceY = 60f,
+                thresholdPx = 50f,
+            ),
+        )
+        assertEquals(
+            0f,
+            resolveSwipeToFullscreenHintFraction(
+                isFullscreen = false,
+                reverseGesture = true,
+                totalDragDistanceY = -60f,
+                thresholdPx = 0f,
+            ),
+        )
+    }
+
+    @Test
+    fun `portrait fullscreen exit triggers inline surface rebind only on transition`() {
+        // 进入竖屏全屏与全屏期间不触发；退出瞬间(上一帧全屏、当前帧内联)才触发。
+        assertTrue(
+            shouldRebindInlineSurfaceAfterPortraitFullscreenExit(
+                wasPortraitFullscreen = true,
+                isPortraitFullscreen = false,
+                shouldBindInlinePlayerView = true,
+                hasPlayerView = true,
+            )
+        )
+        assertFalse(
+            shouldRebindInlineSurfaceAfterPortraitFullscreenExit(
+                wasPortraitFullscreen = false,
+                isPortraitFullscreen = false,
+                shouldBindInlinePlayerView = true,
+                hasPlayerView = true,
+            )
+        )
+        assertFalse(
+            shouldRebindInlineSurfaceAfterPortraitFullscreenExit(
+                wasPortraitFullscreen = true,
+                isPortraitFullscreen = true,
+                shouldBindInlinePlayerView = true,
+                hasPlayerView = true,
+            )
+        )
+        // 内联未接入播放(全屏期间)或 view 已卸载时不重绑。
+        assertFalse(
+            shouldRebindInlineSurfaceAfterPortraitFullscreenExit(
+                wasPortraitFullscreen = true,
+                isPortraitFullscreen = false,
+                shouldBindInlinePlayerView = false,
+                hasPlayerView = true,
+            )
+        )
+        assertFalse(
+            shouldRebindInlineSurfaceAfterPortraitFullscreenExit(
+                wasPortraitFullscreen = true,
+                isPortraitFullscreen = false,
+                shouldBindInlinePlayerView = true,
+                hasPlayerView = false,
+            )
+        )
     }
 }

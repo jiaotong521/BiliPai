@@ -7,26 +7,6 @@ import kotlin.test.assertTrue
 
 class VideoInteractionIconPolicyTest {
 
-    @Test
-    fun `landscape right sidebar uses app semantic interaction icons`() {
-        val source = File("src/main/java/com/android/purebilibili/feature/video/ui/overlay/LandscapeRightSidebar.kt")
-            .readText()
-
-        listOf(
-            "rememberAppShareIcon",
-            "rememberAppBookmarkIcon",
-            "rememberAppCoinIcon",
-            "rememberAppLikeIcon",
-            "rememberAppLikeFilledIcon",
-            "rememberAppMoreIcon"
-        ).forEach { helper ->
-            assertTrue(source.contains(helper), "Landscape sidebar should use $helper for preset-aware icons.")
-        }
-        assertFalse(source.contains("CupertinoIcons.Default.SquareAndArrowUp"))
-        assertFalse(source.contains("CupertinoIcons.Default.Bookmark"))
-        assertFalse(source.contains("CupertinoIcons.Default.HandThumbsup"))
-        assertFalse(source.contains("private val CoinIcon"))
-    }
 
     @Test
     fun `legacy video action row uses app semantic interaction icons`() {
@@ -46,44 +26,19 @@ class VideoInteractionIconPolicyTest {
     }
 
     @Test
-    fun `audio mode interaction row uses app semantic interaction icons`() {
-        val source = File("src/main/java/com/android/purebilibili/feature/video/screen/AudioModeScreen.kt")
+    fun `audio mode delegates to the shared music player without legacy video action icons`() {
+        val audioModeSource = File("src/main/java/com/android/purebilibili/feature/video/screen/AudioModeScreen.kt")
+            .readText()
+        val playerSource = File("src/main/java/com/android/purebilibili/feature/video/screen/AudioModeMusicPlayer.kt")
             .readText()
 
-        listOf(
-            "rememberAppBookmarkIcon",
-            "rememberAppCoinIcon",
-            "rememberAppLikeIcon",
-            "rememberAppLikeFilledIcon"
-        ).forEach { helper ->
-            assertTrue(source.contains(helper), "Audio mode interaction row should use $helper for preset-aware icons.")
-        }
-        assertFalse(source.contains("AppIcons.BiliCoin"))
-        assertFalse(source.contains("CupertinoIcons.Filled.HandThumbsup else CupertinoIcons.Default.HandThumbsup"))
-        assertFalse(source.contains("CupertinoIcons.Filled.Bookmark else CupertinoIcons.Default.Bookmark"))
+        assertTrue(audioModeSource.contains("AudioModeMusicPlayer("))
+        assertTrue(playerSource.contains("MusicPlayerContent("))
+        assertFalse(audioModeSource.contains("AppIcons.BiliCoin"))
+        assertFalse(audioModeSource.contains("CupertinoIcons.Filled.HandThumbsup else CupertinoIcons.Default.HandThumbsup"))
+        assertFalse(audioModeSource.contains("CupertinoIcons.Filled.Bookmark else CupertinoIcons.Default.Bookmark"))
     }
 
-    @Test
-    fun `fullscreen overlay controls use app semantic interaction icons`() {
-        val source = File("src/main/java/com/android/purebilibili/feature/video/ui/overlay/VideoPlayerOverlay.kt")
-            .readText()
-
-        listOf(
-            "rememberAppBookmarkIcon",
-            "rememberAppCoinIcon",
-            "rememberAppLikeIcon",
-            "rememberAppLikeFilledIcon",
-            "rememberAppMoreIcon",
-            "rememberAppShareIcon"
-        ).forEach { helper ->
-            assertTrue(source.contains(helper), "Fullscreen overlay should use $helper for preset-aware icons.")
-        }
-        assertFalse(source.contains("CupertinoIcons.Default.Ellipsis"))
-        assertFalse(source.contains("CupertinoIcons.Default.SquareAndArrowUp"))
-        assertFalse(source.contains("CupertinoIcons.Filled.HandThumbsup else CupertinoIcons.Outlined.HandThumbsup"))
-        assertFalse(source.contains("AppIcons.BiliCoin"))
-        assertFalse(source.contains("CupertinoIcons.Filled.Star else CupertinoIcons.Default.Star"))
-    }
 
     @Test
     fun `home video preview dialog uses app semantic menu icons`() {
@@ -107,25 +62,6 @@ class VideoInteractionIconPolicyTest {
         assertFalse(source.contains("CupertinoIcons.Outlined.Xmark"))
     }
 
-    @Test
-    fun `landscape top control bar uses app semantic interaction icons`() {
-        val source = File("src/main/java/com/android/purebilibili/feature/video/ui/overlay/LandscapeTopControlBar.kt")
-            .readText()
-
-        listOf(
-            "rememberAppCoinIcon",
-            "rememberAppLikeFilledIcon",
-            "rememberAppLikeIcon",
-            "rememberAppMoreIcon",
-            "rememberAppShareIcon"
-        ).forEach { helper ->
-            assertTrue(source.contains(helper), "Landscape top control bar should use $helper for preset-aware icons.")
-        }
-        assertFalse(source.contains("CupertinoIcons.Default.HandThumbsup"))
-        assertFalse(source.contains("CupertinoIcons.Default.SquareAndArrowUp"))
-        assertFalse(source.contains("CupertinoIcons.Default.Ellipsis"))
-        assertFalse(source.contains("private val CoinIcon"))
-    }
 
     @Test
     fun `bottom input bar uses app semantic action icons`() {
@@ -162,19 +98,9 @@ class VideoInteractionIconPolicyTest {
     }
 
     @Test
-    fun `collection row uses app semantic share icon`() {
-        val source = File("src/main/java/com/android/purebilibili/feature/video/ui/components/CollectionRow.kt")
-            .readText()
-
-        assertTrue(source.contains("rememberAppShareIcon"))
-        assertFalse(source.contains("CupertinoIcons.Default.SquareAndArrowUp"))
-    }
-
-    @Test
     fun `common video close buttons use app clear icon`() {
         val paths = listOf(
             "src/main/java/com/android/purebilibili/feature/video/ui/overlay/MiniPlayerOverlay.kt",
-            "src/main/java/com/android/purebilibili/feature/video/ui/components/CommentInputBar.kt",
             "src/main/java/com/android/purebilibili/feature/video/ui/components/SponsorSkipUI.kt",
             "src/main/java/com/android/purebilibili/feature/video/ui/components/CollectionSheet.kt"
         )

@@ -1,10 +1,14 @@
 // 文件路径: feature/bangumi/BangumiTimelineScreen.kt
 package com.android.purebilibili.feature.bangumi
 
+import com.android.purebilibili.core.ui.AppContentColors
+import com.android.purebilibili.core.ui.components.AppText
+import com.android.purebilibili.core.ui.components.AppHorizontalDivider
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
+import com.android.purebilibili.core.ui.components.AppLazyColumn as LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -12,6 +16,12 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import com.android.purebilibili.core.ui.AppShapes
 import com.android.purebilibili.core.ui.ContainerLevel
+import com.android.purebilibili.core.ui.components.AppButton
+import com.android.purebilibili.core.ui.components.AppFilterChip
+import com.android.purebilibili.core.ui.components.AppSurface
+import com.android.purebilibili.core.ui.skeleton.ContentSkeletonBlock
+import com.android.purebilibili.core.ui.skeleton.rememberContentSkeletonBlockColor
+import com.android.purebilibili.core.ui.skeleton.rememberContentSkeletonPulseState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,8 +33,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
-//  已改用 MaterialTheme.colorScheme.primary
+import coil3.compose.AsyncImage
+//  已改用 AppContentColors.accent()
 import com.android.purebilibili.core.util.FormatUtils
 import com.android.purebilibili.data.model.response.TimelineDay
 import com.android.purebilibili.data.model.response.TimelineEpisode
@@ -41,12 +51,7 @@ fun BangumiTimelineContent(
 ) {
     when (timelineState) {
         is TimelineState.Loading -> {
-            Box(
-                modifier = modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                com.android.purebilibili.core.ui.CutePersonLoadingIndicator()
-            }
+            BangumiTimelineScreenSkeleton(modifier = modifier)
         }
         is TimelineState.Error -> {
             Box(
@@ -54,13 +59,13 @@ fun BangumiTimelineContent(
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
+                    AppText(
                         text = timelineState.message,
-                        color = MaterialTheme.colorScheme.error
+                        color = AppContentColors.error()
                     )
                     Spacer(modifier = Modifier.height(16.dp))
-                    Button(onClick = onRetry) {
-                        Text("重试")
+                    AppButton(onClick = onRetry) {
+                        AppText("重试")
                     }
                 }
             }
@@ -76,6 +81,74 @@ fun BangumiTimelineContent(
 }
 
 @Composable
+private fun BangumiTimelineScreenSkeleton(modifier: Modifier = Modifier) {
+    val blockColor = rememberContentSkeletonBlockColor(rememberContentSkeletonPulseState())
+    Column(modifier = modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            repeat(5) {
+                ContentSkeletonBlock(
+                    color = blockColor,
+                    shape = AppShapes.container(ContainerLevel.Pill),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp),
+                )
+            }
+        }
+        AppHorizontalDivider(
+            thickness = 0.5.dp,
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+        )
+        LazyColumn(
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            userScrollEnabled = false,
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            items(7) {
+                AppSurface(
+                    shape = AppShapes.container(ContainerLevel.Card),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        ContentSkeletonBlock(
+                            color = blockColor,
+                            shape = AppShapes.container(ContainerLevel.Field),
+                            modifier = Modifier.size(80.dp, 60.dp),
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            ContentSkeletonBlock(
+                                color = blockColor,
+                                modifier = Modifier
+                                    .fillMaxWidth(0.82f)
+                                    .height(15.dp),
+                            )
+                            ContentSkeletonBlock(
+                                color = blockColor,
+                                modifier = Modifier
+                                    .fillMaxWidth(0.56f)
+                                    .height(12.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun TimelineView(
     days: List<TimelineDay>,
     onBangumiClick: (Long) -> Unit,
@@ -84,14 +157,14 @@ private fun TimelineView(
     // 找到今天的索引
     val todayIndex = days.indexOfFirst { it.isToday == 1 }.coerceAtLeast(0)
     var selectedDayIndex by remember { mutableIntStateOf(todayIndex) }
-    
+
     val dayListState = rememberLazyListState()
-    
+
     // 自动滚动到今天
     LaunchedEffect(todayIndex) {
         dayListState.animateScrollToItem(maxOf(0, todayIndex - 2))
     }
-    
+
     Column(modifier = modifier.fillMaxSize()) {
         // 日期选择器
         LazyRow(
@@ -108,22 +181,23 @@ private fun TimelineView(
                 )
             }
         }
-        
-        HorizontalDivider(
+
+        AppHorizontalDivider(
             thickness = 0.5.dp,
             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
         )
-        
+
         // 当天番剧列表
         val selectedDay = days.getOrNull(selectedDayIndex)
-        if (selectedDay != null && !selectedDay.episodes.isNullOrEmpty()) {
+        val episodes = selectedDay?.episodes.orEmpty()
+        if (episodes.isNotEmpty()) {
             LazyColumn(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
                 itemsIndexed(
-                    items = selectedDay.episodes,
+                    items = episodes,
                     key = { index, episode -> resolveTimelineEpisodeLazyKey(index, episode) }
                 ) { _, episode ->
                     TimelineEpisodeCard(
@@ -137,9 +211,9 @@ private fun TimelineView(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
+                AppText(
                     "今日无更新",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = AppContentColors.secondaryText()
                 )
             }
         }
@@ -155,7 +229,7 @@ private fun DayChip(
     val isToday = day.isToday == 1
     val weekDays = listOf("", "周一", "周二", "周三", "周四", "周五", "周六", "周日")
     val weekDay = weekDays.getOrElse(day.dayOfWeek) { "" }
-    
+
     // 解析日期获取月日
     val dateParts = day.date.split("-")
     val displayDate = if (dateParts.size >= 3) {
@@ -163,42 +237,52 @@ private fun DayChip(
     } else {
         day.date
     }
-    
-    Surface(
+
+    AppFilterChip(
+        selected = isSelected,
         onClick = onClick,
         shape = AppShapes.container(ContainerLevel.Card),
-        color = when {
-            isSelected -> MaterialTheme.colorScheme.primary
-            isToday -> MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
-            else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-        }
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
-        ) {
-            Text(
-                text = if (isToday) "今天" else weekDay,
-                fontSize = 14.sp,
-                fontWeight = if (isSelected || isToday) FontWeight.Bold else FontWeight.Normal,
-                color = when {
-                    isSelected -> Color.White
-                    isToday -> MaterialTheme.colorScheme.primary
-                    else -> MaterialTheme.colorScheme.onSurface
-                }
-            )
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = displayDate,
-                fontSize = 11.sp,
-                color = when {
-                    isSelected -> Color.White.copy(alpha = 0.8f)
-                    isToday -> MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
-                    else -> MaterialTheme.colorScheme.onSurfaceVariant
-                }
-            )
-        }
-    }
+        colors = FilterChipDefaults.filterChipColors(
+            containerColor = if (isToday) {
+                AppContentColors.accent().copy(alpha = 0.2f)
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+            },
+            labelColor = if (isToday) {
+                AppContentColors.accent()
+            } else {
+                AppContentColors.primaryText()
+            },
+            selectedContainerColor = AppContentColors.accent(),
+            selectedLabelColor = AppContentColors.onAccent(),
+        ),
+        border = null,
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+        label = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                AppText(
+                    text = if (isToday) "今天" else weekDay,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = if (isSelected || isToday) FontWeight.Bold else FontWeight.Normal,
+                    color = when {
+                        isSelected -> AppContentColors.onAccent()
+                        isToday -> AppContentColors.accent()
+                        else -> AppContentColors.primaryText()
+                    }
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                AppText(
+                    text = displayDate,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = when {
+                        isSelected -> AppContentColors.onAccent().copy(alpha = 0.8f)
+                        isToday -> AppContentColors.accent().copy(alpha = 0.7f)
+                        else -> AppContentColors.secondaryText()
+                    }
+                )
+            }
+        },
+    )
 }
 
 @Composable
@@ -208,8 +292,8 @@ private fun TimelineEpisodeCard(
 ) {
     val isFollowed = episode.follow == 1
     val isDelayed = episode.delay == 1
-    
-    Surface(
+
+    AppSurface(
         onClick = onClick,
         shape = AppShapes.container(ContainerLevel.Card),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -223,76 +307,79 @@ private fun TimelineEpisodeCard(
             Box(
                 modifier = Modifier
                     .size(80.dp, 60.dp)
-                    .clip(AppShapes.container(ContainerLevel.Chip))
+                    .clip(AppShapes.container(ContainerLevel.Field))
             ) {
                 AsyncImage(
-                    model = FormatUtils.fixImageUrl(episode.cover.ifEmpty { episode.squareCover }),
+                    model = FormatUtils.fixImageUrl(
+                        resolveTimelineEpisodeCover(episode, preferEpisodeCover = true)
+                    ),
                     contentDescription = null,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop
                 )
-                
+
                 // 已追番标记
                 if (isFollowed) {
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopStart)
                             .padding(4.dp)
-                            .background(MaterialTheme.colorScheme.primary, AppShapes.container(ContainerLevel.Tag))
+                            .background(AppContentColors.accent(), AppShapes.container(ContainerLevel.Tag))
                             .padding(horizontal = 4.dp, vertical = 2.dp)
                     ) {
-                        Text(
+                        AppText(
                             "追番",
-                            fontSize = 9.sp,
-                            color = Color.White
+                            style = MaterialTheme.typography.labelSmall,
+                            color = AppContentColors.onAccent()
                         )
                     }
                 }
             }
-            
+
             Spacer(modifier = Modifier.width(12.dp))
-            
+
             // 信息区域
             Column(
                 modifier = Modifier.weight(1f)
             ) {
-                Text(
+                AppText(
                     text = episode.title,
-                    fontSize = 15.sp,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                
+
                 Spacer(modifier = Modifier.height(4.dp))
-                
+
                 Row(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // 更新集数
-                    Text(
-                        text = episode.pubIndex,
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.primary
+                    AppText(
+                        text = resolveTimelineEpisodeUpdateLabel(episode),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = AppContentColors.accent()
                     )
-                    
+
                     Spacer(modifier = Modifier.width(8.dp))
-                    
+
                     // 更新时间
-                    Text(
+                    AppText(
                         text = episode.pubTime,
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        style = MaterialTheme.typography.bodySmall,
+                        color = AppContentColors.secondaryText()
                     )
                 }
-                
+
                 // 延迟信息
-                if (isDelayed && episode.delayReason.isNotEmpty()) {
+                val scheduleLabel = resolveTimelineEpisodeScheduleLabel(episode)
+                if (isDelayed && scheduleLabel.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = " ${episode.delayReason}",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.error
+                    AppText(
+                        text = scheduleLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = AppContentColors.error()
                     )
                 }
             }

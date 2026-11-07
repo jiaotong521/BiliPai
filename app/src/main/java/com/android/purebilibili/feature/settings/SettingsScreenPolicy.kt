@@ -18,6 +18,69 @@ internal enum class SettingsBackTarget {
     BLOCKED_LIST,
 }
 
+internal data class SettingsBottomBarScrollState(
+    val firstVisibleItemIndex: Int,
+    val firstVisibleItemScrollOffset: Int,
+)
+
+internal data class SettingsBottomBarScrollTracker(
+    val previousState: SettingsBottomBarScrollState,
+    val accumulatedDeltaPx: Int = 0,
+)
+
+internal data class SettingsBottomBarScrollUpdate(
+    val tracker: SettingsBottomBarScrollTracker,
+    val bottomBarVisible: Boolean?,
+)
+
+internal fun reduceSettingsBottomBarScroll(
+    tracker: SettingsBottomBarScrollTracker,
+    currentState: SettingsBottomBarScrollState,
+    topRevealThresholdPx: Int,
+    directionThresholdPx: Int,
+): SettingsBottomBarScrollUpdate {
+    val previousState = tracker.previousState
+    if (
+        currentState.firstVisibleItemIndex == 0 &&
+        currentState.firstVisibleItemScrollOffset <= topRevealThresholdPx
+    ) {
+        return SettingsBottomBarScrollUpdate(
+            tracker = SettingsBottomBarScrollTracker(currentState),
+            bottomBarVisible = true,
+        )
+    }
+
+    val itemDirection = currentState.firstVisibleItemIndex.compareTo(previousState.firstVisibleItemIndex)
+    if (itemDirection != 0) {
+        return SettingsBottomBarScrollUpdate(
+            tracker = SettingsBottomBarScrollTracker(currentState),
+            bottomBarVisible = itemDirection < 0,
+        )
+    }
+
+    val frameDeltaPx = currentState.firstVisibleItemScrollOffset - previousState.firstVisibleItemScrollOffset
+    val continuesDirection = tracker.accumulatedDeltaPx == 0 ||
+        frameDeltaPx == 0 ||
+        (tracker.accumulatedDeltaPx > 0) == (frameDeltaPx > 0)
+    val accumulatedDeltaPx = if (continuesDirection) {
+        tracker.accumulatedDeltaPx + frameDeltaPx
+    } else {
+        frameDeltaPx
+    }
+    val visibility = when {
+        accumulatedDeltaPx >= directionThresholdPx -> false
+        accumulatedDeltaPx <= -directionThresholdPx -> true
+        else -> null
+    }
+    return SettingsBottomBarScrollUpdate(
+        tracker = SettingsBottomBarScrollTracker(
+            previousState = currentState,
+            accumulatedDeltaPx = if (visibility == null) accumulatedDeltaPx else 0,
+        ),
+        bottomBarVisible = visibility,
+    )
+}
+
 internal fun resolveSettingsBackTarget(
     showCacheAnimation: Boolean = false,
     showCacheDialog: Boolean = false,
@@ -68,9 +131,9 @@ internal fun resolveSettingsBottomBarReservedPadding(
     }
 
     return if (isBottomBarFloating) {
-        floatingBodyHeight + floatingInset + 12.dp
+        floatingBodyHeight + floatingInset
     } else {
-        dockedBodyHeight + 12.dp
+        dockedBodyHeight
     }
 }
 
@@ -80,11 +143,10 @@ internal fun resolveSettingsContentBottomPadding(
     isBottomBarFloating: Boolean,
     bottomBarLabelMode: Int,
     isTablet: Boolean,
-    extraBottomPadding: Dp = 28.dp
 ): Dp {
     return resolveBottomSafeAreaPadding(
         navigationBarsBottom = navigationBarsBottom,
-        extraBottomPadding = extraBottomPadding + resolveSettingsBottomBarReservedPadding(
+        extraBottomPadding = resolveSettingsBottomBarReservedPadding(
             bottomBarVisible = bottomBarVisible,
             isBottomBarFloating = isBottomBarFloating,
             bottomBarLabelMode = bottomBarLabelMode,

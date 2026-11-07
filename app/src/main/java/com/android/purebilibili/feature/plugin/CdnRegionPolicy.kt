@@ -1,6 +1,10 @@
 package com.android.purebilibili.feature.plugin
 
 import kotlinx.serialization.Serializable
+import com.android.purebilibili.plugin.sdk.PlaybackCdnCandidate
+import com.android.purebilibili.plugin.sdk.PlaybackCdnCandidateSource
+import com.android.purebilibili.plugin.sdk.CdnHealthEvent
+import com.android.purebilibili.plugin.sdk.CdnLineDiagnostic
 import java.net.URI
 
 @Serializable
@@ -30,17 +34,113 @@ data class CdnCustomRule(
     val enabled: Boolean = true
 )
 
-enum class PlaybackCdnCandidateSource {
-    CUSTOM,
-    REGION,
-    ORIGINAL
+
+enum class PlaybackCdnPreference(
+    val storageValue: String,
+    val displayName: String,
+    val host: String? = null,
+) {
+    BASE_URL("base_url", "基础URL"),
+    BACKUP_URL("backup_url", "备用URL"),
+    ALI("ali", "ali（阿里云）", "upos-sz-mirrorali.bilivideo.com"),
+    ALIB("alib", "alib（阿里云）", "upos-sz-mirroralib.bilivideo.com"),
+    ALIO1("alio1", "alio1（阿里云）", "upos-sz-mirroralio1.bilivideo.com"),
+    COS("cos", "cos（腾讯云）", "upos-sz-mirrorcos.bilivideo.com"),
+    COSB("cosb", "cosb（腾讯云，VOD加速类型）", "upos-sz-mirrorcosb.bilivideo.com"),
+    COSO1("coso1", "coso1（腾讯云）", "upos-sz-mirrorcoso1.bilivideo.com"),
+    HW("hw", "hw（华为云，融合CDN）", "upos-sz-mirrorhw.bilivideo.com"),
+    HWB("hwb", "hwb（华为云，融合CDN）", "upos-sz-mirrorhwb.bilivideo.com"),
+    HWO1("hwo1", "hwo1（华为云，融合CDN）", "upos-sz-mirrorhwo1.bilivideo.com"),
+    HW_08C("08c", "08c（华为云，融合CDN）", "upos-sz-mirror08c.bilivideo.com"),
+    HW_08H("08h", "08h（华为云，融合CDN）", "upos-sz-mirror08h.bilivideo.com"),
+    HW_08CT("08ct", "08ct（华为云，融合CDN）", "upos-sz-mirror08ct.bilivideo.com"),
+    TF_HW("tf_hw", "tf_hw（华为云）", "upos-tf-all-hw.bilivideo.com"),
+    TF_TX("tf_tx", "tf_tx（腾讯云）", "upos-tf-all-tx.bilivideo.com"),
+    AKAMAI("akamai", "akamai（Akamai海外）", "upos-hz-mirrorakam.akamaized.net"),
+    ALIOV("aliov", "aliov（阿里云海外）", "upos-sz-mirroraliov.bilivideo.com"),
+    COSOV("cosov", "cosov（腾讯云海外）", "upos-sz-mirrorcosov.bilivideo.com"),
+    HWOV("hwov", "hwov（华为云海外）", "upos-sz-mirrorhwov.bilivideo.com"),
+    HK_BCACHE("hk_bcache", "hk_bcache（Bilibili海外）", "cn-hk-eq-bcache-01.bilivideo.com");
+
+    companion object {
+        fun fromStorageValue(value: String?): PlaybackCdnPreference =
+            entries.firstOrNull { it.storageValue == value } ?: BASE_URL
+    }
 }
 
-data class PlaybackCdnCandidate(
-    val videoUrl: String,
-    val audioUrl: String?,
-    val source: PlaybackCdnCandidateSource
-)
+internal fun applyPlaybackCdnPreference(
+    candidates: List<PlaybackCdnCandidate>,
+    preference: PlaybackCdnPreference,
+    pluginApplied: Boolean = false,
+): List<PlaybackCdnCandidate> {
+    if (candidates.isEmpty()) return candidates
+
+    // ① 设置里选了具体线路：最高优先，无条件排到最前。
+    val host = preference.host
+    if (host != null) {
+        // 不管原候选是 PCDN 还是常规 CDN，改 host 后就是设置里的线路
+        // （upgcxcode 路径与签名在 host 之间通用）。
+        val base = candidates.first()
+        val preferred = base.copy(
+            videoUrl = rewriteBilivideoHost(base.videoUrl, host) ?: base.videoUrl,
+            audioUrl = base.audioUrl?.let { rewriteBilivideoHost(it, host) ?: it },
+        )
+        val rest = excludePcdnCandidates(candidates)
+        return (listOf(preferred) + rest).distinctBy { it.videoUrl to it.audioUrl }
+    }
+
+    // ② 插件（CDN 智能选线）已开启：尊重插件给出的顺序，不再额外过滤。
+    //    插件内部已用 risky 标记把 PCDN 排到最后，再过滤等于推翻它的判断。
+    if (pluginApplied) {
+        return if (preference == PlaybackCdnPreference.BACKUP_URL) {
+            candidates.drop(1) + candidates.take(1)
+        } else {
+            candidates
+        }
+    }
+
+    // ③ 插件没开：排除 PCDN，整批都是 PCDN 时换 host 兜底。
+    val usable = excludePcdnCandidates(candidates)
+    if (preference == PlaybackCdnPreference.BACKUP_URL) {
+        return usable.drop(1) + usable.take(1)
+    }
+    return usable
+}
+
+/**
+ * 处理候选里的 PCDN 地址。
+ *
+ * 不丢弃，而是保留 upgcxcode 路径与签名、把 host 换成常规线路——直接丢弃会让
+ * 只下发 PCDN 的视频彻底打不开。顺序保持不变，换完 host 的地址照常参与选线。
+ */
+private fun excludePcdnCandidates(
+    candidates: List<PlaybackCdnCandidate>
+): List<PlaybackCdnCandidate> {
+    return candidates.map { candidate ->
+        // 视频和音频的 host 是独立下发的，B 站会只把其中一条分到 PCDN。
+        // 以前只看 videoUrl，视频走常规 CDN、音频走 PCDN 时整个候选被跳过，
+        // 音频就带着解析不了的 mcdn 域名进了播放器。
+        val videoRisky = isRiskyCdnHost(hostOf(candidate.videoUrl))
+        val audioRisky = candidate.audioUrl?.let { isRiskyCdnHost(hostOf(it)) } == true
+        if (!videoRisky && !audioRisky) return@map candidate
+        candidate.copy(
+            videoUrl = if (videoRisky) {
+                rewriteBilivideoHost(candidate.videoUrl, FALLBACK_CDN_HOST) ?: candidate.videoUrl
+            } else {
+                candidate.videoUrl
+            },
+            audioUrl = candidate.audioUrl?.let {
+                if (audioRisky) rewriteBilivideoHost(it, FALLBACK_CDN_HOST) ?: it else it
+            },
+        )
+    }
+}
+
+private fun hostOf(url: String): String =
+    runCatching { java.net.URI(url).host.orEmpty() }.getOrDefault("")
+
+/** 整批候选都是 PCDN 时改写的目标线路。 */
+private const val FALLBACK_CDN_HOST = "upos-sz-mirrorali.bilivideo.com"
 
 data class CdnCustomRuleValidation(
     val rule: CdnCustomRule,
@@ -57,16 +157,10 @@ data class CdnCandidateHealth(
     val manualProbeLatencyMs: Long? = null,
     val manualProbeSpeedKbps: Long? = null,
     val lastProbeAtMs: Long = 0L,
-    val lastUpdatedAtMs: Long = 0L
+    val lastUpdatedAtMs: Long = 0L,
+    val healthWindowStartedAtMs: Long = 0L
 )
 
-enum class CdnHealthEvent {
-    PLAYBACK_READY,
-    FIRST_FRAME_TIMEOUT,
-    AUDIO_TRACK_MISSING,
-    PLAYER_ERROR,
-    BUFFERING
-}
 
 data class CdnProbeLimit(
     val maxCandidates: Int = 5,
@@ -80,18 +174,6 @@ data class CdnProbeCandidate(
     val cooldownRemainingMs: Long
 )
 
-data class CdnLineDiagnostic(
-    val index: Int,
-    val host: String,
-    val statusLabel: String,
-    val latencyMs: Long?,
-    val speedKbps: Long?,
-    val errorCount: Int,
-    val bufferingCount: Int,
-    val lastProbeAtMs: Long,
-    val score: Int,
-    val sourceLabel: String? = null
-)
 
 data class CdnHostDiagnostic(
     val host: String,
@@ -283,6 +365,24 @@ private fun isAllowedCustomCdnUrl(url: String, allowedHosts: Set<String>): Boole
         (host == "bilivideo.com" || host.endsWith(".bilivideo.com") || host in allowedHosts)
 }
 
+internal fun selectPlaybackCdnCandidatesForMode(
+    customCandidates: List<PlaybackCdnCandidate>,
+    regionCandidates: List<PlaybackCdnCandidate>,
+    originalCandidates: List<PlaybackCdnCandidate>,
+    strictCustomCdn: Boolean,
+    healthByHost: Map<String, CdnCandidateHealth>
+): List<PlaybackCdnCandidate> {
+    val candidates = if (strictCustomCdn && customCandidates.isNotEmpty()) {
+        customCandidates
+    } else {
+        customCandidates + regionCandidates + originalCandidates
+    }
+    return sortPlaybackCdnCandidatesByHealth(
+        candidates = candidates.distinctBy { it.videoUrl to it.audioUrl },
+        healthByHost = healthByHost
+    )
+}
+
 internal fun sortPlaybackCdnCandidatesByHealth(
     candidates: List<PlaybackCdnCandidate>,
     healthByHost: Map<String, CdnCandidateHealth>
@@ -416,6 +516,7 @@ internal fun buildCdnLineDiagnostics(
         CdnLineDiagnostic(
             index = index,
             host = host.ifBlank { "未知线路" },
+            displayName = resolvePlaybackCdnDisplayName(host, index),
             statusLabel = resolveCdnHealthStatusLabel(health),
             latencyMs = health?.manualProbeLatencyMs,
             speedKbps = health?.manualProbeSpeedKbps,
@@ -427,6 +528,40 @@ internal fun buildCdnLineDiagnostics(
         )
     }
 }
+
+/** User-facing CDN names aligned with PiliPlus' playback CDN selector. */
+internal fun resolvePlaybackCdnDisplayName(host: String, index: Int): String {
+    val normalizedHost = host.lowercase()
+    return PILIPLUS_CDN_DISPLAY_NAMES[normalizedHost]
+        ?: when {
+            normalizedHost.contains("mcdn") -> "mcdn（Bilibili）"
+            normalizedHost.contains("bcache") -> "bcache（Bilibili）"
+            index == 0 -> "基础URL"
+            else -> "备用URL"
+        }
+}
+
+private val PILIPLUS_CDN_DISPLAY_NAMES = mapOf(
+    "upos-sz-mirrorali.bilivideo.com" to "ali（阿里云）",
+    "upos-sz-mirroralib.bilivideo.com" to "alib（阿里云）",
+    "upos-sz-mirroralio1.bilivideo.com" to "alio1（阿里云）",
+    "upos-sz-mirrorcos.bilivideo.com" to "cos（腾讯云）",
+    "upos-sz-mirrorcosb.bilivideo.com" to "cosb（腾讯云，VOD加速类型）",
+    "upos-sz-mirrorcoso1.bilivideo.com" to "coso1（腾讯云）",
+    "upos-sz-mirrorhw.bilivideo.com" to "hw（华为云，融合CDN）",
+    "upos-sz-mirrorhwb.bilivideo.com" to "hwb（华为云，融合CDN）",
+    "upos-sz-mirrorhwo1.bilivideo.com" to "hwo1（华为云，融合CDN）",
+    "upos-sz-mirror08c.bilivideo.com" to "08c（华为云，融合CDN）",
+    "upos-sz-mirror08h.bilivideo.com" to "08h（华为云，融合CDN）",
+    "upos-sz-mirror08ct.bilivideo.com" to "08ct（华为云，融合CDN）",
+    "upos-tf-all-hw.bilivideo.com" to "tf_hw（华为云）",
+    "upos-tf-all-tx.bilivideo.com" to "tf_tx（腾讯云）",
+    "upos-hz-mirrorakam.akamaized.net" to "akamai（Akamai海外）",
+    "upos-sz-mirroraliov.bilivideo.com" to "aliov（阿里云海外）",
+    "upos-sz-mirrorcosov.bilivideo.com" to "cosov（腾讯云海外）",
+    "upos-sz-mirrorhwov.bilivideo.com" to "hwov（华为云海外）",
+    "cn-hk-eq-bcache-01.bilivideo.com" to "hk_bcache（Bilibili海外）"
+)
 
 internal fun cdnCandidateSourceLabel(source: PlaybackCdnCandidateSource): String = when (source) {
     PlaybackCdnCandidateSource.CUSTOM -> "自定义"
@@ -611,16 +746,20 @@ private fun normalizeRegionName(value: String): String {
         .removeSuffix("市")
 }
 
-private fun rewriteBilivideoHost(url: String, newHost: String): String? {
+internal fun rewriteBilivideoHost(url: String, newHost: String): String? {
     val uri = runCatching { URI(url) }.getOrNull() ?: return null
     val originalHost = uri.host ?: return null
-    if (originalHost != "bilivideo.com" && !originalHost.endsWith(".bilivideo.com")) return null
+    if (originalHost.equals(newHost, ignoreCase = true)) return null
+    // 能否换 host 取决于路径：upgcxcode 的路径与签名在 host 之间通用。
+    // 不按域名白名单判断，否则 mountaintoys.cn / qrstuvwxyzab.com 这类 PCDN
+    // 和裸 IP 会被挡掉，设置里的线路就失效了。
+    val path = uri.rawPath.orEmpty()
+    if (!path.contains("/upgcxcode/") && !path.contains("/v1/resource")) return null
     if (newHost.isBlank()) return null
 
     val scheme = uri.scheme ?: return null
     val userInfo = uri.rawUserInfo?.let { "$it@" }.orEmpty()
     val port = if (uri.port >= 0) ":${uri.port}" else ""
-    val path = uri.rawPath.orEmpty()
     val query = uri.rawQuery?.let { "?$it" }.orEmpty()
     val fragment = uri.rawFragment?.let { "#$it" }.orEmpty()
     return "$scheme://$userInfo$newHost$port$path$query$fragment"

@@ -6,20 +6,31 @@ internal data class DynamicTabSpec(
     val logicalIndex: Int
 )
 
+internal data class DynamicPagerInvalidPageKey(
+    val page: Int
+)
+
 internal val allDynamicTabSpecs: List<DynamicTabSpec> = listOf(
     DynamicTabSpec(id = "all", title = "全部", logicalIndex = 0),
     DynamicTabSpec(id = "video", title = "投稿", logicalIndex = 1),
     DynamicTabSpec(id = "pgc", title = "番剧", logicalIndex = 2),
-    DynamicTabSpec(id = "article", title = "专栏", logicalIndex = 3),
-    DynamicTabSpec(id = "up", title = "UP", logicalIndex = 4)
+    DynamicTabSpec(id = "article", title = "专栏", logicalIndex = 3)
 )
 
 internal val defaultDynamicTabVisibleIds: Set<String> = allDynamicTabSpecs.map { it.id }.toSet()
 
 internal fun resolveDynamicVisibleTabs(
-    visibleTabIds: Set<String>
+    visibleTabIds: Set<String>,
+    tabOrder: List<String> = emptyList()
 ): List<DynamicTabSpec> {
-    val visibleTabs = allDynamicTabSpecs.filter { it.id in visibleTabIds }
+    val visibleTabs = allDynamicTabSpecs
+        .filter { it.id in visibleTabIds }
+        .sortedWith(
+            compareBy(
+                { spec -> tabOrder.indexOf(spec.id).takeIf { it >= 0 } ?: tabOrder.size },
+                { it.logicalIndex }
+            )
+        )
     return if (visibleTabs.isNotEmpty()) {
         visibleTabs
     } else {
@@ -72,17 +83,18 @@ internal fun shouldAllowDynamicTabVisibilityToggleOff(
     return !(targetTabId in currentVisibleTabIds && currentVisibleTabIds.size <= 1)
 }
 
-internal fun isDynamicUserTabVisible(
-    visibleTabs: List<DynamicTabSpec>
-): Boolean {
-    return visibleTabs.any { it.logicalIndex == 4 }
-}
-
 internal fun resolveDynamicSettledLogicalTab(
     settledPage: Int,
     visibleTabs: List<DynamicTabSpec>
 ): Int? {
     return visibleTabs.getOrNull(settledPage)?.logicalIndex
+}
+
+internal fun resolveDynamicPagerTabKey(
+    visibleTabs: List<DynamicTabSpec>,
+    page: Int
+): Any {
+    return visibleTabs.getOrNull(page)?.logicalIndex ?: DynamicPagerInvalidPageKey(page)
 }
 
 internal fun resolveDynamicPagerIndicatorPosition(
@@ -93,4 +105,20 @@ internal fun resolveDynamicPagerIndicatorPosition(
     if (pageCount <= 0) return 0f
     return (currentPage + currentPageOffsetFraction)
         .coerceIn(0f, (pageCount - 1).toFloat())
+}
+
+internal enum class DynamicTabReselectAction {
+    SWITCH_TAB,
+    SCROLL_TO_TOP
+}
+
+internal fun resolveDynamicTabReselectAction(
+    currentVisibleIndex: Int,
+    tappedVisibleIndex: Int
+): DynamicTabReselectAction {
+    return if (currentVisibleIndex == tappedVisibleIndex) {
+        DynamicTabReselectAction.SCROLL_TO_TOP
+    } else {
+        DynamicTabReselectAction.SWITCH_TAB
+    }
 }

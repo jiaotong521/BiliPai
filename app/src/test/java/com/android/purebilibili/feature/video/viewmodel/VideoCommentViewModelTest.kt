@@ -1,6 +1,5 @@
 package com.android.purebilibili.feature.video.viewmodel
 
-import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -95,16 +94,4 @@ class VideoCommentViewModelTest {
         )
     }
 
-    @Test
-    fun `sub reply loading uses rest pn paging and clears grpc offset`() {
-        val viewModelSource = File("src/main/java/com/android/purebilibili/feature/video/viewmodel/VideoCommentViewModel.kt")
-            .readText()
-        val repositorySource = File("src/main/java/com/android/purebilibili/data/repository/CommentRepository.kt")
-            .readText()
-
-        assertFalse(viewModelSource.contains("loadSubReplies(requestSubject, rootReply.rpid, 1, paginationOffset = null)"))
-        assertTrue(viewModelSource.contains("paginationOffset = paginationOffset"))
-        assertTrue(viewModelSource.contains("grpcNextOffset = null"))
-        assertTrue(repositorySource.contains("preferRestPaging: Boolean = true"))
-    }
 }

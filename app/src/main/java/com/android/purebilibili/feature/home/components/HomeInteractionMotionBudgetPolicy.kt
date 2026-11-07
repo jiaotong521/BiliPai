@@ -1,5 +1,7 @@
 package com.android.purebilibili.feature.home.components
 
+import com.android.purebilibili.core.ui.AppTopTabPresentation
+
 import kotlin.math.roundToInt
 
 internal const val HOME_HEADER_SECONDARY_BLUR_RESTORE_DELAY_MS = 120L
@@ -191,6 +193,57 @@ internal fun resolveMd3TopTabIndicatorTranslationPx(
     return indicatorCenterPx - rowScrollOffsetPx - (indicatorWidthPx / 2f)
 }
 
+internal data class Md3TopTabUnderlineBounds(
+    val translationXPx: Float,
+    val widthPx: Float,
+)
+
+/**
+ * PiliPlus-style elastic underline: while the pager crosses a tab boundary the underline
+ * temporarily spans the old and new tab centers, then contracts back to its resting width.
+ */
+internal fun resolveMd3TopTabUnderlineBounds(
+    absolutePagerPosition: Float,
+    itemWidthPx: Float,
+    rowScrollOffsetPx: Float,
+    indicatorWidthPx: Float,
+    contentPaddingPx: Float = 0f,
+): Md3TopTabUnderlineBounds {
+    val restingLeft = resolveMd3TopTabIndicatorTranslationPx(
+        absolutePagerPosition = absolutePagerPosition,
+        itemWidthPx = itemWidthPx,
+        rowScrollOffsetPx = rowScrollOffsetPx,
+        indicatorWidthPx = indicatorWidthPx,
+        contentPaddingPx = contentPaddingPx,
+    )
+    if (itemWidthPx <= 0f || indicatorWidthPx <= 0f) {
+        return Md3TopTabUnderlineBounds(restingLeft, indicatorWidthPx.coerceAtLeast(0f))
+    }
+
+    val transitionFraction = (
+        absolutePagerPosition - kotlin.math.floor(absolutePagerPosition)
+    ).coerceIn(0f, 1f)
+    // The leading edge gets ahead while the trailing edge catches up. Traversing the same
+    // geometry backwards automatically swaps their roles, so swipe direction needs no state.
+    val trailingEdgeProgress = 1f -
+        kotlin.math.cos(transitionFraction * Math.PI.toFloat() / 2f)
+    val leadingEdgeProgress =
+        kotlin.math.sin(transitionFraction * Math.PI.toFloat() / 2f)
+    val startTranslation = resolveMd3TopTabIndicatorTranslationPx(
+        absolutePagerPosition = kotlin.math.floor(absolutePagerPosition),
+        itemWidthPx = itemWidthPx,
+        rowScrollOffsetPx = rowScrollOffsetPx,
+        indicatorWidthPx = indicatorWidthPx,
+        contentPaddingPx = contentPaddingPx,
+    )
+    val stretchedWidth = indicatorWidthPx +
+        itemWidthPx * (leadingEdgeProgress - trailingEdgeProgress)
+    return Md3TopTabUnderlineBounds(
+        translationXPx = startTranslation + itemWidthPx * trailingEdgeProgress,
+        widthPx = stretchedWidth,
+    )
+}
+
 internal fun resolveIosTopTabCapsuleTranslationPx(
     absolutePagerPosition: Float,
     itemWidthPx: Float,
@@ -229,19 +282,87 @@ internal fun shouldAnimateIosTopTabCapsule(
 }
 
 internal fun shouldDrawLightweightTopTabItemContainer(
-    renderer: HomeTopTabRenderer,
+    presentation: AppTopTabPresentation,
     skinPlainStyle: Boolean,
     hasSkinStickerIcon: Boolean
 ): Boolean {
-    return renderer != HomeTopTabRenderer.IOS || skinPlainStyle || hasSkinStickerIcon
+    // Skin stickers keep per-item chrome. BiliPai moving indicator owns selection for
+    // MOVING_CAPSULE + TONAL_CAPSULE (Miuix) — never double-draw secondaryContainer pills.
+    if (skinPlainStyle || hasSkinStickerIcon) return true
+    return when (presentation) {
+        AppTopTabPresentation.MOVING_CAPSULE,
+        AppTopTabPresentation.TONAL_CAPSULE -> false
+        AppTopTabPresentation.MATERIAL_UNDERLINE -> true
+    }
 }
 
 internal fun shouldUseLightweightTopTabItemClickIndication(
-    renderer: HomeTopTabRenderer,
+    presentation: AppTopTabPresentation,
     skinPlainStyle: Boolean,
     usesCapsuleIndicator: Boolean
 ): Boolean {
     if (skinPlainStyle) return true
     if (usesCapsuleIndicator) return false
-    return renderer == HomeTopTabRenderer.MD3
+    return presentation == AppTopTabPresentation.MATERIAL_UNDERLINE
+}
+
+internal const val MD3_TOP_TAB_INDICATOR_DURATION_MILLIS =
+    com.android.purebilibili.core.ui.motion.AppTabIndicatorMotion.DurationMillis
+internal val Md3TopTabIndicatorFlutterEase = com.android.purebilibili.core.ui.motion.AppTabIndicatorMotion.ease
+internal val Md3TopTabIndicatorDecelerate = com.android.purebilibili.core.ui.motion.AppTabIndicatorMotion.decelerate
+internal val Md3TopTabIndicatorAccelerate = com.android.purebilibili.core.ui.motion.AppTabIndicatorMotion.accelerate
+
+internal fun shouldAnimateMd3TopTabUnderline(
+    pagerIsDragging: Boolean,
+    topTabIndicatorOwnsPosition: Boolean,
+    pagerDrivesIndicator: Boolean = false,
+): Boolean {
+    return !pagerDrivesIndicator && !pagerIsDragging && !topTabIndicatorOwnsPosition
+}
+
+internal data class Md3TopTabTargetBounds(
+    val leftPx: Float,
+    val rightPx: Float,
+)
+
+internal fun resolveMd3TopTabTargetBounds(
+    targetIndex: Int,
+    itemWidthPx: Float,
+    indicatorWidthPx: Float,
+    contentPaddingPx: Float = 0f,
+): Md3TopTabTargetBounds {
+    if (itemWidthPx <= 0f || indicatorWidthPx <= 0f) {
+        return Md3TopTabTargetBounds(contentPaddingPx, contentPaddingPx)
+    }
+    val centerPx = contentPaddingPx + (targetIndex * itemWidthPx) + (itemWidthPx / 2f)
+    val halfW = indicatorWidthPx / 2f
+    return Md3TopTabTargetBounds(
+        leftPx = centerPx - halfW,
+        rightPx = centerPx + halfW,
+    )
+}
+
+internal fun resolveMd3TopTabUnderlineTapBounds(
+    animatedLeftPx: Float,
+    animatedRightPx: Float,
+    rowScrollOffsetPx: Float,
+): Md3TopTabUnderlineBounds {
+    return Md3TopTabUnderlineBounds(
+        translationXPx = animatedLeftPx - rowScrollOffsetPx,
+        widthPx = (animatedRightPx - animatedLeftPx).coerceAtLeast(0f),
+    )
+}
+
+internal fun resolveMd3TopTabTapContentPosition(
+    animatedLeftPx: Float,
+    animatedRightPx: Float,
+    itemWidthPx: Float,
+    contentPaddingPx: Float,
+    fallbackIndex: Int,
+    categoryCount: Int,
+): Float {
+    if (itemWidthPx <= 0f || categoryCount <= 0) return fallbackIndex.toFloat()
+    val centerPx = (animatedLeftPx + animatedRightPx) / 2f
+    val position = (centerPx - contentPaddingPx - itemWidthPx / 2f) / itemWidthPx
+    return position.coerceIn(0f, (categoryCount - 1).toFloat())
 }

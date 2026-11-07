@@ -7,16 +7,7 @@ import kotlin.test.assertTrue
 
 class DynamicVideoCardSharedTransitionStructureTest {
 
-    @Test
-    fun dynamicVideoCard_usesWholeCardShellSharedBounds() {
-        val source = File("src/main/java/com/android/purebilibili/feature/dynamic/components/VideoCards.kt")
-            .readText()
 
-        assertTrue(source.contains("videoCardShellSharedBoundsOrEmpty("))
-        assertTrue(source.contains("sourceRoute = sourceRoute"))
-        assertTrue(source.contains("VideoCardLargeCover("))
-        assertFalse(source.contains("videoTitleSharedElementKey("))
-    }
 
     @Test
     fun dynamicVideoCard_recordsCoverBoundsForReturnTarget() {
@@ -29,6 +20,20 @@ class DynamicVideoCardSharedTransitionStructureTest {
     }
 
     @Test
+    fun dynamicVideoCard_durationUsesCoverOverlayShadowNotCapsule() {
+        val source = File("src/main/java/com/android/purebilibili/feature/dynamic/components/VideoCards.kt")
+            .readText()
+
+        assertTrue(source.contains("resolveVideoCardCoverOverlayTextShadow()"))
+        assertTrue(source.contains("feedContentTypography().coverBadge"))
+        assertFalse(source.contains("MediaContrastPalette.Scrim.copy(alpha = 0.45f)"))
+        assertTrue(source.contains("resolveAppTvIcon()"))
+        assertTrue(source.contains("tint = MaterialTheme.colorScheme.onPrimaryContainer"))
+        assertFalse(source.contains("rememberAppPlayIcon()"))
+        assertFalse(source.contains("CircleShape"))
+    }
+
+    @Test
     fun dynamicVideoCard_obeysGlobalSharedTransitionSwitch() {
         val source = File("src/main/java/com/android/purebilibili/feature/dynamic/components/VideoCards.kt")
             .readText()
@@ -36,5 +41,17 @@ class DynamicVideoCardSharedTransitionStructureTest {
         assertTrue(source.contains("val sharedTransitionEnabled = LocalSharedTransitionEnabled.current"))
         assertTrue(source.contains("val sharedElementReady = sharedTransitionEnabled &&"))
         assertTrue(source.contains("transitionEnabled = sharedTransitionEnabled"))
+    }
+
+    @Test
+    fun dynamicVideoCard_freezesCoverChromeForReturn() {
+        val source = File("src/main/java/com/android/purebilibili/feature/dynamic/components/VideoCards.kt")
+            .readText()
+
+        assertTrue(source.contains("showGradientMask = true"))
+        assertTrue(source.contains("showStatsOnCover = true"))
+        assertTrue(source.contains("showSecondaryStatOnCover = true"))
+        assertTrue(source.contains("showDurationOnCover = true"))
+        assertTrue(source.contains("showStatsInInfo = false"))
     }
 }

@@ -1,8 +1,15 @@
 package com.android.purebilibili.feature.video.ui.components
 
-import android.graphics.drawable.BitmapDrawable
+import com.android.purebilibili.core.ui.MediaContrastPalette
+
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+
+import coil3.request.crossfade
+
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
@@ -13,9 +20,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import com.android.purebilibili.core.ui.components.AppText
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -35,11 +44,14 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImagePainter
-import coil.compose.rememberAsyncImagePainter
-import coil.request.CachePolicy
-import coil.request.ImageRequest
-import coil.size.Size
+import coil3.compose.AsyncImagePainter
+import coil3.compose.rememberAsyncImagePainter
+import coil3.request.CachePolicy
+import coil3.request.ImageRequest
+import coil3.size.Size
+import com.android.purebilibili.core.ui.AppShapes
+import com.android.purebilibili.core.ui.ContainerLevel
+import com.android.purebilibili.core.ui.components.AppSurface
 import com.android.purebilibili.core.util.FormatUtils
 import com.android.purebilibili.data.model.response.VideoshotData
 import kotlin.math.roundToInt
@@ -54,6 +66,14 @@ internal enum class SeekPreviewBubblePlacement {
     Centered
 }
 
+internal const val PORTRAIT_SEEK_PREVIEW_ASPECT_RATIO = 9f / 16f
+
+/** 借鉴 PiliPlus compatHeight：预览高度不得超过播放区高度减去该安全边距。 */
+internal const val SEEK_PREVIEW_CONTAINER_MARGIN_DP = 140
+
+/** 剩余空间低于该值时仅显示时间，避免缩略图越界或变成不可读的小条。 */
+internal const val SEEK_PREVIEW_MIN_HEIGHT_CAP_DP = 120
+
 private data class SeekPreviewBubbleStyle(
     val widthDp: Int,
     val heightDp: Int,
@@ -65,6 +85,93 @@ private data class SeekPreviewBubbleStyle(
     val timeFontSp: Int,
     val deltaFontSp: Int
 )
+
+internal data class CompactSeekPreviewSize(
+    val widthDp: Int,
+    val heightDp: Int
+)
+
+internal data class SeekPreviewSourceCrop(
+    val offsetX: Int,
+    val offsetY: Int,
+    val width: Int,
+    val height: Int
+)
+
+internal fun resolveCompactSeekPreviewSize(
+    sourceWidthPx: Int,
+    sourceHeightPx: Int,
+    screenWidthDp: Int,
+    videoAspectRatio: Float? = null,
+    containerHeightDp: Int? = null
+): CompactSeekPreviewSize {
+    val safeWidth = sourceWidthPx.coerceAtLeast(1)
+    val safeHeight = sourceHeightPx.coerceAtLeast(1)
+    val sourceAspectRatio = safeWidth.toFloat() / safeHeight.toFloat()
+    val effectiveAspectRatio = videoAspectRatio
+        ?.takeIf { it.isFinite() && it > 0f }
+        ?: sourceAspectRatio
+    val scale = when {
+        screenWidthDp >= 840 -> 1.2f
+        screenWidthDp >= 600 -> 1.1f
+        else -> 1f
+    }
+    val isPortraitVideo = effectiveAspectRatio < 1f
+    val baseWidthDp = if (isPortraitVideo) 120 else 144
+    val widthDp = (baseWidthDp * scale).roundToInt().coerceAtMost((screenWidthDp - 32).coerceAtLeast(1))
+    val minHeightDp = ((if (isPortraitVideo) 144 else 72) * scale).roundToInt()
+    val maxHeightDp = ((if (isPortraitVideo) 224 else 164) * scale).roundToInt()
+    var heightDp = (widthDp / effectiveAspectRatio)
+        .roundToInt()
+        .coerceIn(minHeightDp, maxHeightDp)
+    val maxHeightCapDp = containerHeightDp
+        ?.takeIf { it > 0 }
+        ?.let { it - SEEK_PREVIEW_CONTAINER_MARGIN_DP }
+    if (maxHeightCapDp != null) {
+        heightDp = if (maxHeightCapDp < SEEK_PREVIEW_MIN_HEIGHT_CAP_DP) 0
+            else heightDp.coerceAtMost(maxHeightCapDp)
+    }
+    return CompactSeekPreviewSize(widthDp = widthDp, heightDp = heightDp)
+}
+
+internal fun resolveSeekPreviewSourceCrop(
+    sourceWidthPx: Int,
+    sourceHeightPx: Int,
+    videoAspectRatio: Float?
+): SeekPreviewSourceCrop {
+    val safeWidth = sourceWidthPx.coerceAtLeast(1)
+    val safeHeight = sourceHeightPx.coerceAtLeast(1)
+    val targetAspectRatio = videoAspectRatio
+        ?.takeIf { it.isFinite() && it >= 0.1f && it < 1f }
+        ?: return SeekPreviewSourceCrop(
+            offsetX = 0,
+            offsetY = 0,
+            width = safeWidth,
+            height = safeHeight
+        )
+    val sourceAspectRatio = safeWidth.toFloat() / safeHeight.toFloat()
+    if (sourceAspectRatio > targetAspectRatio) {
+        val cropWidth = (safeHeight * targetAspectRatio)
+            .roundToInt()
+            .coerceIn(1, safeWidth)
+        return SeekPreviewSourceCrop(
+            offsetX = ((safeWidth - cropWidth) / 2f).roundToInt(),
+            offsetY = 0,
+            width = cropWidth,
+            height = safeHeight
+        )
+    }
+
+    val cropHeight = (safeWidth / targetAspectRatio)
+        .roundToInt()
+        .coerceIn(1, safeHeight)
+    return SeekPreviewSourceCrop(
+        offsetX = 0,
+        offsetY = ((safeHeight - cropHeight) / 2f).roundToInt(),
+        width = safeWidth,
+        height = cropHeight
+    )
+}
 
 private fun resolveSeekPreviewBubbleStyle(widthDp: Int): SeekPreviewBubbleStyle {
     return when {
@@ -102,6 +209,16 @@ private fun resolveSeekPreviewBubbleStyle(widthDp: Int): SeekPreviewBubbleStyle 
             deltaFontSp = 12
         )
     }
+}
+
+internal fun resolveSeekPreviewBubbleHeightDp(
+    screenWidthDp: Int,
+    containerHeightDp: Int = Int.MAX_VALUE,
+): Int {
+    val preferred = resolveSeekPreviewBubbleStyle(screenWidthDp).heightDp
+    if (containerHeightDp <= 0) return preferred
+    val available = containerHeightDp - SEEK_PREVIEW_CONTAINER_MARGIN_DP
+    return if (available < 72) 0 else minOf(preferred, available)
 }
 
 internal fun resolveSeekPreviewBubbleOffsetPx(
@@ -171,13 +288,28 @@ internal fun SeekPreviewBubble(
     offsetX: Float,
     containerWidth: Float,
     placement: SeekPreviewBubblePlacement = SeekPreviewBubblePlacement.Anchored,
+    containerHeightDp: Int? = null,
     modifier: Modifier = Modifier
 ) {
     val configuration = LocalConfiguration.current
     val style = remember(configuration.screenWidthDp) {
         resolveSeekPreviewBubbleStyle(configuration.screenWidthDp)
     }
-    val bubbleWidthPx = with(LocalDensity.current) { style.widthDp.dp.toPx() }
+    val previewHeightDp = resolveSeekPreviewBubbleHeightDp(
+        configuration.screenWidthDp, containerHeightDp ?: configuration.screenHeightDp,
+    )
+    if (previewHeightDp == 0) {
+        SeekPreviewBubbleSimple(
+            targetPositionMs, currentPositionMs, offsetX, containerWidth, placement, modifier,
+        )
+        return
+    }
+    val density = LocalDensity.current
+    val availableWidthDp = if (containerWidth > 0f) with(density) { containerWidth.toDp().value }
+        else (configuration.screenWidthDp - 32).coerceAtLeast(1).toFloat()
+    val previewWidthDp = minOf(style.widthDp.toFloat(), availableWidthDp,
+        previewHeightDp * style.widthDp.toFloat() / style.heightDp).coerceAtLeast(1f)
+    val bubbleWidthPx = with(density) { previewWidthDp.dp.toPx() }
     val bubbleOffsetX = remember(placement, offsetX, containerWidth, bubbleWidthPx) {
         resolveSeekPreviewBubbleOffsetPx(
             placement = placement,
@@ -197,7 +329,7 @@ internal fun SeekPreviewBubble(
         videoshotData?.getPreviewInfo(previewAnchorPositionMs, durationMs)
     }
 
-    Surface(
+    AppSurface(
         color = Color.Black.copy(alpha = 0.92f),
         shape = RoundedCornerShape(style.cornerRadiusDp.dp),
         shadowElevation = style.shadowElevationDp.dp,
@@ -209,8 +341,11 @@ internal fun SeekPreviewBubble(
                     Modifier
                 }
             )
-            .width(style.widthDp.dp)
-            .height(style.heightDp.dp)
+            .sizeIn(maxWidth = previewWidthDp.dp, maxHeight = previewHeightDp.dp)
+            .aspectRatio(
+                ratio = style.widthDp.toFloat() / style.heightDp,
+                matchHeightConstraintsFirst = true
+            )
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             SeekPreviewImage(
@@ -248,21 +383,108 @@ internal fun SeekPreviewBubble(
     }
 }
 
+/** 竖屏拖动样式：小预览图独立显示，时间位于图片下方。 */
+@Composable
+internal fun CompactSeekPreview(
+    videoshotData: VideoshotData,
+    targetPositionMs: Long,
+    durationMs: Long,
+    videoAspectRatio: Float? = null,
+    containerHeightDp: Int? = null,
+    modifier: Modifier = Modifier
+) {
+    val configuration = LocalConfiguration.current
+    val availableHeightDp = containerHeightDp ?: configuration.screenHeightDp
+    val previewSize = remember(
+        videoshotData.img_x_size,
+        videoshotData.img_y_size,
+        configuration.screenWidthDp,
+        videoAspectRatio,
+        availableHeightDp
+    ) {
+        resolveCompactSeekPreviewSize(
+            sourceWidthPx = videoshotData.img_x_size,
+            sourceHeightPx = videoshotData.img_y_size,
+            screenWidthDp = configuration.screenWidthDp,
+            videoAspectRatio = videoAspectRatio,
+            containerHeightDp = availableHeightDp
+        )
+    }
+    val previewAnchorPositionMs = remember(videoshotData, targetPositionMs, durationMs) {
+        resolveSeekPreviewAnchorPositionMs(
+            videoshotData = videoshotData,
+            targetPositionMs = targetPositionMs,
+            durationMs = durationMs
+        )
+    }
+    val currentPreviewInfo = remember(videoshotData, previewAnchorPositionMs, durationMs) {
+        videoshotData.getPreviewInfo(previewAnchorPositionMs, durationMs)
+    }
+    val previewShape = AppShapes.container(ContainerLevel.Field)
+
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        if (previewSize.heightDp > 0) {
+            AppSurface(
+                color = Color.Black.copy(alpha = 0.9f),
+                shape = previewShape,
+                shadowElevation = 8.dp,
+                modifier = Modifier
+                    .width(previewSize.widthDp.dp)
+                    .height(previewSize.heightDp.dp)
+                    .border(1.dp, Color.White.copy(alpha = 0.78f), previewShape)
+                    .clip(previewShape)
+            ) {
+                SeekPreviewImage(
+                    videoshotData = videoshotData,
+                    currentPreviewInfo = currentPreviewInfo,
+                    videoAspectRatio = videoAspectRatio,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            val shadow = Shadow(
+                color = Color.Black.copy(alpha = 0.65f),
+                offset = Offset(0f, 1.2f),
+                blurRadius = 4f
+            )
+            AppText(
+                text = FormatUtils.formatDuration((targetPositionMs / 1000L).toInt()),
+                color = Color.White,
+                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleMedium.copy(shadow = shadow)
+            )
+            AppText(
+                text = " / ${FormatUtils.formatDuration((durationMs / 1000L).toInt())}",
+                color = Color.White.copy(alpha = 0.62f),
+                fontWeight = FontWeight.Medium,
+                style = MaterialTheme.typography.titleMedium.copy(shadow = shadow)
+            )
+        }
+    }
+}
+
 @Composable
 private fun SeekPreviewImage(
     videoshotData: VideoshotData?,
     currentPreviewInfo: Triple<String, Int, Int>?,
+    videoAspectRatio: Float? = null,
     modifier: Modifier = Modifier
 ) {
     if (currentPreviewInfo == null || videoshotData == null) {
         Box(
-            modifier = modifier.background(Color(0xFF101010)),
+            modifier = modifier.background(MediaContrastPalette.ControlSurface),
             contentAlignment = Alignment.Center
         ) {
-            Text(
+            AppText(
                 text = "预览加载中",
-                color = Color.White.copy(alpha = 0.72f),
-                fontSize = 12.sp
+                color = MediaContrastPalette.SecondaryForeground,
+                style = MaterialTheme.typography.bodySmall
             )
         }
         return
@@ -271,48 +493,61 @@ private fun SeekPreviewImage(
     val context = LocalContext.current
     val (rawImageUrl, spriteOffsetX, spriteOffsetY) = currentPreviewInfo
     val imageUrl = if (rawImageUrl.startsWith("//")) "https:$rawImageUrl" else rawImageUrl
-    val painter = rememberAsyncImagePainter(
-        model = ImageRequest.Builder(context)
+    val imageRequest = remember(context, imageUrl) {
+        ImageRequest.Builder(context)
             .data(imageUrl)
             .size(Size.ORIGINAL)
             .crossfade(false)
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
-            .build(),
+            .build()
+    }
+    val painter = rememberAsyncImagePainter(
+        model = imageRequest,
         contentScale = ContentScale.Crop
     )
 
-    when (val painterState = painter.state) {
+    val currentPainterState by painter.state.collectAsState()
+    when (val painterState = currentPainterState) {
         is AsyncImagePainter.State.Loading -> {
             Box(
-                modifier = modifier.background(Color(0xFF1A1A1A)),
+                modifier = modifier.background(MediaContrastPalette.ControlSurface),
                 contentAlignment = Alignment.Center
             ) {
-                Text(text = "...", color = Color.White, fontSize = 13.sp)
+                AppText(text = "...", color = Color.White, style = MaterialTheme.typography.bodySmall)
             }
         }
         is AsyncImagePainter.State.Error -> {
             Box(
-                modifier = modifier.background(Color(0xFF1A1A1A)),
+                modifier = modifier.background(MediaContrastPalette.ControlSurface),
                 contentAlignment = Alignment.Center
             ) {
-                Text(text = "预览不可用", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                AppText(text = "预览不可用", color = MediaContrastPalette.SecondaryForeground, style = MaterialTheme.typography.bodySmall)
             }
         }
         is AsyncImagePainter.State.Success -> {
             Canvas(modifier = modifier) {
-                val bitmap = (painterState.result.drawable as? BitmapDrawable)?.bitmap ?: return@Canvas
+                val bitmap = (painterState.result.image as? coil3.BitmapImage)?.bitmap ?: return@Canvas
 
                 val expectedWidth = (videoshotData.img_x_size * videoshotData.img_x_len).coerceAtLeast(1)
                 val expectedHeight = (videoshotData.img_y_size * videoshotData.img_y_len).coerceAtLeast(1)
                 val scaleX = bitmap.width.toFloat() / expectedWidth.toFloat()
                 val scaleY = bitmap.height.toFloat() / expectedHeight.toFloat()
-                val cropOffsetX = (spriteOffsetX * scaleX).roundToInt().coerceAtLeast(0)
-                val cropOffsetY = (spriteOffsetY * scaleY).roundToInt().coerceAtLeast(0)
-                val cropWidth = (videoshotData.img_x_size * scaleX)
+                val sourceCrop = resolveSeekPreviewSourceCrop(
+                    sourceWidthPx = videoshotData.img_x_size,
+                    sourceHeightPx = videoshotData.img_y_size,
+                    videoAspectRatio = videoAspectRatio
+                )
+                val cropOffsetX = ((spriteOffsetX + sourceCrop.offsetX) * scaleX)
+                    .roundToInt()
+                    .coerceAtLeast(0)
+                val cropOffsetY = ((spriteOffsetY + sourceCrop.offsetY) * scaleY)
+                    .roundToInt()
+                    .coerceAtLeast(0)
+                val cropWidth = (sourceCrop.width * scaleX)
                     .roundToInt()
                     .coerceIn(1, (bitmap.width - cropOffsetX).coerceAtLeast(1))
-                val cropHeight = (videoshotData.img_y_size * scaleY)
+                val cropHeight = (sourceCrop.height * scaleY)
                     .roundToInt()
                     .coerceIn(1, (bitmap.height - cropOffsetY).coerceAtLeast(1))
                 val destinationRect = resolveSeekPreviewDestinationRect(
@@ -359,7 +594,7 @@ private fun BoxScope.SeekPreviewTimeLabel(
             offset = Offset(0f, 1.2f),
             blurRadius = 4f
         )
-        Text(
+        AppText(
             text = FormatUtils.formatDuration((targetPositionMs / 1000L).toInt()),
             color = Color.White,
             fontSize = timeFontSp.sp,
@@ -370,9 +605,9 @@ private fun BoxScope.SeekPreviewTimeLabel(
         val deltaSeconds = (targetPositionMs - currentPositionMs) / 1000L
         if (deltaSeconds != 0L) {
             Spacer(modifier = Modifier.width(6.dp))
-            Text(
+            AppText(
                 text = if (deltaSeconds > 0L) "+${deltaSeconds}s" else "${deltaSeconds}s",
-                color = if (deltaSeconds > 0L) Color(0xFF8CD48C) else Color(0xFFFF8A80),
+                color = com.android.purebilibili.core.ui.MediaContrastPalette.Foreground,
                 fontSize = deltaFontSp.sp,
                 fontWeight = FontWeight.Medium,
                 style = androidx.compose.ui.text.TextStyle(shadow = shadow)
@@ -394,7 +629,11 @@ internal fun SeekPreviewBubbleSimple(
     val style = remember(configuration.screenWidthDp) {
         resolveSeekPreviewBubbleStyle(configuration.screenWidthDp)
     }
-    val bubbleWidthPx = with(LocalDensity.current) { style.fallbackWidthDp.dp.toPx() }
+    val density = LocalDensity.current
+    val availableWidthDp = if (containerWidth > 0f) with(density) { containerWidth.toDp().value }
+        else (configuration.screenWidthDp - 32).coerceAtLeast(1).toFloat()
+    val bubbleWidthDp = minOf(style.fallbackWidthDp.toFloat(), availableWidthDp).coerceAtLeast(1f)
+    val bubbleWidthPx = with(density) { bubbleWidthDp.dp.toPx() }
     val bubbleOffsetX = remember(placement, offsetX, containerWidth, bubbleWidthPx) {
         resolveSeekPreviewBubbleOffsetPx(
             placement = placement,
@@ -404,7 +643,7 @@ internal fun SeekPreviewBubbleSimple(
         )
     }
 
-    Surface(
+    AppSurface(
         color = Color.Black.copy(alpha = 0.9f),
         shape = RoundedCornerShape(style.cornerRadiusDp.dp),
         shadowElevation = style.shadowElevationDp.dp,
@@ -416,7 +655,7 @@ internal fun SeekPreviewBubbleSimple(
                     Modifier
                 }
             )
-            .width(style.fallbackWidthDp.dp)
+            .width(bubbleWidthDp.dp)
     ) {
         Column(
             modifier = Modifier.padding(
@@ -425,7 +664,7 @@ internal fun SeekPreviewBubbleSimple(
             ),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(
+            AppText(
                 text = FormatUtils.formatDuration((targetPositionMs / 1000L).toInt()),
                 color = Color.White,
                 fontSize = style.timeFontSp.sp,
@@ -435,9 +674,9 @@ internal fun SeekPreviewBubbleSimple(
             val deltaSeconds = (targetPositionMs - currentPositionMs) / 1000L
             if (deltaSeconds != 0L) {
                 Spacer(modifier = Modifier.height(2.dp))
-                Text(
+                AppText(
                     text = if (deltaSeconds > 0L) "+${deltaSeconds}s" else "${deltaSeconds}s",
-                    color = if (deltaSeconds > 0L) Color(0xFF8CD48C) else Color(0xFFFF8A80),
+                    color = com.android.purebilibili.core.ui.MediaContrastPalette.Foreground,
                     fontSize = style.deltaFontSp.sp,
                     fontWeight = FontWeight.Medium
                 )

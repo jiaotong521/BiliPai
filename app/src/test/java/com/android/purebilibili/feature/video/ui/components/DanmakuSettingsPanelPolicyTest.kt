@@ -2,6 +2,7 @@ package com.android.purebilibili.feature.video.ui.components
 
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.ui.graphics.luminance
 import com.android.purebilibili.core.store.DanmakuPanelWidthMode
 import com.android.purebilibili.feature.video.danmaku.DanmakuCloudSyncStatus
 import com.android.purebilibili.feature.video.danmaku.DanmakuCloudSyncUiState
@@ -26,13 +27,13 @@ class DanmakuSettingsPanelPolicyTest {
             DanmakuSettingsPanelPresentation.BottomSheet,
             policy.presentation
         )
-        assertEquals(16, policy.horizontalPaddingDp)
-        assertEquals(20, policy.bottomPaddingDp)
-        assertTrue(policy.maxWidthDp >= 520)
+        assertEquals(12, policy.horizontalPaddingDp)
+        assertEquals(12, policy.bottomPaddingDp)
+        assertEquals(411, policy.maxWidthDp)
     }
 
     @Test
-    fun fullscreenPanelKeepsCenteredDialogPresentation() {
+    fun landscapeFullscreenPanelUsesRightSheet() {
         val policy = resolveDanmakuSettingsPanelLayoutPolicy(
             isFullscreen = true,
             screenWidthDp = 915,
@@ -43,8 +44,8 @@ class DanmakuSettingsPanelPolicyTest {
             DanmakuSettingsPanelPresentation.CenteredDialog,
             policy.presentation
         )
-        assertEquals(0, policy.bottomPaddingDp)
-        assertEquals(480, policy.maxHeightDp)
+        assertEquals(12, policy.bottomPaddingDp)
+        assertEquals(387, policy.maxHeightDp)
         assertEquals(
             DanmakuSettingsPanelAnchor.End,
             policy.anchor
@@ -52,7 +53,7 @@ class DanmakuSettingsPanelPolicyTest {
     }
 
     @Test
-    fun fullscreenPanelWidthMode_isFixedToQuarterWidth() {
+    fun fullscreenPanelWidth_isNarrowSideRail() {
         val fullWidth = resolveDanmakuSettingsPanelLayoutPolicy(
             isFullscreen = true,
             screenWidthDp = 915,
@@ -72,13 +73,15 @@ class DanmakuSettingsPanelPolicyTest {
             fullscreenWidthMode = DanmakuPanelWidthMode.THIRD
         )
 
-        assertEquals(221, fullWidth.maxWidthDp)
-        assertEquals(221, halfWidth.maxWidthDp)
-        assertEquals(221, thirdWidth.maxWidthDp)
+        assertEquals(fullWidth.maxWidthDp, halfWidth.maxWidthDp)
+        assertEquals(fullWidth.maxWidthDp, thirdWidth.maxWidthDp)
+        assertEquals(457, fullWidth.maxWidthDp)
+        assertEquals(0, fullWidth.minWidthDp)
+        assertEquals(DanmakuSettingsPanelAnchor.End, fullWidth.anchor)
     }
 
     @Test
-    fun wideTabletInlinePanel_usesCenteredDialogInsteadOfFullWidthSheet() {
+    fun landscapeInlinePanelUsesSameRightSheetAsFullscreen() {
         val policy = resolveDanmakuSettingsPanelLayoutPolicy(
             isFullscreen = false,
             screenWidthDp = 1280,
@@ -89,9 +92,9 @@ class DanmakuSettingsPanelPolicyTest {
             DanmakuSettingsPanelPresentation.CenteredDialog,
             policy.presentation
         )
-        assertEquals(640, policy.maxWidthDp)
-        assertEquals(0, policy.bottomPaddingDp)
-        assertEquals(DanmakuSettingsPanelAnchor.Center, policy.anchor)
+        assertEquals(512, policy.maxWidthDp)
+        assertEquals(12, policy.bottomPaddingDp)
+        assertEquals(DanmakuSettingsPanelAnchor.End, policy.anchor)
     }
 
     @Test
@@ -106,26 +109,50 @@ class DanmakuSettingsPanelPolicyTest {
     }
 
     @Test
+    fun orientationNotFullscreenDeterminesSheetAnchor() {
+        for (fullscreen in listOf(false, true)) {
+            val portrait = resolveDanmakuSettingsPanelLayoutPolicy(fullscreen, 411, 915)
+            val landscape = resolveDanmakuSettingsPanelLayoutPolicy(fullscreen, 915, 411)
+            assertEquals(DanmakuSettingsPanelAnchor.Bottom, portrait.anchor)
+            assertEquals(DanmakuSettingsPanelAnchor.End, landscape.anchor)
+            assertTrue(portrait.maxWidthDp <= 411)
+            assertTrue(landscape.maxWidthDp <= 915)
+            assertTrue(portrait.maxHeightDp < 915)
+            assertTrue(landscape.maxHeightDp < 411)
+        }
+    }
+
+    @Test
+    fun shortViewportNeverForcesContentBeyondWindow() {
+        val policy = resolveDanmakuSettingsPanelLayoutPolicy(true, 640, 240)
+        assertEquals(216, policy.maxHeightDp)
+        assertTrue(policy.maxWidthDp <= 640)
+    }
+
+    @Test
     fun fullscreenPanelSurfaceColors_followDarkThemeTokens() {
+        val darkScheme = darkColorScheme()
         val colors = resolveDanmakuSettingsPanelSurfaceColors(
-            colorScheme = darkColorScheme()
+            colorScheme = darkScheme
         )
 
-        assertTrue(colors.panelColor.alpha > 0.9f)
-        assertTrue(colors.itemColor.alpha < colors.panelColor.alpha)
+        assertTrue(colors.panelColor.luminance() < 0.5f)
+        assertTrue(colors.titleColor.luminance() > colors.panelColor.luminance())
         assertTrue(colors.titleColor.alpha > colors.supportingColor.alpha)
+        assertEquals(darkScheme.primary, colors.sliderActiveTrackColor)
     }
 
     @Test
     fun fullscreenPanelSurfaceColors_followLightThemeTokens() {
+        val lightScheme = lightColorScheme()
         val colors = resolveDanmakuSettingsPanelSurfaceColors(
-            colorScheme = lightColorScheme()
+            colorScheme = lightScheme
         )
 
-        assertTrue(colors.panelColor.alpha > 0.9f)
-        assertTrue(colors.panelColor.red > 0.85f)
+        assertTrue(colors.panelColor.luminance() > 0.5f)
+        assertTrue(colors.titleColor.luminance() < colors.panelColor.luminance())
         assertTrue(colors.titleColor.alpha > colors.supportingColor.alpha)
-        assertTrue(colors.sliderInactiveTickColor.alpha < colors.sliderActiveTickColor.alpha)
+        assertEquals(lightScheme.primary, colors.sliderThumbColor)
     }
 
     @Test

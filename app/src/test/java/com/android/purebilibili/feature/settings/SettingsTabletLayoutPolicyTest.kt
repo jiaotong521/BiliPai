@@ -58,8 +58,10 @@ class SettingsTabletLayoutPolicyTest {
             File("src/main/java/com/android/purebilibili/feature/settings/screen/SettingsTabletShell.kt")
         ).first { it.exists() }.readText()
 
-        assertTrue(source.contains("AdaptiveSplitLayout("))
+        assertTrue(source.contains("AppSplitLayout("))
         assertTrue(source.contains("LazyColumn("))
         assertTrue(source.contains("rightPane"))
+        assertTrue(source.contains("if (!selected)"))
+        assertTrue(source.contains("onCategoryClick(category)"))
     }
 }

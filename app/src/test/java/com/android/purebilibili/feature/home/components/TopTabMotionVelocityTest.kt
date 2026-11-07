@@ -1,6 +1,7 @@
 package com.android.purebilibili.feature.home.components
 
 import androidx.compose.ui.graphics.Color
+import com.android.purebilibili.core.ui.AppTopTabPresentation
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -56,6 +57,39 @@ class TopTabMotionVelocityTest {
         )
 
         assertEquals(12f, velocity, 0.001f)
+    }
+
+    @Test
+    fun `segmented pager matches home velocity cap`() {
+        val velocity = resolveSegmentedControlExternalPagerVelocityItemsPerSecond(
+            currentPosition = 1f,
+            previousPosition = 0f,
+            elapsedNanos = 50_000_000L,
+        )
+
+        assertEquals(12f, velocity, 0.001f)
+    }
+
+    @Test
+    fun `segmented pager stretches during travel and releases at destination`() {
+        assertTrue(
+            shouldStretchSegmentedControlExternalPagerIndicator(
+                position = 0.45f,
+                externalPagerMotionActive = true,
+            )
+        )
+        assertFalse(
+            shouldStretchSegmentedControlExternalPagerIndicator(
+                position = 1f,
+                externalPagerMotionActive = true,
+            )
+        )
+        assertFalse(
+            shouldStretchSegmentedControlExternalPagerIndicator(
+                position = 0.45f,
+                externalPagerMotionActive = false,
+            )
+        )
     }
 
     @Test
@@ -227,58 +261,74 @@ class TopTabMotionVelocityTest {
     }
 
     @Test
-    fun `top tab long press drag only starts inside visible indicator bounds`() {
-        val inside = shouldStartTopTabIndicatorLongPressDrag(
-            pointerX = 134f,
-            indicatorPosition = 2f,
-            itemWidthPx = 72f,
-            rowScrollOffsetPx = 64f,
-            contentPaddingPx = 2f,
-            indicatorWidthPx = 56f
-        )
-        val outside = shouldStartTopTabIndicatorLongPressDrag(
-            pointerX = 80f,
-            indicatorPosition = 2f,
-            itemWidthPx = 72f,
-            rowScrollOffsetPx = 64f,
-            contentPaddingPx = 2f,
-            indicatorWidthPx = 56f
-        )
-
-        assertEquals(true, inside)
-        assertEquals(false, outside)
-    }
-
-    @Test
-    fun `top tab indicator hit bounds account for row scroll offset`() {
-        val indicatorLeft = resolveTopTabIndicatorHitLeftPx(
-            indicatorPosition = 3f,
-            itemWidthPx = 80f,
-            rowScrollOffsetPx = 120f,
-            contentPaddingPx = 0f,
-            indicatorWidthPx = 32f
-        )
-
-        assertEquals(144f, indicatorLeft, 0.001f)
-    }
-
-    @Test
-    fun `top tab drag is attached to selected item instead of lazy row scroll container`() {
+    fun `top tab indicator supports direct horizontal drag while screen pager remains available`() {
         val source = loadSource("app/src/main/java/com/android/purebilibili/feature/home/components/TopBar.kt")
         val lazyRowSource = source
             .substringAfter("LazyRow(")
             .substringBefore("itemsIndexed(")
 
-        assertTrue(source.contains("topTabSelectedItemDrag("))
-        assertFalse(lazyRowSource.contains("topTabSelectedItemDrag("))
+        assertTrue(source.contains(".zIndex(3f)"))
+        assertTrue(source.contains(".then(indicatorGestureModifier)"))
+        assertTrue(source.contains(".then(indicatorDragModifier)"))
+        assertTrue(source.contains("Modifier.draggable("))
+        assertTrue(source.contains("orientation = Orientation.Horizontal"))
+        assertTrue(source.contains("topTabIndicatorDirectDragPosition"))
+        assertFalse(lazyRowSource.contains("topTabIndicatorDrag("))
+        assertFalse(source.contains("topTabIndicatorDrag("))
+        assertFalse(source.contains("awaitHorizontalTouchSlopOrCancellation"))
+    }
+
+    @Test
+    fun `top tab direct drag snaps to nearest bounded item`() {
+        assertEquals(0, resolveTopTabIndicatorDragTargetIndex(-0.4f, itemCount = 5))
+        assertEquals(2, resolveTopTabIndicatorDragTargetIndex(1.6f, itemCount = 5))
+        assertEquals(4, resolveTopTabIndicatorDragTargetIndex(5.2f, itemCount = 5))
+        assertEquals(0, resolveTopTabIndicatorDragTargetIndex(1f, itemCount = 0))
+    }
+
+    @Test
+    fun `top tab row disables unsynchronized stretch overscroll`() {
+        val source = loadSource("app/src/main/java/com/android/purebilibili/feature/home/components/TopBar.kt")
+        val lazyRowSource = source
+            .substringAfter("LazyRow(")
+            .substringBefore("itemsIndexed(")
+
+        assertTrue(lazyRowSource.contains("overscrollEffect = null"))
+    }
+
+    @Test
+    fun `top tab export defers lazy row scroll reads to its graphics layer`() {
+        val source = loadSource("app/src/main/java/com/android/purebilibili/feature/home/components/TopBar.kt")
+        val exportSource = source
+            .substringAfter("val topTabListScrollOffsetPxProvider = {")
+            .substringBefore("LazyRow(")
+
+        assertTrue(exportSource.contains("listState.firstVisibleItemScrollOffset"))
+        assertEquals(3, exportSource.split("topTabListScrollOffsetPxProvider()").size - 1)
+    }
+
+    @Test
+    fun `top tab liquid panel offset moves indicator without rebounding labels`() {
+        val source = loadSource("app/src/main/java/com/android/purebilibili/feature/home/components/TopBar.kt")
+        val stableContentGroup = source
+            .substringAfter("val topTabIndicatorPanelOffsetPx =")
+            .substringBefore("// stable export + visible content with indicator-only motion")
+
+        assertFalse(stableContentGroup.contains("translationX = topTabIndicatorPanelOffsetPx"))
+        assertEquals(
+            3,
+            stableContentGroup.split("indicatorPanelOffsetPx = topTabIndicatorPanelOffsetPx").size - 1
+        )
     }
 
     @Test
     fun `top tab drag does not change search or list layout clearance`() {
-        val headerSource = loadSource("app/src/main/java/com/android/purebilibili/feature/home/components/iOSHomeHeader.kt")
+        val headerSource = loadSource("app/src/main/java/com/android/purebilibili/feature/home/components/HomeHeader.kt")
         val homeSource = loadSource("app/src/main/java/com/android/purebilibili/feature/home/HomeScreen.kt")
 
-        assertTrue(headerSource.contains("translationY = searchContentTranslationYPx"))
+        assertTrue(headerSource.contains("alpha = searchContentAlphaProvider.value"))
+        assertTrue(headerSource.contains("translationY = searchContentTranslationProvider.value()"))
+        assertFalse(headerSource.contains("searchContentTranslationYPx"))
         assertFalse(headerSource.contains("onIndicatorClearanceChanged = { clearance ->"))
         assertFalse(homeSource.contains("topTabIndicatorClearance"))
         assertFalse(homeSource.contains("baseListTopPadding +"))
@@ -289,7 +339,7 @@ class TopTabMotionVelocityTest {
         assertEquals(
             false,
             shouldDrawLightweightTopTabItemContainer(
-                renderer = HomeTopTabRenderer.IOS,
+                presentation = AppTopTabPresentation.MOVING_CAPSULE,
                 skinPlainStyle = false,
                 hasSkinStickerIcon = false
             )
@@ -297,7 +347,7 @@ class TopTabMotionVelocityTest {
         assertEquals(
             true,
             shouldDrawLightweightTopTabItemContainer(
-                renderer = HomeTopTabRenderer.MD3,
+                presentation = AppTopTabPresentation.MATERIAL_UNDERLINE,
                 skinPlainStyle = false,
                 hasSkinStickerIcon = false
             )
@@ -305,7 +355,7 @@ class TopTabMotionVelocityTest {
         assertEquals(
             true,
             shouldDrawLightweightTopTabItemContainer(
-                renderer = HomeTopTabRenderer.IOS,
+                presentation = AppTopTabPresentation.MOVING_CAPSULE,
                 skinPlainStyle = false,
                 hasSkinStickerIcon = true
             )
@@ -316,21 +366,21 @@ class TopTabMotionVelocityTest {
     fun `capsule top tabs suppress rectangular item click indication`() {
         assertFalse(
             shouldUseLightweightTopTabItemClickIndication(
-                renderer = HomeTopTabRenderer.IOS,
+                presentation = AppTopTabPresentation.MOVING_CAPSULE,
                 skinPlainStyle = false,
                 usesCapsuleIndicator = true
             )
         )
         assertFalse(
             shouldUseLightweightTopTabItemClickIndication(
-                renderer = HomeTopTabRenderer.MD3,
+                presentation = AppTopTabPresentation.MATERIAL_UNDERLINE,
                 skinPlainStyle = false,
                 usesCapsuleIndicator = true
             )
         )
         assertFalse(
             shouldUseLightweightTopTabItemClickIndication(
-                renderer = HomeTopTabRenderer.MIUIX,
+                presentation = AppTopTabPresentation.TONAL_CAPSULE,
                 skinPlainStyle = false,
                 usesCapsuleIndicator = true
             )
@@ -341,14 +391,14 @@ class TopTabMotionVelocityTest {
     fun `plain md3 top tabs keep item click indication`() {
         assertTrue(
             shouldUseLightweightTopTabItemClickIndication(
-                renderer = HomeTopTabRenderer.MD3,
+                presentation = AppTopTabPresentation.MATERIAL_UNDERLINE,
                 skinPlainStyle = false,
                 usesCapsuleIndicator = false
             )
         )
         assertTrue(
             shouldUseLightweightTopTabItemClickIndication(
-                renderer = HomeTopTabRenderer.IOS,
+                presentation = AppTopTabPresentation.MOVING_CAPSULE,
                 skinPlainStyle = true,
                 usesCapsuleIndicator = true
             )

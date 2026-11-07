@@ -1,5 +1,7 @@
 package com.android.purebilibili.feature.video.ui.components
 
+import com.android.purebilibili.core.ui.AppContentColors
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,11 +15,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
+import com.android.purebilibili.core.ui.components.AppButton
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.android.purebilibili.core.ui.components.AppText
+import com.android.purebilibili.core.ui.components.AppTextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -26,8 +28,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.android.purebilibili.feature.video.interaction.InteractiveChoicePanelUiState
+import com.android.purebilibili.core.ui.AppShapes
+import com.android.purebilibili.core.ui.ContainerLevel
 
 @Composable
 fun InteractiveChoiceOverlay(
@@ -69,7 +72,7 @@ fun InteractiveChoiceOverlay(
                         3 -> TextAlign.Right
                         else -> TextAlign.Center
                     }
-                    Button(
+                    AppButton(
                         onClick = { onSelectChoice(choice.edgeId, choice.cid) },
                         modifier = Modifier
                             .align(Alignment.TopStart)
@@ -84,7 +87,7 @@ fun InteractiveChoiceOverlay(
                         )
                     ) {
                         val label = if (choice.isDefault) "${choice.text}（默认）" else choice.text
-                        Text(text = label, textAlign = textAlign)
+                        AppText(text = label, textAlign = textAlign)
                     }
                 }
             }
@@ -98,7 +101,7 @@ fun InteractiveChoiceOverlay(
                         .fillMaxWidth()
                         .background(
                             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
-                            shape = RoundedCornerShape(18.dp)
+                            shape = AppShapes.container(ContainerLevel.Card)
                         )
                         .padding(14.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -108,34 +111,34 @@ fun InteractiveChoiceOverlay(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
+                        AppText(
                             text = state.title,
                             modifier = Modifier.weight(1f),
-                            fontSize = 16.sp,
+                            style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface,
+                            color = AppContentColors.primaryText(),
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
                         val countdown = state.remainingMs
                         if (countdown != null) {
-                            Text(
+                            AppText(
                                 text = "${(countdown / 1000L).coerceAtLeast(0L)}s",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.error
+                                style = MaterialTheme.typography.bodySmall,
+                                color = AppContentColors.error()
                             )
                         }
-                        TextButton(
+                        AppTextButton(
                             onClick = onDismiss,
                             modifier = Modifier.size(width = 56.dp, height = 32.dp)
                         ) {
-                            Text("关闭")
+                            AppText("关闭")
                         }
                     }
 
                     state.choices.forEach { choice ->
                         val label = if (choice.isDefault) "${choice.text}（默认）" else choice.text
-                        Button(
+                        AppButton(
                             onClick = { onSelectChoice(choice.edgeId, choice.cid) },
                             modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.buttonColors(
@@ -143,7 +146,7 @@ fun InteractiveChoiceOverlay(
                                 contentColor = MaterialTheme.colorScheme.onSecondaryContainer
                             )
                         ) {
-                            Text(text = label)
+                            AppText(text = label)
                         }
                     }
 
@@ -164,31 +167,31 @@ private fun CoordinateModeHeader(
         modifier = modifier
             .background(
                 color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
-                shape = RoundedCornerShape(12.dp)
+                shape = AppShapes.container(ContainerLevel.Card)
             )
             .padding(horizontal = 10.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(
+        AppText(
             text = title,
-            fontSize = 13.sp,
-            color = MaterialTheme.colorScheme.onSurface
+            style = MaterialTheme.typography.bodyMedium,
+            color = AppContentColors.primaryText()
         )
         if (remainingMs != null) {
-            Text(
+            AppText(
                 text = "${(remainingMs / 1000L).coerceAtLeast(0L)}s",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.error
+                style = MaterialTheme.typography.bodySmall,
+                color = AppContentColors.error()
             )
         }
-        TextButton(
+        AppTextButton(
             onClick = onDismiss,
             modifier = Modifier.size(width = 56.dp, height = 28.dp)
         ) {
-            Text(
+            AppText(
                 text = "关闭",
-                fontSize = 12.sp
+                style = MaterialTheme.typography.labelSmall
             )
         }
     }

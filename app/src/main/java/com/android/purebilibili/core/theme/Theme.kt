@@ -1,12 +1,15 @@
 // 文件路径: core/theme/Theme.kt
 package com.android.purebilibili.core.theme
 
-import android.app.Activity
 import android.app.WallpaperManager
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
@@ -19,30 +22,36 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.graphics.colorspace.ColorSpaces
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
+import com.android.purebilibili.core.ui.AppIconStyle
+import com.android.purebilibili.core.ui.AppListItemStyle
+import com.android.purebilibili.core.ui.LocalAppIconStyle
+import com.android.purebilibili.core.ui.LocalAppListItemStyle
+import com.android.purebilibili.core.ui.findHostActivity
+import com.android.purebilibili.core.ui.resolveAppIconStyle
+import com.android.purebilibili.core.ui.resolveAppListItemStyle
 import com.android.purebilibili.core.store.ThemeRoleOverrides
 import com.android.purebilibili.feature.settings.AppThemeMode
 import com.android.purebilibili.feature.settings.Md3ColorSource
 import com.android.purebilibili.feature.settings.normalizeMd3CustomColorHex
+import com.materialkolor.Contrast
 import com.materialkolor.PaletteStyle
+import com.materialkolor.material3.dynamicColorScheme
 import com.materialkolor.dynamiccolor.ColorSpec
-import com.materialkolor.rememberDynamicColorScheme
 import top.yukonga.miuix.kmp.theme.ColorSchemeMode
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.ThemeController
-import top.yukonga.miuix.kmp.theme.defaultTextStyles
 import top.yukonga.miuix.kmp.theme.darkColorScheme as miuixDarkColorScheme
 import top.yukonga.miuix.kmp.theme.lightColorScheme as miuixLightColorScheme
 
@@ -65,7 +74,8 @@ private fun createDarkColorScheme(primaryColor: Color) = darkColorScheme(
     onSurfaceVariant = TextSecondaryDark,
     surfaceContainer = DarkSurfaceElevated, // iOS System Gray 5 (Dark)
     outline = iOSSystemGray3Dark,
-    outlineVariant = iOSSystemGray4Dark
+    outlineVariant = iOSSystemGray4Dark,
+    surfaceTint = Color.Transparent
 )
 
 private fun createAmoledDarkColorScheme(primaryColor: Color) = darkColorScheme(
@@ -83,13 +93,14 @@ private fun createAmoledDarkColorScheme(primaryColor: Color) = darkColorScheme(
     onSurfaceVariant = TextSecondaryDark,
     surfaceContainer = Color(0xFF090909),
     outline = Color(0xFF262626),
-    outlineVariant = Color(0xFF1A1A1A)
+    outlineVariant = Color(0xFF1A1A1A),
+    surfaceTint = Color.Transparent
 )
 
 internal fun resolveEffectiveDynamicColorEnabled(
     dynamicColorEnabled: Boolean,
     amoledDarkTheme: Boolean,
-    uiPreset: UiPreset
+    uiStyle: AppUiStyle
 ): Boolean = dynamicColorEnabled
 
 internal fun createIosColorScheme(
@@ -131,19 +142,23 @@ internal fun resolveMd3DynamicColorEnabled(
     source: Md3ColorSource,
     sdkInt: Int
 ): Boolean {
-    return source == Md3ColorSource.FOLLOW_WALLPAPER && sdkInt >= Build.VERSION_CODES.S
+    return source != Md3ColorSource.CUSTOM && sdkInt >= Build.VERSION_CODES.S
 }
 
 internal fun resolveMd3ThemeSeedColor(
     source: Md3ColorSource,
     customColorHex: String,
-    themeColorIndex: Int
+    themeColorIndex: Int,
+    wallpaperSeed: Color? = null,
 ): Color {
     return when (source) {
         Md3ColorSource.FOLLOW_WALLPAPER -> ThemeColors.getOrElse(
             normalizeThemeColorIndex(themeColorIndex)
         ) { iOSSystemBlue }
         Md3ColorSource.CUSTOM -> parseMd3CustomColorHex(customColorHex)
+        Md3ColorSource.WALLPAPER_RETONED -> wallpaperSeed ?: ThemeColors.getOrElse(
+            normalizeThemeColorIndex(themeColorIndex)
+        ) { iOSSystemBlue }
     }
 }
 
@@ -164,8 +179,8 @@ internal fun resolveMiuixColorSchemeMode(
     themeMode: AppThemeMode,
     dynamicColorEnabled: Boolean
 ): ColorSchemeMode {
-    // Material Kolor resolves both wallpaper and static seed palettes before the
-    // Miuix bridge, so keep Miuix on explicit colors instead of its own Monet mode.
+    // AndroidX resolves wallpaper palettes and MaterialKolor resolves custom seed
+    // palettes before the Miuix bridge, so keep Miuix on the explicit bridged colors.
     return when (themeMode) {
         AppThemeMode.FOLLOW_SYSTEM -> ColorSchemeMode.System
         AppThemeMode.LIGHT -> ColorSchemeMode.Light
@@ -173,21 +188,36 @@ internal fun resolveMiuixColorSchemeMode(
     }
 }
 
+internal fun shouldUseNativeMiuixPalette(uiStyle: AppUiStyle): Boolean =
+    uiStyle == AppUiStyle.MIUIX
+
 internal fun resolvePaletteStylePreference(rawValue: String?): PaletteStyle {
     return runCatching {
-        rawValue?.let(PaletteStyle::valueOf)
+        rawValue?.let(PaletteStyle::parse)
     }.getOrNull() ?: PaletteStyle.TonalSpot
 }
 
 internal fun resolveColorSpecPreference(rawValue: String?): ColorSpec.SpecVersion {
     return runCatching {
         rawValue?.let(ColorSpec.SpecVersion::valueOf)
-    }.getOrNull() ?: ColorSpec.SpecVersion.SPEC_2021
+    }.getOrNull() ?: ColorSpec.SpecVersion.SPEC_2025
+}
+
+/**
+ * 对比度档。PiliPlus 用 flex_seed_scheme 的 FlexTones 变体覆盖高对比需求
+ * （highContrast / ultraContrast），MaterialKolor 这边用原生的 Contrast 表达同一意图。
+ */
+internal fun resolveColorContrastPreference(rawValue: String?): Contrast {
+    return runCatching {
+        rawValue?.let(Contrast::valueOf)
+    }.getOrNull() ?: Contrast.Default
 }
 
 internal data class MiuixMaterialBridge(
     val primary: Color,
     val onPrimary: Color,
+    val primaryFixed: Color,
+    val onPrimaryFixed: Color,
     val primaryContainer: Color,
     val onPrimaryContainer: Color,
     val secondary: Color,
@@ -200,6 +230,8 @@ internal data class MiuixMaterialBridge(
     val onTertiaryContainer: Color,
     val error: Color,
     val onError: Color,
+    val errorContainer: Color,
+    val onErrorContainer: Color,
     val background: Color,
     val onBackground: Color,
     val surface: Color,
@@ -208,6 +240,7 @@ internal data class MiuixMaterialBridge(
     val onSurfaceVariant: Color,
     val surfaceContainer: Color,
     val surfaceContainerHigh: Color,
+    val surfaceContainerHighest: Color,
     val outline: Color,
     val outlineVariant: Color
 )
@@ -216,6 +249,8 @@ internal fun createMiuixMaterialBridge(colorScheme: ColorScheme): MiuixMaterialB
     return MiuixMaterialBridge(
         primary = colorScheme.primary,
         onPrimary = colorScheme.onPrimary,
+        primaryFixed = colorScheme.primaryFixed,
+        onPrimaryFixed = colorScheme.onPrimaryFixed,
         primaryContainer = colorScheme.primaryContainer,
         onPrimaryContainer = colorScheme.onPrimaryContainer,
         secondary = colorScheme.secondary,
@@ -228,6 +263,8 @@ internal fun createMiuixMaterialBridge(colorScheme: ColorScheme): MiuixMaterialB
         onTertiaryContainer = colorScheme.onTertiaryContainer,
         error = colorScheme.error,
         onError = colorScheme.onError,
+        errorContainer = colorScheme.errorContainer,
+        onErrorContainer = colorScheme.onErrorContainer,
         background = colorScheme.background,
         onBackground = colorScheme.onBackground,
         surface = colorScheme.surface,
@@ -236,6 +273,7 @@ internal fun createMiuixMaterialBridge(colorScheme: ColorScheme): MiuixMaterialB
         onSurfaceVariant = colorScheme.onSurfaceVariant,
         surfaceContainer = colorScheme.surfaceContainer,
         surfaceContainerHigh = colorScheme.surfaceContainerHigh,
+        surfaceContainerHighest = colorScheme.surfaceContainerHighest,
         outline = colorScheme.outline,
         outlineVariant = colorScheme.outlineVariant
     )
@@ -307,49 +345,212 @@ internal fun resolveMaterialColorSchemeFromMiuixBridge(
     }
 }
 
+/**
+ * Keep upstream neutral/control roles; only the user's accent is adapted from Material.
+ * Dark canvas roles honor the ordinary/AMOLED preference; light colors and native
+ * control roles retain Miuix defaults unless advanced custom roles are explicitly enabled.
+ * Both theme APIs consume this resolved palette.
+ */
+internal fun resolveNativeMiuixColors(
+    scheme: ColorScheme,
+    darkTheme: Boolean,
+    amoledDarkTheme: Boolean = false,
+    customRolesEnabled: Boolean = false,
+): top.yukonga.miuix.kmp.theme.Colors {
+    // 仅显式开启高级自定义时映射背景、卡片、文字与控件；玻璃开关共用此色板。
+    // 手动背景优先于 AMOLED 预设，关闭自定义后恢复下面的原生角色。
+    if (customRolesEnabled) {
+        return resolveMiuixColorsFromMaterialBridge(createMiuixMaterialBridge(scheme), darkTheme)
+    }
+    val upstream = if (darkTheme) miuixDarkColorScheme() else miuixLightColorScheme()
+    // Upstream's dark surface is already pure black. Give ordinary dark mode a
+    // charcoal canvas, and apply AMOLED roles before bridging both theme APIs.
+    val base = when {
+        !darkTheme -> upstream
+        amoledDarkTheme -> {
+            val amoled = applyAmoledSurfaceOverrides(scheme)
+            upstream.copy(
+                background = amoled.background,
+                surface = amoled.surface,
+                surfaceVariant = amoled.surfaceVariant,
+                surfaceContainer = amoled.surfaceContainer,
+                surfaceContainerHigh = amoled.surfaceContainerHigh,
+                surfaceContainerHighest = amoled.surfaceContainerHighest,
+                outline = amoled.outline,
+                dividerLine = amoled.outlineVariant,
+            )
+        }
+        else -> upstream.copy(background = Color(0xFF121212), surface = Color(0xFF121212))
+    }
+    val accentScheme = scheme.copy(
+        surface = base.surface,
+        primaryFixed = scheme.primaryFixed,
+        onPrimaryFixed = scheme.onPrimaryFixed,
+        primaryContainer = scheme.primaryContainer,
+        onPrimaryContainer = scheme.onPrimaryContainer,
+    )
+    val accent = resolveMiuixColorsFromMaterialBridge(createMiuixMaterialBridge(accentScheme), darkTheme)
+    return base.copy(
+        primary = accent.primary,
+        onPrimary = accent.onPrimary,
+        primaryVariant = accent.primaryVariant,
+        onPrimaryVariant = accent.onPrimaryVariant,
+        primaryContainer = accent.primaryContainer,
+        onPrimaryContainer = accent.onPrimaryContainer,
+        tertiaryContainer = scheme.tertiaryContainer,
+        onTertiaryContainer = scheme.onTertiaryContainer,
+        sliderKeyPoint = scheme.primary.copy(alpha = base.sliderKeyPoint.alpha),
+        sliderKeyPointForeground = scheme.primary,
+        error = scheme.error,
+        onError = scheme.onError,
+        errorContainer = scheme.errorContainer,
+        onErrorContainer = scheme.onErrorContainer,
+        // Search and quality rows need readable container text. Keep onSecondary
+        // at its native value: Miuix uses it for the unchecked switch thumb.
+        // Glass controls use their separate renderer; do not compensate here.
+        onSecondaryContainer = base.onSurface,
+        onSecondaryContainerVariant = base.onSurface,
+        onSurfaceContainerHigh = base.onSurface,
+        onSurfaceContainerVariant = base.onSurface,
+    )
+}
+
+/** Material-backed content consumes the same semantic palette as native Miuix components.
+ *  The Material canvas maps to the upstream `surface` role so chrome, lists, and the top
+ *  bar share one tone while cards stay on `surfaceContainer`. */
+internal fun alignMaterialSurfacesWithMiuix(
+    scheme: ColorScheme,
+    colors: top.yukonga.miuix.kmp.theme.Colors,
+    preserveMaterialAccentRoles: Boolean = false,
+): ColorScheme {
+    val isDark = colors.background.luminance() < 0.5f
+    return scheme.copy(
+        primary = colors.primary,
+        onPrimary = colors.onPrimary,
+        primaryFixed = colors.primaryVariant,
+        onPrimaryFixed = colors.onPrimaryVariant,
+        primaryContainer = colors.primaryContainer,
+        onPrimaryContainer = colors.onPrimaryContainer,
+        secondary = if (preserveMaterialAccentRoles) scheme.secondary else colors.secondary,
+        onSecondary = if (preserveMaterialAccentRoles) scheme.onSecondary else colors.onSecondary,
+        secondaryContainer = colors.secondaryContainer,
+        onSecondaryContainer = colors.onSecondaryContainer,
+        tertiary = if (preserveMaterialAccentRoles) scheme.tertiary else colors.primary,
+        onTertiary = if (preserveMaterialAccentRoles) scheme.onTertiary else colors.onPrimary,
+        tertiaryContainer = colors.tertiaryContainer,
+        onTertiaryContainer = colors.onTertiaryContainer,
+        error = colors.error,
+        onError = colors.onError,
+        errorContainer = colors.errorContainer,
+        onErrorContainer = colors.onErrorContainer,
+        background = colors.surface,
+        onBackground = colors.onSurface,
+        surface = colors.surface,
+        onSurface = colors.onSurface,
+        surfaceVariant = colors.surfaceVariant,
+        onSurfaceVariant = colors.onSurfaceVariantSummary,
+        surfaceTint = Color.Transparent,
+        inversePrimary = colors.primaryVariant,
+        inverseSurface = colors.onSurface,
+        inverseOnSurface = colors.surface,
+        outline = colors.outline,
+        outlineVariant = colors.dividerLine,
+        scrim = colors.windowDimming,
+        surfaceBright = if (isDark) colors.surfaceContainerHighest else colors.surface,
+        surfaceDim = if (isDark) colors.surface else colors.surfaceContainerHighest,
+        surfaceContainerLowest = if (isDark) colors.surface else colors.surfaceContainer,
+        surfaceContainerLow = colors.surfaceContainer,
+        surfaceContainer = colors.surfaceContainer,
+        surfaceContainerHigh = colors.surfaceContainerHigh,
+        surfaceContainerHighest = colors.surfaceContainerHighest,
+    )
+}
+
 internal fun resolveMiuixColorsFromMaterialBridge(
     bridge: MiuixMaterialBridge,
-    darkTheme: Boolean
+    darkTheme: Boolean,
+    useMonetMapping: Boolean = false,
 ): top.yukonga.miuix.kmp.theme.Colors {
     val base = if (darkTheme) miuixDarkColorScheme() else miuixLightColorScheme()
+    val disabledPrimary = opaqueCompositeOver(bridge.primary.copy(alpha = 0.38f), bridge.surface)
+    val disabledOnPrimary = opaqueCompositeOver(bridge.onPrimary.copy(alpha = 0.38f), disabledPrimary)
+    val disabledPrimaryButton = opaqueCompositeOver(bridge.primary.copy(alpha = 0.38f), bridge.surface)
+    val disabledOnPrimaryButton = opaqueCompositeOver(
+        bridge.onPrimary.copy(alpha = 0.6f),
+        disabledPrimaryButton,
+    )
+    val disabledSecondary = opaqueCompositeOver(bridge.outlineVariant.copy(alpha = 0.5f), bridge.surface)
+    val disabledOnSecondary = opaqueCompositeOver(bridge.onSurface.copy(alpha = 0.38f), disabledSecondary)
+    val disabledSecondaryVariant = opaqueCompositeOver(
+        bridge.surfaceContainerHigh.copy(alpha = 0.6f),
+        bridge.surface,
+    )
+    val disabledOnSecondaryVariant = opaqueCompositeOver(
+        bridge.onSurface.copy(alpha = 0.38f),
+        disabledSecondaryVariant,
+    )
     return base.copy(
         primary = bridge.primary,
         onPrimary = bridge.onPrimary,
-        primaryVariant = bridge.primaryContainer,
-        onPrimaryVariant = bridge.onPrimaryContainer,
+        primaryVariant = bridge.primaryFixed,
+        onPrimaryVariant = bridge.onPrimaryFixed,
+        errorContainer = bridge.errorContainer,
+        onErrorContainer = bridge.onErrorContainer,
+        disabledPrimary = disabledPrimary,
+        disabledOnPrimary = disabledOnPrimary,
+        disabledPrimaryButton = disabledPrimaryButton,
+        disabledOnPrimaryButton = disabledOnPrimaryButton,
+        disabledPrimarySlider = disabledPrimary,
         primaryContainer = bridge.primaryContainer,
         onPrimaryContainer = bridge.onPrimaryContainer,
-        secondary = bridge.secondary,
-        onSecondary = bridge.onSecondary,
+        secondary = bridge.outlineVariant,
+        onSecondary = if (useMonetMapping) bridge.outline else resolveReadableTextColor(
+            candidate = bridge.outline,
+            background = bridge.outlineVariant,
+            fallback = bridge.onSurface,
+            minimumContrast = ACCESSIBLE_TEXT_MIN_CONTRAST,
+        ),
         secondaryVariant = bridge.surfaceContainerHigh,
-        onSecondaryVariant = bridge.onSurfaceVariant,
+        onSecondaryVariant = bridge.onSurface,
+        disabledSecondary = disabledSecondary,
+        disabledOnSecondary = disabledOnSecondary,
+        disabledSecondaryVariant = disabledSecondaryVariant,
+        disabledOnSecondaryVariant = disabledOnSecondaryVariant,
         secondaryContainer = bridge.secondaryContainer,
         onSecondaryContainer = bridge.onSecondaryContainer,
-        secondaryContainerVariant = bridge.surfaceContainer,
+        secondaryContainerVariant = bridge.surfaceContainerHighest,
         onSecondaryContainerVariant = bridge.onSurfaceVariant,
         tertiaryContainer = bridge.tertiaryContainer,
         onTertiaryContainer = bridge.onTertiaryContainer,
-        tertiaryContainerVariant = bridge.tertiaryContainer,
+        tertiaryContainerVariant = bridge.onTertiaryContainer,
         error = bridge.error,
         onError = bridge.onError,
         background = bridge.background,
         onBackground = bridge.onBackground,
-        onBackgroundVariant = bridge.onSurfaceVariant,
+        onBackgroundVariant = if (useMonetMapping) bridge.primary else bridge.onSurfaceVariant,
         surface = bridge.surface,
         onSurface = bridge.onSurface,
         surfaceVariant = bridge.surfaceVariant,
-        onSurfaceSecondary = bridge.onSurfaceVariant,
+        onSurfaceSecondary = opaqueCompositeOver(bridge.onSurface.copy(alpha = 0.8f), bridge.surface),
         onSurfaceVariantSummary = bridge.onSurfaceVariant,
         onSurfaceVariantActions = bridge.onSurfaceVariant,
+        disabledOnSurface = bridge.onSurface,
         surfaceContainer = bridge.surfaceContainer,
         onSurfaceContainer = bridge.onSurface,
         onSurfaceContainerVariant = bridge.onSurfaceVariant,
         surfaceContainerHigh = bridge.surfaceContainerHigh,
-        onSurfaceContainerHigh = bridge.onSurface,
-        surfaceContainerHighest = bridge.surfaceContainerHigh,
+        onSurfaceContainerHigh = opaqueCompositeOver(
+            bridge.onSurface.copy(alpha = 0.8f),
+            bridge.surfaceContainerHigh,
+        ),
+        surfaceContainerHighest = bridge.surfaceContainerHighest,
         onSurfaceContainerHighest = bridge.onSurface,
         outline = bridge.outline,
-        dividerLine = bridge.outlineVariant
+        dividerLine = bridge.outlineVariant,
+        windowDimming = Color.Black.copy(alpha = if (darkTheme) 0.6f else 0.3f),
+        sliderKeyPoint = bridge.primary,
+        sliderKeyPointForeground = bridge.surfaceContainerHigh,
+        sliderBackground = opaqueCompositeOver(bridge.primary.copy(alpha = 0.2f), bridge.surface),
     )
 }
 
@@ -359,7 +560,13 @@ internal fun applyAmoledSurfaceOverrides(
     background = Black,
     surface = Black,
     surfaceVariant = Color(0xFF050505),
+    surfaceContainerLowest = Black,
+    surfaceContainerLow = Color(0xFF050505),
     surfaceContainer = Color(0xFF090909),
+    surfaceContainerHigh = Color(0xFF121212),
+    surfaceContainerHighest = Color(0xFF1A1A1A),
+    surfaceBright = Color(0xFF0D0D0D),
+    surfaceDim = Black,
     outline = Color(0xFF262626),
     outlineVariant = Color(0xFF1A1A1A)
 )
@@ -379,408 +586,275 @@ private fun createLightColorScheme(primaryColor: Color) = lightColorScheme(
     onSurfaceVariant = TextSecondary,
     surfaceContainer = iOSSystemGray5, // iOS System Gray 5 (Light)
     outline = iOSSystemGray3,
-    outlineVariant = iOSSystemGray4
+    outlineVariant = iOSSystemGray4,
+    surfaceTint = Color.Transparent
 )
 
 // 保留默认配色作为后备 (使用 iOS 系统蓝)
 private val DarkColorScheme = createDarkColorScheme(iOSSystemBlue)
 private val LightColorScheme = createLightColorScheme(iOSSystemBlue)
 
-private data class HslColorModel(
-    val hue: Float,
-    val saturation: Float,
-    val lightness: Float
-)
-
-private fun Color.toHslColorModel(): HslColorModel {
-    val red = red
-    val green = green
-    val blue = blue
-    val max = maxOf(red, green, blue)
-    val min = minOf(red, green, blue)
-    val delta = max - min
-    val lightness = (max + min) / 2f
-
-    val saturation = if (delta == 0f) {
-        0f
-    } else {
-        delta / (1f - kotlin.math.abs(2f * lightness - 1f))
-    }
-
-    val hue = when {
-        delta == 0f -> 0f
-        max == red -> 60f * positiveModulo((green - blue) / delta, 6f)
-        max == green -> 60f * (((blue - red) / delta) + 2f)
-        else -> 60f * (((red - green) / delta) + 4f)
-    }
-
-    return HslColorModel(
-        hue = normalizeHue(hue),
-        saturation = saturation.coerceIn(0f, 1f),
-        lightness = lightness.coerceIn(0f, 1f)
-    )
-}
-
-private fun normalizeHue(hue: Float): Float {
-    val value = hue % 360f
-    return if (value < 0f) value + 360f else value
-}
-
-private fun positiveModulo(value: Float, modulus: Float): Float {
-    val result = value % modulus
-    return if (result < 0f) result + modulus else result
-}
-
-private fun colorFromHsl(
-    hue: Float,
-    saturation: Float,
-    lightness: Float
-): Color {
-    val normalizedHue = normalizeHue(hue)
-    val normalizedSaturation = saturation.coerceIn(0f, 1f)
-    val normalizedLightness = lightness.coerceIn(0f, 1f)
-    val chroma = (1f - kotlin.math.abs(2f * normalizedLightness - 1f)) * normalizedSaturation
-    val huePrime = normalizedHue / 60f
-    val secondComponent = chroma * (1f - kotlin.math.abs(positiveModulo(huePrime, 2f) - 1f))
-    val match = normalizedLightness - chroma / 2f
-
-    val (redPrime, greenPrime, bluePrime) = when {
-        huePrime < 1f -> Triple(chroma, secondComponent, 0f)
-        huePrime < 2f -> Triple(secondComponent, chroma, 0f)
-        huePrime < 3f -> Triple(0f, chroma, secondComponent)
-        huePrime < 4f -> Triple(0f, secondComponent, chroma)
-        huePrime < 5f -> Triple(secondComponent, 0f, chroma)
-        else -> Triple(chroma, 0f, secondComponent)
-    }
-
-    return Color(
-        redPrime + match,
-        greenPrime + match,
-        bluePrime + match,
-        1f,
-        ColorSpaces.Srgb
-    )
-}
-
-private fun blendColors(
-    background: Color,
-    foreground: Color,
-    foregroundRatio: Float
-): Color {
-    val ratio = foregroundRatio.coerceIn(0f, 1f)
-    val inverse = 1f - ratio
-    return Color(
-        background.red * inverse + foreground.red * ratio,
-        background.green * inverse + foreground.green * ratio,
-        background.blue * inverse + foreground.blue * ratio,
-        background.alpha * inverse + foreground.alpha * ratio,
-        ColorSpaces.Srgb
-    )
-}
-
-private fun chooseReadableOnColor(background: Color): Color {
-    return if (calculateContrastRatio(White, background) >= calculateContrastRatio(Black, background)) {
-        White
-    } else {
-        Black
-    }
-}
-
-private fun deriveNeutralSurfaceColor(
-    source: HslColorModel,
-    lightness: Float,
-    maxSaturation: Float
-): Color {
-    return colorFromHsl(
-        hue = source.hue,
-        saturation = minOf(source.saturation * 0.16f, maxSaturation),
-        lightness = lightness
-    )
-}
-
-private fun deriveAccentColor(
-    source: HslColorModel,
-    hueShift: Float,
-    saturationScale: Float,
-    lightness: Float,
-    minimumSaturation: Float = 0.18f
-): Color {
-    return colorFromHsl(
-        hue = source.hue + hueShift,
-        saturation = maxOf(minimumSaturation, source.saturation * saturationScale),
-        lightness = lightness
-    )
-}
-
-internal fun createStaticMd3ColorScheme(
-    primaryColor: Color,
-    darkTheme: Boolean,
-    amoledDarkTheme: Boolean
-): ColorScheme {
-    val source = primaryColor.toHslColorModel()
-
-    val scheme = if (darkTheme) {
-        val primary = primaryColor
-        val secondary = deriveAccentColor(
-            source = source,
-            hueShift = 10f,
-            saturationScale = 0.42f,
-            lightness = 0.76f,
-            minimumSaturation = 0.16f
-        )
-        val tertiary = deriveAccentColor(
-            source = source,
-            hueShift = 56f,
-            saturationScale = 0.52f,
-            lightness = 0.78f,
-            minimumSaturation = 0.20f
-        )
-        val background = deriveNeutralSurfaceColor(source, lightness = 0.075f, maxSaturation = 0.05f)
-        val surface = deriveNeutralSurfaceColor(source, lightness = 0.10f, maxSaturation = 0.06f)
-        val surfaceVariant = deriveNeutralSurfaceColor(source, lightness = 0.18f, maxSaturation = 0.09f)
-        val surfaceContainer = deriveNeutralSurfaceColor(source, lightness = 0.14f, maxSaturation = 0.07f)
-        val surfaceContainerHigh = deriveNeutralSurfaceColor(source, lightness = 0.17f, maxSaturation = 0.08f)
-        val outline = deriveNeutralSurfaceColor(source, lightness = 0.54f, maxSaturation = 0.08f)
-        val outlineVariant = deriveNeutralSurfaceColor(source, lightness = 0.33f, maxSaturation = 0.07f)
-        val primaryContainer = blendColors(background = background, foreground = primary, foregroundRatio = 0.34f)
-        val secondaryContainer = blendColors(background = background, foreground = secondary, foregroundRatio = 0.28f)
-        val tertiaryContainer = blendColors(background = background, foreground = tertiary, foregroundRatio = 0.28f)
-
-        darkColorScheme(
-            primary = primary,
-            onPrimary = chooseReadableOnColor(primary),
-            primaryContainer = primaryContainer,
-            onPrimaryContainer = chooseReadableOnColor(primaryContainer),
-            secondary = secondary,
-            onSecondary = chooseReadableOnColor(secondary),
-            secondaryContainer = secondaryContainer,
-            onSecondaryContainer = chooseReadableOnColor(secondaryContainer),
-            tertiary = tertiary,
-            onTertiary = chooseReadableOnColor(tertiary),
-            tertiaryContainer = tertiaryContainer,
-            onTertiaryContainer = chooseReadableOnColor(tertiaryContainer),
-            background = background,
-            onBackground = chooseReadableOnColor(background),
-            surface = surface,
-            onSurface = chooseReadableOnColor(surface),
-            surfaceVariant = surfaceVariant,
-            onSurfaceVariant = resolveReadableTextColor(
-                candidate = deriveNeutralSurfaceColor(source, lightness = 0.78f, maxSaturation = 0.08f),
-                background = surfaceVariant,
-                fallback = chooseReadableOnColor(surfaceVariant),
-                minimumContrast = 3.0f
-            ),
-            surfaceContainer = surfaceContainer,
-            surfaceContainerHigh = surfaceContainerHigh,
-            outline = outline,
-            outlineVariant = outlineVariant
-        )
-    } else {
-        val primary = primaryColor
-        val secondary = deriveAccentColor(
-            source = source,
-            hueShift = 10f,
-            saturationScale = 0.42f,
-            lightness = source.lightness.coerceIn(0.34f, 0.46f),
-            minimumSaturation = 0.15f
-        )
-        val tertiary = deriveAccentColor(
-            source = source,
-            hueShift = 56f,
-            saturationScale = 0.55f,
-            lightness = 0.42f,
-            minimumSaturation = 0.18f
-        )
-        val background = deriveNeutralSurfaceColor(source, lightness = 0.98f, maxSaturation = 0.12f)
-        val surface = deriveNeutralSurfaceColor(source, lightness = 0.99f, maxSaturation = 0.04f)
-        val surfaceVariant = deriveNeutralSurfaceColor(source, lightness = 0.90f, maxSaturation = 0.08f)
-        val surfaceContainer = deriveNeutralSurfaceColor(source, lightness = 0.95f, maxSaturation = 0.06f)
-        val surfaceContainerHigh = deriveNeutralSurfaceColor(source, lightness = 0.92f, maxSaturation = 0.07f)
-        val outline = deriveNeutralSurfaceColor(source, lightness = 0.55f, maxSaturation = 0.08f)
-        val outlineVariant = deriveNeutralSurfaceColor(source, lightness = 0.82f, maxSaturation = 0.06f)
-        val primaryContainer = blendColors(background = background, foreground = primary, foregroundRatio = 0.18f)
-        val secondaryContainer = blendColors(background = background, foreground = secondary, foregroundRatio = 0.16f)
-        val tertiaryContainer = blendColors(background = background, foreground = tertiary, foregroundRatio = 0.16f)
-
-        lightColorScheme(
-            primary = primary,
-            onPrimary = chooseReadableOnColor(primary),
-            primaryContainer = primaryContainer,
-            onPrimaryContainer = chooseReadableOnColor(primaryContainer),
-            secondary = secondary,
-            onSecondary = chooseReadableOnColor(secondary),
-            secondaryContainer = secondaryContainer,
-            onSecondaryContainer = chooseReadableOnColor(secondaryContainer),
-            tertiary = tertiary,
-            onTertiary = chooseReadableOnColor(tertiary),
-            tertiaryContainer = tertiaryContainer,
-            onTertiaryContainer = chooseReadableOnColor(tertiaryContainer),
-            background = background,
-            onBackground = chooseReadableOnColor(background),
-            surface = surface,
-            onSurface = chooseReadableOnColor(surface),
-            surfaceVariant = surfaceVariant,
-            onSurfaceVariant = resolveReadableTextColor(
-                candidate = deriveNeutralSurfaceColor(source, lightness = 0.36f, maxSaturation = 0.08f),
-                background = surfaceVariant,
-                fallback = chooseReadableOnColor(surfaceVariant),
-                minimumContrast = 3.0f
-            ),
-            surfaceContainer = surfaceContainer,
-            surfaceContainerHigh = surfaceContainerHigh,
-            outline = outline,
-            outlineVariant = outlineVariant
-        )
-    }
-
-    return if (darkTheme && amoledDarkTheme) {
-        applyAmoledSurfaceOverrides(scheme)
-    } else {
-        scheme
-    }
-}
-
-internal fun alignStaticColorSchemeWithThemePrimary(
-    scheme: ColorScheme,
-    themePrimaryColor: Color,
-    darkTheme: Boolean
-): ColorScheme {
-    val primary = themePrimaryColor
-    val primaryContainer = blendColors(
-        background = scheme.background,
-        foreground = primary,
-        foregroundRatio = if (darkTheme) 0.34f else 0.18f
-    )
-    return scheme.copy(
-        primary = primary,
-        onPrimary = chooseReadableOnColor(primary),
-        primaryContainer = primaryContainer,
-        onPrimaryContainer = chooseReadableOnColor(primaryContainer)
-    )
-}
-
-private fun createMd3DarkColorScheme(primaryColor: Color) = createStaticMd3ColorScheme(
-    primaryColor = primaryColor,
-    darkTheme = true,
-    amoledDarkTheme = false
-)
-
-private fun createMd3LightColorScheme(primaryColor: Color) = createStaticMd3ColorScheme(
-    primaryColor = primaryColor,
-    darkTheme = false,
-    amoledDarkTheme = false
-)
-
 @Composable
+@Suppress("DEPRECATION") // Broadcast is retained as an OEM fallback for wallpaper palette delivery.
 private fun rememberSystemWallpaperRefreshToken(
     dynamicColorActive: Boolean
 ): Int {
     val context = LocalContext.current
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     var token by remember { mutableIntStateOf(0) }
     val shouldObserve = shouldObserveSystemWallpaperForDynamicColor(
         dynamicColorActive = dynamicColorActive,
         sdkInt = Build.VERSION.SDK_INT
     )
 
-    DisposableEffect(context, shouldObserve) {
-        if (!shouldObserve) {
+    DisposableEffect(context, lifecycleOwner, shouldObserve) {
+        if (!shouldObserve || Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1) {
             return@DisposableEffect onDispose { }
         }
         val wallpaperManager = WallpaperManager.getInstance(context)
-        val listener = WallpaperManager.OnColorsChangedListener { _, _ ->
+        val handler = Handler(Looper.getMainLooper())
+        var lastPaletteRefreshAtMs: Long? = null
+        val markPaletteRefreshed = {
+            lastPaletteRefreshAtMs = SystemClock.uptimeMillis()
             token += 1
+        }
+        val settledPaletteRefresh = Runnable {
+            markPaletteRefreshed()
+        }
+        // 只有真实壁纸变更才需要「落定后重读」：OEM 壁纸选择器可能在回调之后才应用新的
+        // 运行时资源覆盖层。ON_RESUME 的兜底刷新不追加这一步，否则每次回前台都会多算一次
+        // 配色方案，让整棵树重新取色。
+        val requestPaletteRefreshFromWallpaperChange = {
+            markPaletteRefreshed()
+            handler.removeCallbacks(settledPaletteRefresh)
+            handler.postDelayed(
+                settledPaletteRefresh,
+                SYSTEM_WALLPAPER_PALETTE_SETTLE_DELAY_MS
+            )
+        }
+        val listener = WallpaperManager.OnColorsChangedListener { _, _ ->
+            requestPaletteRefreshFromWallpaperChange()
+        }
+        val wallpaperChangedReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == Intent.ACTION_WALLPAPER_CHANGED) {
+                    requestPaletteRefreshFromWallpaperChange()
+                }
+            }
+        }
+        val lifecycleObserver = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME &&
+                shouldRefreshSystemWallpaperPaletteOnResume(
+                    lastRefreshAtMs = lastPaletteRefreshAtMs,
+                    nowMs = SystemClock.uptimeMillis()
+                )
+            ) {
+                // Some OEM wallpaper pickers update the runtime resource overlay after their
+                // wallpaper callback. Re-read once when returning to the app as a reliable
+                // fallback for callbacks that arrived early or while composition was paused.
+                //
+                // 但每次回前台都重算 dynamic color scheme 会让整棵树重新取色，正好和用户
+                // 回前台后的第一次切页抢主线程，因此只在距上次刷新超过阈值时才重读。
+                markPaletteRefreshed()
+            }
         }
         wallpaperManager.addOnColorsChangedListener(
             listener,
-            Handler(Looper.getMainLooper())
+            handler
+        )
+        lifecycleOwner.lifecycle.addObserver(lifecycleObserver)
+        ContextCompat.registerReceiver(
+            context,
+            wallpaperChangedReceiver,
+            IntentFilter(Intent.ACTION_WALLPAPER_CHANGED),
+            ContextCompat.RECEIVER_NOT_EXPORTED
         )
         onDispose {
+            handler.removeCallbacks(settledPaletteRefresh)
+            lifecycleOwner.lifecycle.removeObserver(lifecycleObserver)
             wallpaperManager.removeOnColorsChangedListener(listener)
+            context.unregisterReceiver(wallpaperChangedReceiver)
         }
     }
 
     return token
 }
 
-@Composable
-private fun rememberIosColorScheme(
-    seedColor: Color,
+private const val SYSTEM_WALLPAPER_PALETTE_SETTLE_DELAY_MS = 200L
+
+/**
+ * ON_RESUME 兜底重读系统壁纸配色的最小间隔。
+ *
+ * 重读会重算 dynamic color scheme 并让整棵树重新取色，成本不低。短时间内的多次前后台切换
+ * （看通知、切一下别的应用再回来）不该每次都付这笔钱，因此加一个节流窗口。
+ */
+internal const val SYSTEM_WALLPAPER_PALETTE_RESUME_MIN_INTERVAL_MS = 10_000L
+
+internal fun shouldRefreshSystemWallpaperPaletteOnResume(
+    lastRefreshAtMs: Long?,
+    nowMs: Long,
+    minIntervalMs: Long = SYSTEM_WALLPAPER_PALETTE_RESUME_MIN_INTERVAL_MS,
+): Boolean {
+    val last = lastRefreshAtMs ?: return true
+    return nowMs - last >= minIntervalMs
+}
+
+internal fun createMiuixAlignedColorScheme(
+    primaryColor: Color,
     darkTheme: Boolean,
-    amoledDarkTheme: Boolean,
-    dynamicAccentScheme: ColorScheme? = null
+    amoledDarkTheme: Boolean
 ): ColorScheme {
-    val baseScheme = remember(seedColor, darkTheme, amoledDarkTheme) {
-        createIosColorScheme(
-            primaryColor = seedColor,
-            darkTheme = darkTheme,
-            amoledDarkTheme = amoledDarkTheme
-        )
-    }
-    return remember(baseScheme, dynamicAccentScheme) {
-        if (dynamicAccentScheme != null) {
-            alignIosColorSchemeWithDynamicAccent(
-                baseScheme = baseScheme,
-                dynamicAccentScheme = dynamicAccentScheme
+    return if (darkTheme) {
+        if (amoledDarkTheme) {
+            darkColorScheme(
+                primary = primaryColor,
+                onPrimary = White,
+                primaryContainer = primaryColor.copy(alpha = 0.32f),
+                onPrimaryContainer = primaryColor,
+                secondary = primaryColor.copy(alpha = 0.9f),
+                secondaryContainer = primaryColor.copy(alpha = 0.22f),
+                onSecondaryContainer = primaryColor,
+                background = Black,
+                surface = Black,
+                onSurface = Color(0xFFF2F2F2),
+                surfaceVariant = Color(0xFF121212),
+                onSurfaceVariant = Color(0xFF98989D),
+                surfaceContainer = Color(0xFF0D0D0D),
+                surfaceContainerHigh = Color(0xFF1A1A1A),
+                surfaceContainerHighest = Color(0xFF242424),
+                outline = Color(0xFF48484A),
+                outlineVariant = Color(0xFF262626),
+                // 显式透明：tonal elevation 表面不得被未调和的种子 primary 染色
+                surfaceTint = Color.Transparent
             )
         } else {
-            baseScheme
+            darkColorScheme(
+                primary = primaryColor,
+                onPrimary = White,
+                primaryContainer = primaryColor.copy(alpha = 0.3f),
+                onPrimaryContainer = primaryColor,
+                secondary = primaryColor.copy(alpha = 0.85f),
+                secondaryContainer = primaryColor.copy(alpha = 0.2f),
+                onSecondaryContainer = primaryColor,
+                background = Color(0xFF0D0D0D),
+                surface = Color(0xFF121212),
+                onSurface = Color(0xFFF2F2F2),
+                surfaceVariant = Color(0xFF242424),
+                onSurfaceVariant = Color(0xFF98989D),
+                surfaceContainer = Color(0xFF242424),
+                surfaceContainerHigh = Color(0xFF2C2C2E),
+                surfaceContainerHighest = Color(0xFF383838),
+                outline = Color(0xFF48484A),
+                outlineVariant = Color(0xFF3A3A3C),
+                surfaceTint = Color.Transparent
+            )
         }
+    } else {
+        lightColorScheme(
+            primary = primaryColor,
+            onPrimary = White,
+            primaryContainer = primaryColor.copy(alpha = 0.15f),
+            onPrimaryContainer = primaryColor,
+            secondary = primaryColor.copy(alpha = 0.8f),
+            secondaryContainer = primaryColor.copy(alpha = 0.1f),
+            onSecondaryContainer = primaryColor,
+            background = Color(0xFFF7F7F7),
+            surface = White,
+            onSurface = Color(0xFF111111),
+            surfaceVariant = Color(0xFFF0F0F0),
+            onSurfaceVariant = Color(0xFF6C6C70),
+            surfaceContainer = Color(0xFFF2F2F7),
+            surfaceContainerHigh = Color(0xFFE8E8E8),
+            surfaceContainerHighest = Color(0xFFE5E5EA),
+            outline = Color(0xFFD1D1D6),
+            outlineVariant = Color(0xFFE5E5EA),
+            surfaceTint = Color.Transparent
+        )
     }
 }
 
 @Composable
-private fun rememberKernelSuStyleColorScheme(
+private fun rememberBiliPaiStyleColorScheme(
     seedColor: Color,
     darkTheme: Boolean,
     amoledDarkTheme: Boolean,
     paletteStyle: PaletteStyle,
     colorSpec: ColorSpec.SpecVersion,
-    dynamicBaseScheme: ColorScheme? = null
+    uiStyle: AppUiStyle = AppUiStyle.MATERIAL3,
+    dynamicBaseScheme: ColorScheme? = null,
+    colorContrast: Contrast = Contrast.Default,
+    seedPaletteStyle: SeedPaletteStyle = SeedPaletteStyle.Standard,
+): ColorScheme = remember(
+    seedColor,
+    darkTheme,
+    amoledDarkTheme,
+    paletteStyle,
+    colorSpec,
+    uiStyle,
+    dynamicBaseScheme,
+    colorContrast,
+    seedPaletteStyle,
+) {
+    createBiliPaiStyleColorScheme(
+        seedColor = seedColor,
+        darkTheme = darkTheme,
+        amoledDarkTheme = amoledDarkTheme,
+        paletteStyle = paletteStyle,
+        colorSpec = colorSpec,
+        uiStyle = uiStyle,
+        dynamicBaseScheme = dynamicBaseScheme,
+        colorContrast = colorContrast,
+        seedPaletteStyle = seedPaletteStyle,
+    )
+}
+
+internal fun createBiliPaiStyleColorScheme(
+    seedColor: Color,
+    darkTheme: Boolean,
+    amoledDarkTheme: Boolean,
+    paletteStyle: PaletteStyle,
+    colorSpec: ColorSpec.SpecVersion,
+    uiStyle: AppUiStyle = AppUiStyle.MATERIAL3,
+    dynamicBaseScheme: ColorScheme? = null,
+    colorContrast: Contrast = Contrast.Default,
+    seedPaletteStyle: SeedPaletteStyle = SeedPaletteStyle.Standard,
 ): ColorScheme {
-    val scheme = if (dynamicBaseScheme != null) {
-        rememberDynamicColorScheme(
-            seedColor = Color.Unspecified,
-            isDark = darkTheme,
-            isAmoled = amoledDarkTheme,
-            style = paletteStyle,
-            specVersion = colorSpec,
-            primary = dynamicBaseScheme.primary,
-            secondary = dynamicBaseScheme.secondary,
-            tertiary = dynamicBaseScheme.tertiary,
-            neutral = dynamicBaseScheme.surface,
-            neutralVariant = dynamicBaseScheme.surfaceVariant,
-            error = dynamicBaseScheme.error
-        )
-    } else {
-        rememberDynamicColorScheme(
-            seedColor = seedColor,
-            isDark = darkTheme,
-            isAmoled = amoledDarkTheme,
-            style = paletteStyle,
-            specVersion = colorSpec
-        )
+    // AndroidX already returns the user's final wallpaper-derived light/dark scheme.
+    // Re-generating it from resolved roles changes the palette selected in system settings.
+    if (dynamicBaseScheme != null) {
+        // Wallpaper dynamic colors supply accents, but their surface roles must not
+        // replace the globally selected AMOLED black surfaces.
+        return if (darkTheme && amoledDarkTheme) {
+            if (seedPaletteStyle.enabled) enforceSeedTextContrast(darkenSeedColorScheme(dynamicBaseScheme))
+            else applyAmoledSurfaceOverrides(dynamicBaseScheme)
+        } else {
+            if (seedPaletteStyle.enabled) enforceSeedTextContrast(dynamicBaseScheme) else dynamicBaseScheme
+        }
     }
 
-    val readableScheme = if (!darkTheme) {
-        enforceDynamicLightTextContrast(scheme)
-    } else {
-        scheme
+    if (seedPaletteStyle.enabled) {
+        return createSeedColorScheme(seedColor, darkTheme, seedPaletteStyle, amoledDarkTheme, colorSpec)
     }
-    return if (dynamicBaseScheme == null) {
-        alignStaticColorSchemeWithThemePrimary(
-            scheme = readableScheme,
-            themePrimaryColor = seedColor,
-            darkTheme = darkTheme
-        )
-    } else {
-        readableScheme
-    }
+
+    val scheme = dynamicColorScheme(
+        seedColor = seedColor,
+        isDark = darkTheme,
+        isAmoled = amoledDarkTheme,
+        style = paletteStyle,
+        specVersion = resolveMaterialPaletteSpec(paletteStyle, colorSpec),
+        contrastLevel = colorContrast.value,
+    )
+
+    val readableScheme = enforceDynamicTextContrast(scheme)
+    // 不再把原始种子 hex 盖进 surfaceTint：tonal elevation 表面（弹窗、菜单等）
+    // 会把 surfaceTint 混入容器色，未调和的亮种子会将其染成过饱和色。保留
+    // materialkolor 原生调和的 surfaceTint，与壁纸取色路径行为一致。
+    return readableScheme
 }
 
 @Composable
 fun PureBiliBiliTheme(
-    uiPreset: UiPreset = UiPreset.IOS,
-    androidNativeVariant: AndroidNativeVariant = AndroidNativeVariant.MATERIAL3,
+    uiStyle: AppUiStyle = AppUiStyle.MATERIAL3,
     themeMode: AppThemeMode = AppThemeMode.FOLLOW_SYSTEM,
     darkTheme: Boolean = isSystemInDarkTheme(),
     dynamicColor: Boolean = false,
@@ -793,20 +867,22 @@ fun PureBiliBiliTheme(
     },
     md3CustomColorHex: String = "#007AFF",
     themeRoleOverrides: ThemeRoleOverrides = ThemeRoleOverrides(),
+    wallpaperPaletteOverrides: com.android.purebilibili.core.store.WallpaperPaletteOverrides =
+        com.android.purebilibili.core.store.WallpaperPaletteOverrides(),
+    seedPaletteStyle: SeedPaletteStyle = SeedPaletteStyle.Standard,
     colorStyle: PaletteStyle = PaletteStyle.TonalSpot,
-    colorSpec: ColorSpec.SpecVersion = ColorSpec.SpecVersion.SPEC_2021,
+    colorSpec: ColorSpec.SpecVersion = ColorSpec.SpecVersion.SPEC_2025,
+    colorContrast: Contrast = Contrast.Default,
     fontSizePreset: AppFontSizePreset = AppFontSizePreset.DEFAULT,
+    appFontWeightPreset: AppFontWeightPreset = AppFontWeightPreset.FOLLOW_THEME,
     appFontFileName: String = "",
+    appIconStyle: AppIconStyle = AppIconStyle.AUTO,
+    appListItemStyle: AppListItemStyle = AppListItemStyle.AUTO,
+    liquidGlassEnabled: Boolean = true,
+    themeTransitionEnabled: Boolean = true,
     content: @Composable () -> Unit
 ) {
     val context = LocalContext.current
-    
-    //  获取 MD3 主题种子色。跟随壁纸时仍保留旧预设色作为非 S 设备后备。
-    val customPrimaryColor = resolveMd3ThemeSeedColor(
-        source = md3ColorSource,
-        customColorHex = md3CustomColorHex,
-        themeColorIndex = themeColorIndex
-    )
 
     val isDynamicColorActive = resolveEffectiveDynamicColorEnabled(
         dynamicColorEnabled = resolveMd3DynamicColorEnabled(
@@ -814,146 +890,223 @@ fun PureBiliBiliTheme(
             sdkInt = Build.VERSION.SDK_INT
         ),
         amoledDarkTheme = amoledDarkTheme,
-        uiPreset = uiPreset
+        uiStyle = uiStyle
     )
-    val shapes = resolveMaterialShapes(uiPreset, androidNativeVariant)
+    val shapes = resolveMaterialShapes(uiStyle)
     val appFontFamily = remember(context, appFontFileName) {
         loadStoredAppFontFamily(context, appFontFileName)
     }
-    val materialTypography = resolveMaterialTypography(
-        uiPreset = uiPreset,
-        androidNativeVariant = androidNativeVariant
-    ).scaled(fontSizePreset.multiplier)
+    val materialTypography = resolveMaterialTypography(uiStyle, liquidGlassEnabled)
+        .scaled(fontSizePreset.multiplier)
         .withFontFamily(appFontFamily)
-    val materialMotionScheme = remember(uiPreset, androidNativeVariant) {
-        resolveMaterialMotionScheme(uiPreset, androidNativeVariant)
+        .withFontWeight(appFontWeightPreset.fontWeight)
+    val materialMotionScheme = remember(uiStyle) {
+        resolveMaterialMotionScheme(uiStyle)
     }
-    val miuixTextStyles = remember(fontSizePreset, appFontFamily) {
-        defaultTextStyles()
+    val miuixTextStyles = remember(uiStyle, liquidGlassEnabled, fontSizePreset, appFontFamily, appFontWeightPreset) {
+        resolveMaterialTypography(uiStyle, liquidGlassEnabled)
+            .toMiuixTextStyles()
             .scaled(fontSizePreset.multiplier)
             .withFontFamily(appFontFamily)
+            .withFontWeight(appFontWeightPreset.fontWeight)
     }
     val systemWallpaperRefreshToken = rememberSystemWallpaperRefreshToken(isDynamicColorActive)
-    val dynamicLightBaseScheme = if (isDynamicColorActive) {
-        key(systemWallpaperRefreshToken) {
-            dynamicLightColorScheme(context)
-        }
-    } else {
-        null
-    }
-    val dynamicDarkBaseScheme = if (isDynamicColorActive) {
-        key(systemWallpaperRefreshToken) {
-            dynamicDarkColorScheme(context)
-        }
-    } else {
-        null
-    }
-    val lightMaterialScheme = if (uiPreset == UiPreset.IOS) {
-        rememberIosColorScheme(
-            seedColor = customPrimaryColor,
-            darkTheme = false,
-            amoledDarkTheme = false,
-            dynamicAccentScheme = dynamicLightBaseScheme
-        )
-    } else {
-        rememberKernelSuStyleColorScheme(
-            seedColor = customPrimaryColor,
-            darkTheme = false,
-            amoledDarkTheme = false,
-            paletteStyle = colorStyle,
-            colorSpec = colorSpec,
-            dynamicBaseScheme = dynamicLightBaseScheme
-        )
-    }
-    val darkMaterialScheme = if (uiPreset == UiPreset.IOS) {
-        rememberIosColorScheme(
-            seedColor = customPrimaryColor,
-            darkTheme = true,
-            amoledDarkTheme = amoledDarkTheme,
-            dynamicAccentScheme = dynamicDarkBaseScheme
-        )
-    } else {
-        rememberKernelSuStyleColorScheme(
-            seedColor = customPrimaryColor,
-            darkTheme = true,
-            amoledDarkTheme = amoledDarkTheme,
-            paletteStyle = colorStyle,
-            colorSpec = colorSpec,
-            dynamicBaseScheme = dynamicDarkBaseScheme
-        )
-    }
-
-    val resolvedLightMaterialScheme = remember(lightMaterialScheme, themeRoleOverrides) {
-        applyThemeRoleOverrides(lightMaterialScheme, themeRoleOverrides, darkTheme = false)
-    }
-    val resolvedDarkMaterialScheme = remember(darkMaterialScheme, themeRoleOverrides) {
-        applyThemeRoleOverrides(darkMaterialScheme, themeRoleOverrides, darkTheme = true)
-    }
-    val baseThemeRoleOverrides = remember(lightMaterialScheme, darkMaterialScheme) {
-        themeRoleOverridesFromSchemes(
-            lightScheme = lightMaterialScheme,
-            darkScheme = darkMaterialScheme
-        )
-    }
-    val staticMaterialScheme = if (darkTheme) resolvedDarkMaterialScheme else resolvedLightMaterialScheme
-    val miuixLightColors = remember(resolvedLightMaterialScheme) {
-        resolveMiuixColorsFromMaterialBridge(
-            bridge = createMiuixMaterialBridge(resolvedLightMaterialScheme),
-            darkTheme = false
-        )
-    }
-    val miuixDarkColors = remember(resolvedDarkMaterialScheme) {
-        resolveMiuixColorsFromMaterialBridge(
-            bridge = createMiuixMaterialBridge(resolvedDarkMaterialScheme),
-            darkTheme = true
-        )
-    }
-    val controller = remember(
-        themeMode,
-        dynamicColor,
-        darkTheme,
-        customPrimaryColor,
-        themeRoleOverrides,
-        amoledDarkTheme,
-        colorStyle,
-        colorSpec,
-        systemWallpaperRefreshToken,
-        miuixLightColors,
-        miuixDarkColors
+    val wallpaperCompatibility by rememberWallpaperColorCompatibility(isDynamicColorActive, systemWallpaperRefreshToken)
+    val compatibilitySeed = wallpaperCompatibility.seed.takeIf { isDynamicColorActive }
+    val customPrimaryColor = remember(
+        context, md3ColorSource, md3CustomColorHex, themeColorIndex, systemWallpaperRefreshToken, compatibilitySeed,
     ) {
-        ThemeController(
-            colorSchemeMode = resolveMiuixColorSchemeMode(
-                themeMode = themeMode,
-                dynamicColorEnabled = dynamicColor
-            ),
-            lightColors = miuixLightColors,
-            darkColors = miuixDarkColors,
-            isDark = darkTheme
+        resolveMd3ThemeSeedColor(
+            source = md3ColorSource,
+            customColorHex = md3CustomColorHex,
+            themeColorIndex = themeColorIndex,
+            wallpaperSeed = if (md3ColorSource == Md3ColorSource.WALLPAPER_RETONED) {
+                compatibilitySeed ?: readSystemWallpaperSeed(context)
+            } else null,
         )
     }
-    val materialColorScheme = staticMaterialScheme
+    val dynamicLightBaseScheme = if (
+        md3ColorSource == Md3ColorSource.FOLLOW_WALLPAPER &&
+        isDynamicColorActive && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    ) {
+        // key() only groups composition; it does not cache these resource-backed
+        // palettes. A new ColorScheme on each theme frame changes the transition
+        // endpoint by identity and can keep the entire app recomposing indefinitely.
+        remember(context, systemWallpaperRefreshToken, seedPaletteStyle, compatibilitySeed, colorStyle, colorSpec, colorContrast) {
+            if (compatibilitySeed != null) createBiliPaiStyleColorScheme(
+                compatibilitySeed, false, false, colorStyle, colorSpec,
+                colorContrast = colorContrast, seedPaletteStyle = seedPaletteStyle,
+            ) else if (seedPaletteStyle.enabled) readSeedWallpaperColorScheme(context, false)
+            else dynamicLightColorScheme(context)
+        }
+    } else {
+        null
+    }
+    val dynamicDarkBaseScheme = if (
+        md3ColorSource == Md3ColorSource.FOLLOW_WALLPAPER &&
+        isDynamicColorActive && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    ) {
+        remember(context, systemWallpaperRefreshToken, seedPaletteStyle, compatibilitySeed, colorStyle, colorSpec, colorContrast) {
+            if (compatibilitySeed != null) createBiliPaiStyleColorScheme(
+                compatibilitySeed, true, false, colorStyle, colorSpec,
+                colorContrast = colorContrast, seedPaletteStyle = seedPaletteStyle,
+            ) else if (seedPaletteStyle.enabled) readSeedWallpaperColorScheme(context, true)
+            else dynamicDarkColorScheme(context)
+        }
+    } else {
+        null
+    }
+    val lightMaterialScheme = rememberBiliPaiStyleColorScheme(
+        seedColor = customPrimaryColor,
+        darkTheme = false,
+        amoledDarkTheme = false,
+        paletteStyle = colorStyle,
+        colorSpec = colorSpec,
+        uiStyle = uiStyle,
+        dynamicBaseScheme = dynamicLightBaseScheme,
+        colorContrast = colorContrast,
+        seedPaletteStyle = seedPaletteStyle,
+    )
+    val darkMaterialScheme = rememberBiliPaiStyleColorScheme(
+        seedColor = customPrimaryColor,
+        darkTheme = true,
+        amoledDarkTheme = amoledDarkTheme,
+        paletteStyle = colorStyle,
+        colorSpec = colorSpec,
+        uiStyle = uiStyle,
+        dynamicBaseScheme = dynamicDarkBaseScheme,
+        colorContrast = colorContrast,
+        seedPaletteStyle = seedPaletteStyle,
+    )
+
+    val baseThemeRoleOverrides = remember(lightMaterialScheme, darkMaterialScheme, uiStyle, amoledDarkTheme, liquidGlassEnabled) {
+        // 高级编辑器从当前材质的实际色板开始，保留背景、文字与控件的配对关系。
+        themeRoleOverridesFromSchemes(
+            lightMaterialScheme, darkMaterialScheme, uiStyle, amoledDarkTheme, liquidGlassEnabled,
+        )
+    }
+    val effectiveThemeRoleOverrides = remember(md3ColorSource, themeRoleOverrides, uiStyle, baseThemeRoleOverrides, md3CustomColorHex, seedPaletteStyle) {
+        // Extended palettes own all generated roles. Saved advanced edits remain
+        // available when returning to Standard; no seed/primary rewrite in this mode.
+        val effective = resolveEffectiveThemeRoleOverrides(md3ColorSource, themeRoleOverrides)
+            .let { if (seedPaletteStyle.enabled) it.copy(enabled = false) else it }
+        if (effective.enabled) {
+            enableThemeRoleOverrides(effective, baseThemeRoleOverrides, md3CustomColorHex)
+        } else effective
+    }
+    val resolvedLightMaterialScheme = remember(
+        lightMaterialScheme, effectiveThemeRoleOverrides, colorStyle, colorSpec, uiStyle,
+        liquidGlassEnabled, md3ColorSource, customPrimaryColor, colorContrast, seedPaletteStyle,
+    ) {
+        resolveConfiguredMaterialScheme(
+            lightMaterialScheme, effectiveThemeRoleOverrides, false, colorStyle, colorSpec,
+            colorContrast, seedPaletteStyle, md3ColorSource, customPrimaryColor, liquidGlassEnabled, uiStyle,
+        )
+    }
+    val resolvedDarkMaterialScheme = remember(
+        darkMaterialScheme, effectiveThemeRoleOverrides, colorStyle, colorSpec, uiStyle,
+        liquidGlassEnabled, md3ColorSource, customPrimaryColor, colorContrast, seedPaletteStyle,
+    ) {
+        resolveConfiguredMaterialScheme(
+            darkMaterialScheme, effectiveThemeRoleOverrides, true, colorStyle, colorSpec,
+            colorContrast, seedPaletteStyle, md3ColorSource, customPrimaryColor, liquidGlassEnabled, uiStyle,
+        )
+    }
+    val lightEndpointPalette = remember(
+        resolvedLightMaterialScheme, uiStyle, md3ColorSource, amoledDarkTheme,
+        wallpaperPaletteOverrides, customPrimaryColor, effectiveThemeRoleOverrides, liquidGlassEnabled, seedPaletteStyle,
+    ) {
+        resolveAppThemeEndpointPalette(
+            base = resolvedLightMaterialScheme,
+            uiStyle = uiStyle,
+            source = md3ColorSource,
+            darkTheme = false,
+            amoledDarkTheme = false,
+            wallpaperOverrides = wallpaperPaletteOverrides,
+            customSeed = customPrimaryColor,
+            roleOverrides = effectiveThemeRoleOverrides,
+            liquidGlassEnabled = liquidGlassEnabled,
+            preserveGeneratedPalette = seedPaletteStyle.enabled,
+        )
+    }
+    val darkEndpointPalette = remember(
+        resolvedDarkMaterialScheme, uiStyle, md3ColorSource, amoledDarkTheme,
+        wallpaperPaletteOverrides, customPrimaryColor, effectiveThemeRoleOverrides, liquidGlassEnabled, seedPaletteStyle,
+    ) {
+        resolveAppThemeEndpointPalette(
+            base = resolvedDarkMaterialScheme,
+            uiStyle = uiStyle,
+            source = md3ColorSource,
+            darkTheme = true,
+            amoledDarkTheme = amoledDarkTheme,
+            wallpaperOverrides = wallpaperPaletteOverrides,
+            customSeed = customPrimaryColor,
+            roleOverrides = effectiveThemeRoleOverrides,
+            liquidGlassEnabled = liquidGlassEnabled,
+            preserveGeneratedPalette = seedPaletteStyle.enabled,
+        )
+    }
+    // Only immutable settings/resource endpoints enter the transition. Animated frame
+    // palettes flow down to components and never become new generation inputs.
+    val targetPalette = if (darkTheme) darkEndpointPalette else lightEndpointPalette
+    val reduceMotion = com.android.purebilibili.core.ui.motion.rememberSystemReduceMotion()
+    val animatedPalette = rememberAnimatedAppThemePalette(
+        target = targetPalette,
+        enabled = themeTransitionEnabled && !reduceMotion,
+    )
+    val materialColorScheme = animatedPalette.material
+    val colorSchemeMode = resolveMiuixColorSchemeMode(themeMode, dynamicColor)
+    val controller = remember(colorSchemeMode, animatedPalette.miuix, darkTheme) {
+        // Both modes expose the already resolved active frame. Letting the controller
+        // choose an unanimated endpoint would desynchronize native Miuix and Material.
+        ThemeController(
+            colorSchemeMode = colorSchemeMode,
+            lightColors = animatedPalette.miuix,
+            darkColors = animatedPalette.miuix,
+            isDark = darkTheme,
+        )
+    }
 
     //  [新增] 动态设置状态栏图标颜色
     val view = LocalView.current
+    val themeDefaultLightBars = materialColorScheme.background.luminance() > 0.5f
     if (!view.isInEditMode) {
-        SideEffect {
-            val window = (view.context as Activity).window
+        // Apply only when the brightness boundary changes. Reapplying on every color
+        // frame would overwrite player/immersive pages that own their system-bar style.
+        LaunchedEffect(view, themeDefaultLightBars) {
+            val window = view.context.findHostActivity()?.window ?: return@LaunchedEffect
+            val controller = WindowCompat.getInsetsController(window, view)
             // 设置状态栏图标颜色：
             // - 深色模式：使用浅色图标 (isAppearanceLightStatusBars = false)
             // - 浅色模式：使用深色图标 (isAppearanceLightStatusBars = true)
-            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
+            // 这里是主题默认外观的兜底出口；有场景外观的页面（首页皮肤、视频沉浸等）
+            // 会在自己的 effect 中覆盖。仅在明暗边界变化时更新主题默认值，
+            // 避免逐帧配色更新与页面 effect 争抢状态栏外观。
+            if (controller.isAppearanceLightStatusBars != themeDefaultLightBars) {
+                controller.isAppearanceLightStatusBars = themeDefaultLightBars
+            }
         }
     }
 
+    val wallpaperPreviewSchemes = remember(dynamicLightBaseScheme, dynamicDarkBaseScheme) {
+        ThemeWallpaperPreviewSchemes(dynamicLightBaseScheme, dynamicDarkBaseScheme)
+    }
     CompositionLocalProvider(
-        LocalUiPreset provides uiPreset,
-        LocalAndroidNativeVariant provides androidNativeVariant,
+        LocalThemeWallpaperPreviewSchemes provides wallpaperPreviewSchemes,
+        LocalAppUiStyle provides uiStyle,
         LocalDynamicColorActive provides isDynamicColorActive,
+        LocalWallpaperColorCompatibility provides wallpaperCompatibility,
         LocalBaseThemeRoleOverrides provides baseThemeRoleOverrides,
-        LocalCornerRadiusScale provides resolveCornerRadiusScale(
-            uiPreset = uiPreset,
-            androidNativeVariant = androidNativeVariant
-        )
+        com.android.purebilibili.core.ui.LocalLiquidControlThemeColor provides animatedPalette.liquidAccent,
+        LocalAppIconStyle provides resolveAppIconStyle(
+            iconStyle = appIconStyle,
+            uiStyle = uiStyle
+        ),
+        LocalAppListItemStyle provides resolveAppListItemStyle(
+            style = appListItemStyle,
+            uiStyle = uiStyle
+        ),
+        LocalCornerRadiusScale provides resolveCornerRadiusScale(uiStyle)
     ) {
         MiuixTheme(
             controller = controller,
@@ -964,7 +1117,13 @@ fun PureBiliBiliTheme(
                 typography = materialTypography,
                 shapes = shapes,
                 motionScheme = materialMotionScheme,
-                content = content
+                content = {
+                    com.android.purebilibili.core.ui.ProvideAppContentColors(
+                        nativeInteractionColors = com.android.purebilibili.core.ui.isMiuixNonGlassEnabled(uiStyle, liquidGlassEnabled),
+                        miuixContentColors = uiStyle == AppUiStyle.MIUIX,
+                        content = content,
+                    )
+                }
             )
         }
     }

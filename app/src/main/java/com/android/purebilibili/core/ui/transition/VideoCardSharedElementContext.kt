@@ -6,3 +6,7 @@ internal val LocalVideoCardSharedElementSourceRoute = compositionLocalOf<String?
 internal val LocalVideoSharedTransitionSpeedSettings = compositionLocalOf {
     VideoSharedTransitionSpeedSettings()
 }
+internal val LocalClickToPlayEnabled = compositionLocalOf { false }
+internal val LocalDynamicImagePreviewTextVisible = compositionLocalOf { true }
+internal val LocalDynamicCommentPreviewVisible = compositionLocalOf { false }
+

@@ -1,5 +1,10 @@
 package com.android.purebilibili.feature.plugin
 
+import com.android.purebilibili.core.plugin.BuiltinPluginIds
+
+import com.android.purebilibili.core.ui.AppContentColors
+import com.android.purebilibili.core.ui.components.AppHorizontalDivider
+
 import android.content.Context
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -7,12 +12,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.HorizontalDivider
+import com.android.purebilibili.core.ui.components.AppButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
+import com.android.purebilibili.core.ui.components.AppOutlinedTextField
+import com.android.purebilibili.core.ui.components.AppSwitch
+import com.android.purebilibili.core.ui.components.AppText
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -27,15 +32,24 @@ import androidx.compose.ui.unit.dp
 import com.android.purebilibili.R
 import com.android.purebilibili.core.coroutines.AppScope
 import com.android.purebilibili.core.network.NetworkModule
-import com.android.purebilibili.core.plugin.Plugin
-import com.android.purebilibili.core.plugin.PluginCapability
-import com.android.purebilibili.core.plugin.PluginCapabilityManifest
+import com.android.purebilibili.core.plugin.BuiltinPlugin
+import com.android.purebilibili.plugin.sdk.PlaybackCdnPlugin
+import com.android.purebilibili.plugin.sdk.PlaybackCdnRewriteResult
+import com.android.purebilibili.plugin.sdk.PlaybackCdnCandidate
+import com.android.purebilibili.plugin.sdk.PlaybackCdnCandidateSource
+import com.android.purebilibili.plugin.sdk.CdnHealthEvent
+import com.android.purebilibili.plugin.sdk.CdnLineDiagnostic
+import com.android.purebilibili.plugin.sdk.PluginCapability
+import com.android.purebilibili.plugin.sdk.PluginCapabilityManifest
 import com.android.purebilibili.core.plugin.PluginManager
 import com.android.purebilibili.core.plugin.PluginStore
 import com.android.purebilibili.core.util.Logger
-import io.github.alexzhirkevich.cupertino.icons.CupertinoIcons
-import io.github.alexzhirkevich.cupertino.icons.outlined.ServerRack
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Dns
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
@@ -45,18 +59,10 @@ import okhttp3.Request
 import java.net.InetSocketAddress
 import java.net.Socket
 
-const val CDN_REGION_PLUGIN_ID = "cdn_region"
 private const val TAG = "CdnRegionPlugin"
-private const val CDN_PROBE_SAMPLE_BYTES = 64 * 1024
+private const val CDN_PROBE_SAMPLE_BYTES = 32 * 1024
+private const val CDN_ACTIVE_PLAYBACK_SESSION_TTL_MS = 10 * 60_000L
 
-data class PlaybackCdnRewriteResult(
-    val candidates: List<PlaybackCdnCandidate>,
-    val regionLabel: String?
-) {
-    val videoUrls: List<String> get() = candidates.map { it.videoUrl }
-    val audioUrls: List<String> get() = candidates.map { it.audioUrl.orEmpty() }
-    val sources: List<PlaybackCdnCandidateSource> get() = candidates.map { it.source }
-}
 
 private data class CdnProbeMeasure(
     val success: Boolean,
@@ -69,35 +75,23 @@ private data class CdnSettingsProbeTarget(
     val hosts: List<String>
 )
 
-interface PlaybackCdnPlugin : Plugin {
-    fun rewritePlaybackCandidates(
-        videoUrls: List<String>,
-        audioUrls: List<String>
-    ): PlaybackCdnRewriteResult
+/**
+ * Kept in memory only. Signed playurl addresses must never be written to plugin storage because
+ * they expire and would otherwise look like a reusable CDN rule on the next playback session.
+ */
+private data class CdnActivePlaybackSession(
+    val candidates: List<PlaybackCdnCandidate>,
+    val updatedAtMs: Long
+)
 
-    fun buildPlaybackCdnDiagnostics(
-        videoUrls: List<String>,
-        sources: List<PlaybackCdnCandidateSource> = emptyList()
-    ): List<CdnLineDiagnostic> = emptyList()
 
-    suspend fun probePlaybackCdnCandidates(
-        videoUrls: List<String>,
-        sources: List<PlaybackCdnCandidateSource> = emptyList()
-    ): List<CdnLineDiagnostic> = emptyList()
-
-    fun recordPlaybackCdnEvent(
-        url: String,
-        event: CdnHealthEvent
-    ) = Unit
-}
-
-class CdnRegionPlugin : PlaybackCdnPlugin {
-    override val id: String = CDN_REGION_PLUGIN_ID
-    override val name: String = "CDN 属地优选"
-    override val description: String = "按当前 IP 属地优选 B 站视频 CDN，并支持高级 URL 替换规则"
-    override val version: String = "1.2.0"
+class CdnRegionPlugin : BuiltinPlugin, PlaybackCdnPlugin, CdnTransferControls {
+    override val id: String = BuiltinPluginIds.PLAYBACK_CDN
+    override val name: String = "CDN 智能选线"
+    override val description: String = "在 B 站当前授权的签名 CDN 候选中选线，并可选预缓存未来 DASH 分片"
+    override val version: String = "1.5.0"
     override val author: String = "BiliPai项目组"
-    override val icon: ImageVector = CupertinoIcons.Outlined.ServerRack
+    override val icon: ImageVector = Icons.Outlined.Dns
     override val capabilityManifest: PluginCapabilityManifest = PluginCapabilityManifest(
         pluginId = id,
         displayName = name,
@@ -112,6 +106,9 @@ class CdnRegionPlugin : PlaybackCdnPlugin {
     )
 
     @Volatile
+    private var running = false
+
+    @Volatile
     private var cache: CdnRegionPluginCache = CdnRegionPluginCache()
 
     @Volatile
@@ -120,10 +117,15 @@ class CdnRegionPlugin : PlaybackCdnPlugin {
     @Volatile
     private var compiledCustomRules: List<Pair<CdnCustomRule, Regex>> = emptyList()
 
+    @Volatile
+    private var activePlaybackSession: CdnActivePlaybackSession? = null
+
     override suspend fun onEnable() {
+        running = true
         val context = PluginManager.getContext()
         catalog = loadCdnRegionCatalog(context)
         cache = CdnRegionPluginStore.read(context)
+        CdnTransferRuntime.configure(running, cache.parallelDownloadEnabled && !cache.experimentalRewriteEnabled)
         compiledCustomRules = compileCdnCustomRules(cache.customRules)
         AppScope.ioScope.launch {
             delay(1_500L)
@@ -133,6 +135,9 @@ class CdnRegionPlugin : PlaybackCdnPlugin {
     }
 
     override suspend fun onDisable() {
+        running = false
+        CdnTransferRuntime.configure(false, false)
+        activePlaybackSession = null
         Logger.d(TAG, "CDN 属地优选已禁用")
     }
 
@@ -141,7 +146,23 @@ class CdnRegionPlugin : PlaybackCdnPlugin {
         audioUrls: List<String>
     ): PlaybackCdnRewriteResult {
         val snapshot = cache
+        CdnTransferRuntime.configure(running, snapshot.parallelDownloadEnabled && !snapshot.experimentalRewriteEnabled)
+        CdnTransferRuntime.register(videoUrls, audioUrls)
         val originalCandidates = buildPlaybackCdnCandidates(videoUrls, audioUrls)
+        publishActivePlaybackCandidates(originalCandidates)
+        if (!snapshot.experimentalRewriteEnabled) {
+            val initialCandidates = sortSafeSignedPlaybackCandidates(
+                candidates = originalCandidates,
+                healthByHost = snapshot.healthByHost
+            )
+            val rankedUrls = CdnTransferRuntime.rank(initialCandidates.map { it.videoUrl })
+            val safeCandidates = rankedUrls.mapNotNull { url -> initialCandidates.firstOrNull { it.videoUrl == url } }
+            return PlaybackCdnRewriteResult(
+                candidates = safeCandidates,
+                regionLabel = null,
+                cacheKeysByUrl = buildPlaybackCdnCacheKeys(safeCandidates)
+            )
+        }
         val customCandidates = rewritePlaybackCdnCandidatesForCompiledCustomRules(
             candidates = originalCandidates,
             compiledRules = compiledCustomRules
@@ -153,11 +174,17 @@ class CdnRegionPlugin : PlaybackCdnPlugin {
             isp = snapshot.location.isp
         )
         val regionCandidates = rewritePlaybackCdnCandidatesForRegion(originalCandidates, hosts)
-        val candidates = (customCandidates + regionCandidates + originalCandidates)
-            .distinctBy { it.videoUrl to it.audioUrl }
+        val candidates = selectPlaybackCdnCandidatesForMode(
+                customCandidates = customCandidates,
+                regionCandidates = regionCandidates,
+                originalCandidates = originalCandidates,
+                strictCustomCdn = snapshot.strictCustomCdn,
+                healthByHost = snapshot.healthByHost
+            )
         return PlaybackCdnRewriteResult(
-            candidates = sortPlaybackCdnCandidatesByHealth(candidates, snapshot.healthByHost),
-            regionLabel = snapshot.selectedRegion.takeIf { hosts.isNotEmpty() }
+            candidates = candidates,
+            regionLabel = snapshot.selectedRegion.takeIf { hosts.isNotEmpty() },
+            cacheKeysByUrl = buildPlaybackCdnCacheKeys(candidates)
         )
     }
 
@@ -172,13 +199,29 @@ class CdnRegionPlugin : PlaybackCdnPlugin {
         videoUrls: List<String>,
         sources: List<PlaybackCdnCandidateSource>
     ): List<CdnLineDiagnostic> {
+        return probePlaybackCdnCandidatesInternal(
+            videoUrls = videoUrls,
+            sources = sources,
+            ignoreCooldown = false
+        )
+    }
+
+    private suspend fun probePlaybackCdnCandidatesInternal(
+        videoUrls: List<String>,
+        sources: List<PlaybackCdnCandidateSource>,
+        ignoreCooldown: Boolean
+    ): List<CdnLineDiagnostic> {
         val context = PluginManager.getContext()
         val now = System.currentTimeMillis()
         val current = CdnRegionPluginStore.read(context).also { cache = it }
         val candidates = resolveCdnProbeCandidates(
             urls = videoUrls,
             healthByHost = current.healthByHost,
-            nowMs = now
+            nowMs = now,
+            limit = CdnProbeLimit(
+                maxCandidates = 3,
+                cooldownMs = if (ignoreCooldown) 0L else CDN_MANUAL_PROBE_COOLDOWN_MS
+            )
         )
         var nextHealth = current.healthByHost
         candidates.filter { it.allowed }.forEach { candidate ->
@@ -205,7 +248,7 @@ class CdnRegionPlugin : PlaybackCdnPlugin {
         if (host.isBlank()) return
         val now = System.currentTimeMillis()
         val current = cache
-        val previous = current.healthByHost[host] ?: CdnCandidateHealth(host = host)
+        val previous = decayCdnHealth(current.healthByHost[host] ?: CdnCandidateHealth(host = host), now)
         val next = current.copy(
             healthByHost = current.healthByHost + (host to recordCdnHealthEvent(previous, event, now))
         )
@@ -213,6 +256,19 @@ class CdnRegionPlugin : PlaybackCdnPlugin {
         AppScope.ioScope.launch {
             CdnRegionPluginStore.write(PluginManager.getContext(), next)
         }
+    }
+
+    override fun canUseParallelDownload(): Boolean = running && !cache.experimentalRewriteEnabled
+
+    override suspend fun setParallelDownloadEnabled(enabled: Boolean) {
+        val next = cache.copy(parallelDownloadEnabled = enabled)
+        CdnRegionPluginStore.write(PluginManager.getContext(), next)
+        cache = next
+        CdnTransferRuntime.configure(running, enabled && !next.experimentalRewriteEnabled)
+    }
+
+    override fun isAdaptivePrefetchEnabled(): Boolean {
+        return cache.prefetchEnabled && !cache.experimentalRewriteEnabled
     }
 
     @Composable
@@ -223,7 +279,16 @@ class CdnRegionPlugin : PlaybackCdnPlugin {
         var catalogSnapshot by remember { mutableStateOf(catalog) }
         var probing by remember { mutableStateOf(false) }
         var customRules by remember(snapshot.customRules) { mutableStateOf(snapshot.customRules) }
+        var strictCustomCdn by remember(snapshot.strictCustomCdn) { mutableStateOf(snapshot.strictCustomCdn) }
+        val transfers by CdnTransferRuntime.state.collectAsStateWithLifecycle()
+        var checkingPlayback by remember { mutableStateOf(false) }
+        var prefetchEnabled by remember(snapshot.prefetchEnabled) { mutableStateOf(snapshot.prefetchEnabled) }
+        var experimentalRewriteEnabled by remember(snapshot.experimentalRewriteEnabled) {
+            mutableStateOf(snapshot.experimentalRewriteEnabled)
+        }
         var customRuleError by remember { mutableStateOf<String?>(null) }
+        var activeCandidates by remember { mutableStateOf<List<PlaybackCdnCandidate>>(emptyList()) }
+        var liveDiagnostics by remember { mutableStateOf<List<CdnLineDiagnostic>>(emptyList()) }
 
         LaunchedEffect(Unit) {
             catalogSnapshot = catalog.ifEmpty {
@@ -231,11 +296,23 @@ class CdnRegionPlugin : PlaybackCdnPlugin {
             }
             snapshot = CdnRegionPluginStore.read(context).also { cache = it }
         }
+        LaunchedEffect(Unit) {
+            while (currentCoroutineContext().isActive) {
+                val mediaUrl = com.android.purebilibili.feature.video.player.MiniPlayerManager
+                    .getInstanceOrNull()?.player?.currentMediaItem?.localConfiguration?.uri?.toString()
+                mediaUrl?.let(CdnTransferRuntime::observeMediaUrl)
+                val session = activePlaybackSessionOrNull()
+                val observed = CdnTransferRuntime.recentMediaUrls().map { url ->
+                    PlaybackCdnCandidate(url, null, PlaybackCdnCandidateSource.ORIGINAL)
+                }
+                activeCandidates = observed.takeIf { it.isNotEmpty() } ?: session?.candidates.orEmpty()
+                liveDiagnostics = buildPlaybackCdnDiagnostics(
+                    activeCandidates.map { it.videoUrl }, activeCandidates.map { it.source }
+                )
+                delay(1_000L)
+            }
+        }
         val probeTarget = resolveSettingsProbeTarget(snapshot, catalogSnapshot)
-        val hostDiagnostics = buildCdnHostDiagnostics(
-            hosts = probeTarget.hosts.take(5),
-            healthByHost = snapshot.healthByHost
-        )
         val regionText = snapshot.selectedRegion.ifBlank {
             probeTarget.region.ifBlank { "未命中" }
         }
@@ -245,60 +322,161 @@ class CdnRegionPlugin : PlaybackCdnPlugin {
                 .fillMaxWidth()
                 .padding(12.dp)
         ) {
-            Text(
-                text = "属地：${snapshot.location.province.ifBlank { "未知" }} / ${snapshot.location.city.ifBlank { "未知" }}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+            AppText(
+                text = "安全签名选线",
+                style = MaterialTheme.typography.titleSmall,
+                color = AppContentColors.primaryText()
             )
-            Text(
-                text = "运营商：${snapshot.location.isp.ifBlank { "未知" }}，命中区域：$regionText",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+            AppText(
+                text = "打开视频后会自动比较 B 站当前返回的签名主/备线路；不会改写 Host，也不会保存过期链接。",
+                style = MaterialTheme.typography.labelSmall,
+                color = AppContentColors.secondaryText()
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            CdnTransferPanel(
+                state = transfers,
+                diagnostics = liveDiagnostics,
+                checking = checkingPlayback,
+                canCheck = activeCandidates.isNotEmpty(),
+                parallelEnabled = snapshot.parallelDownloadEnabled,
+                experimentalRewriteEnabled = snapshot.experimentalRewriteEnabled,
+                onParallelChange = { enabled ->
+                    val next = snapshot.copy(parallelDownloadEnabled = enabled)
+                    snapshot = next
+                    cache = next
+                    CdnTransferRuntime.configure(running, enabled && !next.experimentalRewriteEnabled)
+                    scope.launch { CdnRegionPluginStore.write(context, next) }
+                },
+                onCheck = {
+                    checkingPlayback = true
+                    scope.launch {
+                        try {
+                            liveDiagnostics = probePlaybackCdnCandidatesInternal(
+                                activeCandidates.map { it.videoUrl }, activeCandidates.map { it.source }, true
+                            )
+                            snapshot = cache
+                        } finally {
+                            checkingPlayback = false
+                        }
+                    }
+                },
+                onAvoid = CdnTransferRuntime::avoid,
+                onRestore = CdnTransferRuntime::restoreRoutes,
+                modifier = Modifier.fillMaxWidth()
             )
             Spacer(modifier = Modifier.height(8.dp))
-            hostDiagnostics.forEachIndexed { index, diagnostic ->
-                Text(
-                    text = "${index + 1}. ${diagnostic.host} · ${formatCdnHostDiagnostic(diagnostic)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface
+            Row(modifier = Modifier.fillMaxWidth()) {
+                AppText(
+                    text = "自适应预缓存",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium
                 )
-            }
-            if (hostDiagnostics.isEmpty()) {
-                Text(
-                    text = "暂无可检测候选 host，请稍后刷新属地或进入播放页检测当前线路。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Spacer(modifier = Modifier.height(10.dp))
-            Button(
-                enabled = !probing && probeTarget.hosts.isNotEmpty(),
-                onClick = {
-                    probing = true
-                    scope.launch {
-                        snapshot = probeSelectedHosts(context, snapshot, probeTarget)
-                        probing = false
+                AppSwitch(
+                    checked = prefetchEnabled,
+                    onCheckedChange = { enabled ->
+                        prefetchEnabled = enabled
+                        val next = snapshot.copy(prefetchEnabled = enabled)
+                        snapshot = next
+                        cache = next
+                        scope.launch { CdnRegionPluginStore.write(context, next) }
                     }
-                }
-            ) {
-                Text(if (probing) "检测中..." else "检测候选服务器")
+                )
             }
-            Text(
-                text = "检测仅手动触发，单次最多 5 个 host，同一 host 10 分钟冷却。",
+            AppText(
+                text = "仅在 DASH 可读取分片索引且播放器已有至少 15 秒缓冲时下载未来分片；默认关闭以避免额外流量、电量和磁盘消耗。",
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = AppContentColors.secondaryText()
             )
-            HorizontalDivider(modifier = Modifier.padding(top = 10.dp))
-            Spacer(modifier = Modifier.height(12.dp))
-            Text(
-                text = "高级 URL 替换",
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Text(
-                text = "规则按顺序匹配完整播放 URL，仅应用首条命中规则。替换结果必须是 HTTPS 且指向 B 站或当前候选 CDN；失败时会自动回退原始线路。",
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(modifier = Modifier.fillMaxWidth()) {
+                AppText(
+                    text = "实验性属地 / URL 改写",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                AppSwitch(
+                    checked = experimentalRewriteEnabled,
+                    onCheckedChange = { enabled ->
+                        experimentalRewriteEnabled = enabled
+                        val next = snapshot.copy(experimentalRewriteEnabled = enabled)
+                        CdnTransferRuntime.configure(running, next.parallelDownloadEnabled && !enabled)
+                        snapshot = next
+                        cache = next
+                        scope.launch { CdnRegionPluginStore.write(context, next) }
+                    }
+                )
+            }
+            AppText(
+                text = "兼容旧版地域 Host 表和高级 URL 替换。它不参与安全自动选线或预缓存，可能因签名与线路策略变化而不可用。",
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = AppContentColors.secondaryText()
+            )
+            if (experimentalRewriteEnabled) {
+                val hostDiagnostics = buildCdnHostDiagnostics(
+                    hosts = probeTarget.hosts.take(5),
+                    healthByHost = snapshot.healthByHost
+                )
+                AppHorizontalDivider(modifier = Modifier.padding(top = 10.dp))
+                Spacer(modifier = Modifier.height(12.dp))
+                AppText(
+                    text = "实验性属地检测",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = AppContentColors.primaryText()
+                )
+                AppText(
+                    text = "属地：${snapshot.location.province.ifBlank { "未知" }} / ${snapshot.location.city.ifBlank { "未知" }}；运营商：${snapshot.location.isp.ifBlank { "未知" }}；命中区域：$regionText",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AppContentColors.secondaryText()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                hostDiagnostics.forEachIndexed { index, diagnostic ->
+                    AppText(
+                        text = "${index + 1}. ${diagnostic.host} · ${formatCdnHostDiagnostic(diagnostic)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = AppContentColors.primaryText()
+                    )
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+                AppButton(
+                    enabled = !probing && probeTarget.hosts.isNotEmpty(),
+                    onClick = {
+                        probing = true
+                        scope.launch {
+                            snapshot = probeSelectedHosts(context, snapshot, probeTarget)
+                            probing = false
+                        }
+                    }
+                ) {
+                    AppText(if (probing) "检测中..." else "检测实验线路")
+                }
+                AppHorizontalDivider(modifier = Modifier.padding(top = 10.dp))
+                Spacer(modifier = Modifier.height(12.dp))
+                AppText(
+                    text = "高级 URL 替换",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = AppContentColors.primaryText()
+                )
+                AppText(
+                    text = "规则按顺序匹配完整播放 URL，仅应用首条命中规则。替换结果必须是 HTTPS 且指向 B 站或当前候选 CDN。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AppContentColors.secondaryText()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            Row(modifier = Modifier.fillMaxWidth()) {
+                AppText(
+                    text = "严格使用自定义 CDN",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                AppSwitch(
+                    checked = strictCustomCdn,
+                    onCheckedChange = { strictCustomCdn = it }
+                )
+            }
+            AppText(
+                text = "开启后，只要有自定义规则成功生成播放地址，就不再加入属地和原始线路；没有规则命中时仍会自动回退，避免无法播放。",
+                style = MaterialTheme.typography.labelSmall,
+                color = AppContentColors.secondaryText()
             )
             customRules.forEachIndexed { index, rule ->
                 Spacer(modifier = Modifier.height(8.dp))
@@ -329,39 +507,67 @@ class CdnRegionPlugin : PlaybackCdnPlugin {
             }
             Spacer(modifier = Modifier.height(8.dp))
             Row {
-                Button(onClick = {
+                AppButton(onClick = {
                     customRules = customRules + CdnCustomRule(enabled = false)
                     customRuleError = null
                 }) {
-                    Text("新增规则")
+                    AppText("新增规则")
                 }
                 Spacer(modifier = Modifier.padding(horizontal = 4.dp))
-                Button(onClick = {
+                AppButton(onClick = {
                     val error = validateCdnCustomRules(customRules)
                         .firstOrNull { it.error != null }
                         ?.error
                     if (error != null) {
                         customRuleError = error
                     } else {
-                        val next = snapshot.copy(customRules = customRules)
+                        val next = snapshot.copy(
+                            customRules = customRules,
+                            strictCustomCdn = strictCustomCdn
+                        )
                         snapshot = next
                         cache = next
                         compiledCustomRules = compileCdnCustomRules(next.customRules)
                         scope.launch { CdnRegionPluginStore.write(context, next) }
                     }
                 }) {
-                    Text("保存规则")
+                    AppText("保存规则")
                 }
             }
             customRuleError?.let { error ->
-                Text(
+                AppText(
                     text = error,
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.error
+                    color = AppContentColors.error()
                 )
             }
-            HorizontalDivider(modifier = Modifier.padding(top = 10.dp))
+            AppHorizontalDivider(modifier = Modifier.padding(top = 10.dp))
+            }
         }
+    }
+
+    private fun publishActivePlaybackCandidates(candidates: List<PlaybackCdnCandidate>) {
+        activePlaybackSession = CdnActivePlaybackSession(
+            candidates = candidates.distinctBy { it.videoUrl }.take(3),
+            updatedAtMs = System.currentTimeMillis()
+        )
+    }
+
+    private fun activePlaybackSessionOrNull(): CdnActivePlaybackSession? {
+        val session = activePlaybackSession ?: return null
+        return session.takeIf {
+            System.currentTimeMillis() - it.updatedAtMs <= CDN_ACTIVE_PLAYBACK_SESSION_TTL_MS
+        }
+    }
+
+    private fun formatCdnLineDiagnostic(diagnostic: CdnLineDiagnostic): String {
+        return buildList {
+            diagnostic.latencyMs?.let { add("${it}ms") }
+            diagnostic.speedKbps?.let { add("${it}Kbps") }
+            add(diagnostic.statusLabel)
+            if (diagnostic.errorCount > 0) add("失败 ${diagnostic.errorCount}")
+            if (diagnostic.bufferingCount > 0) add("缓冲 ${diagnostic.bufferingCount}")
+        }.distinct().joinToString(" · ")
     }
 
     @Composable
@@ -377,35 +583,35 @@ class CdnRegionPlugin : PlaybackCdnPlugin {
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             Row {
-                Text(
+                AppText(
                     text = "规则 ${index + 1}",
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.bodyMedium
                 )
-                Text("启用", style = MaterialTheme.typography.bodySmall)
-                Switch(checked = rule.enabled, onCheckedChange = { onChange(rule.copy(enabled = it)) })
+                AppText("启用", style = MaterialTheme.typography.bodySmall)
+                AppSwitch(checked = rule.enabled, onCheckedChange = { onChange(rule.copy(enabled = it)) })
             }
-            OutlinedTextField(
+            AppOutlinedTextField(
                 value = rule.pattern,
                 onValueChange = { onChange(rule.copy(pattern = it)) },
-                label = { Text("匹配正则") },
+                label = { AppText("匹配正则") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(modifier = Modifier.height(4.dp))
-            OutlinedTextField(
+            AppOutlinedTextField(
                 value = rule.replacement,
                 onValueChange = { onChange(rule.copy(replacement = it)) },
-                label = { Text("替换内容") },
+                label = { AppText("替换内容") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
             Row {
-                Button(enabled = canMoveUp, onClick = onMoveUp) { Text("上移") }
+                AppButton(enabled = canMoveUp, onClick = onMoveUp) { AppText("上移") }
                 Spacer(modifier = Modifier.padding(horizontal = 2.dp))
-                Button(enabled = canMoveDown, onClick = onMoveDown) { Text("下移") }
+                AppButton(enabled = canMoveDown, onClick = onMoveDown) { AppText("下移") }
                 Spacer(modifier = Modifier.padding(horizontal = 2.dp))
-                Button(onClick = onRemove) { Text("删除") }
+                AppButton(onClick = onRemove) { AppText("删除") }
             }
         }
     }
@@ -495,36 +701,20 @@ class CdnRegionPlugin : PlaybackCdnPlugin {
     }
 
     private suspend fun probePlaybackUrl(url: String): CdnProbeMeasure {
-        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            val startedAt = System.nanoTime()
-            runCatching {
-                val request = Request.Builder()
-                    .url(url)
-                    .header("Range", "bytes=0-${CDN_PROBE_SAMPLE_BYTES - 1}")
-                    .header("Referer", "https://www.bilibili.com")
-                    .build()
-                NetworkModule.playbackOkHttpClient.newCall(request).execute().use { response ->
-                    val bytesRead = response.body.byteStream().use { input ->
-                        val buffer = ByteArray(8 * 1024)
-                        var total = 0
-                        while (total < CDN_PROBE_SAMPLE_BYTES) {
-                            val read = input.read(buffer, 0, minOf(buffer.size, CDN_PROBE_SAMPLE_BYTES - total))
-                            if (read <= 0) break
-                            total += read
-                        }
-                        total
-                    }
-                    val elapsedMs = ((System.nanoTime() - startedAt) / 1_000_000L).coerceAtLeast(1L)
-                    CdnProbeMeasure(
-                        success = response.isSuccessful || response.code == 206,
-                        latencyMs = elapsedMs,
-                        speedKbps = if (bytesRead > 0) (bytesRead * 8L / elapsedMs).coerceAtLeast(1L) else null
-                    )
-                }
-            }.getOrElse { error ->
-                Logger.w(TAG, "CDN 播放候选检测失败: ${hostFromCdnUrl(url)} ${error.message}")
-                CdnProbeMeasure(success = false, latencyMs = null, speedKbps = null)
-            }
+        return try {
+            val sample = readExactCdnRange(
+                NetworkModule.playbackOkHttpClient, url, CdnByteRange(0, CDN_PROBE_SAMPLE_BYTES - 1L)
+            )
+            CdnProbeMeasure(
+                success = true,
+                latencyMs = sample.firstByteMs,
+                speedKbps = (sample.bytes.size * 8L / sample.elapsedMs).coerceAtLeast(1)
+            )
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: java.io.IOException) {
+            Logger.w(TAG, "CDN 播放候选检测失败: ${hostFromCdnUrl(url)} ${error.javaClass.simpleName}")
+            CdnProbeMeasure(false, null, null)
         }
     }
 
@@ -538,6 +728,7 @@ class CdnRegionPlugin : PlaybackCdnPlugin {
                 val elapsedMs = ((System.nanoTime() - startedAt) / 1_000_000L).coerceAtLeast(1L)
                 CdnProbeMeasure(success = true, latencyMs = elapsedMs, speedKbps = null)
             }.getOrElse { error ->
+                if (error is CancellationException) throw error
                 Logger.w(TAG, "CDN host 检测失败: $host ${error.message}")
                 CdnProbeMeasure(success = false, latencyMs = null, speedKbps = null)
             }
@@ -599,15 +790,14 @@ class CdnRegionPlugin : PlaybackCdnPlugin {
                 location = location,
                 catalog = loadedCatalog
             )
-            val next = CdnRegionPluginCache(
+            val next = current.copy(
                 location = location,
                 selectedRegion = selection.region,
                 selectedHosts = selection.hosts,
                 fallbackRegion = "",
                 fallbackUsed = selection.fallbackUsed,
                 refreshedAtMs = System.currentTimeMillis(),
-                lastError = null,
-                healthByHost = current.healthByHost
+                lastError = null
             )
             cache = next
             CdnRegionPluginStore.write(context, next)
@@ -636,7 +826,11 @@ internal data class CdnRegionPluginCache(
     val refreshedAtMs: Long = 0L,
     val lastError: String? = null,
     val healthByHost: Map<String, CdnCandidateHealth> = emptyMap(),
-    val customRules: List<CdnCustomRule> = emptyList()
+    val customRules: List<CdnCustomRule> = emptyList(),
+    val strictCustomCdn: Boolean = false,
+    val prefetchEnabled: Boolean = false,
+    val parallelDownloadEnabled: Boolean = false,
+    val experimentalRewriteEnabled: Boolean = false
 )
 
 internal object CdnRegionPluginStore {
@@ -646,15 +840,17 @@ internal object CdnRegionPluginStore {
     }
 
     suspend fun read(context: Context): CdnRegionPluginCache {
-        val raw = PluginStore.getConfigJson(context, CDN_REGION_PLUGIN_ID) ?: return CdnRegionPluginCache()
-        return runCatching { json.decodeFromString<CdnRegionPluginCache>(raw) }
+        val raw = PluginStore.getConfigJson(context, BuiltinPluginIds.PLAYBACK_CDN) ?: return CdnRegionPluginCache()
+        val stored = runCatching { json.decodeFromString<CdnRegionPluginCache>(raw) }
             .getOrDefault(CdnRegionPluginCache())
+        val now = System.currentTimeMillis()
+        return stored.copy(healthByHost = stored.healthByHost.mapValues { decayCdnHealth(it.value, now) })
     }
 
     suspend fun write(context: Context, cache: CdnRegionPluginCache) {
         PluginStore.setConfigJson(
             context = context,
-            pluginId = CDN_REGION_PLUGIN_ID,
+            pluginId = BuiltinPluginIds.PLAYBACK_CDN,
             configJson = json.encodeToString(cache)
         )
     }

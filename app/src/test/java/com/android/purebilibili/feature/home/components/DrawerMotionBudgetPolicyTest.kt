@@ -20,8 +20,9 @@ class DrawerMotionBudgetPolicyTest {
     }
 
     @Test
-    fun blurWaitsUntilDrawerTransitionSettles() {
-        assertFalse(
+    fun blurStaysEnabledDuringDrawerTransition() {
+        // 开合不能延后启用模糊，也不能切换采样网格。
+        assertTrue(
             shouldEnableDrawerBlur(
                 blurActive = true,
                 budget = DrawerMotionBudget.REDUCED
@@ -33,11 +34,17 @@ class DrawerMotionBudgetPolicyTest {
                 budget = DrawerMotionBudget.FULL
             )
         )
+        assertFalse(
+            shouldEnableDrawerBlur(
+                blurActive = false,
+                budget = DrawerMotionBudget.FULL
+            )
+        )
     }
 
     @Test
-    fun drawerTransition_forcesLowBlurBudget() {
-        assertTrue(shouldForceLowDrawerBlurBudget(DrawerMotionBudget.REDUCED))
+    fun drawerTransition_keepsBlurAndRefractionBudgetStable() {
+        assertFalse(shouldForceLowDrawerBlurBudget(DrawerMotionBudget.REDUCED))
         assertFalse(shouldForceLowDrawerBlurBudget(DrawerMotionBudget.FULL))
     }
 }

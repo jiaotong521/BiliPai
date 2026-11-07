@@ -1,5 +1,6 @@
 package com.android.purebilibili.feature.video.ui.section
 
+import androidx.media3.common.Player
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -12,7 +13,8 @@ class VideoPlayerSurfacePolicyTest {
         assertFalse(
             shouldUseTextureSurfaceForFlip(
                 isFlippedHorizontal = false,
-                isFlippedVertical = false
+                isFlippedVertical = false,
+                preferCompatibleTextureSurface = false,
             )
         )
     }
@@ -22,7 +24,8 @@ class VideoPlayerSurfacePolicyTest {
         assertTrue(
             shouldUseTextureSurfaceForFlip(
                 isFlippedHorizontal = true,
-                isFlippedVertical = false
+                isFlippedVertical = false,
+                preferCompatibleTextureSurface = false,
             )
         )
     }
@@ -32,7 +35,8 @@ class VideoPlayerSurfacePolicyTest {
         assertTrue(
             shouldUseTextureSurfaceForFlip(
                 isFlippedHorizontal = false,
-                isFlippedVertical = true
+                isFlippedVertical = true,
+                preferCompatibleTextureSurface = false,
             )
         )
     }
@@ -43,7 +47,8 @@ class VideoPlayerSurfacePolicyTest {
             shouldUseTextureSurfaceForFlip(
                 isFlippedHorizontal = false,
                 isFlippedVertical = false,
-                liveBackPreview = true
+                liveBackPreview = true,
+                preferCompatibleTextureSurface = false,
             )
         )
     }
@@ -54,9 +59,99 @@ class VideoPlayerSurfacePolicyTest {
             shouldUseTextureSurfaceForFlip(
                 isFlippedHorizontal = false,
                 isFlippedVertical = false,
-                navigationTransformEnabled = true
+                navigationTransformEnabled = true,
+                preferCompatibleTextureSurface = false,
             )
         )
+    }
+
+    @Test
+    fun `hdr output forces surface view even when navigation transform is enabled`() {
+        assertFalse(
+            shouldUseTextureSurfaceForFlip(
+                isFlippedHorizontal = false,
+                isFlippedVertical = false,
+                navigationTransformEnabled = true,
+                requiresHdrSurfaceOutput = true,
+                preferCompatibleTextureSurface = true,
+            )
+        )
+        // 请求翻转也不能让 HDR 输出降为纹理合成的 SDR。
+        assertFalse(
+            shouldUseTextureSurfaceForFlip(
+                isFlippedHorizontal = true,
+                isFlippedVertical = false,
+                navigationTransformEnabled = true,
+                requiresHdrSurfaceOutput = true,
+                preferCompatibleTextureSurface = true,
+            )
+        )
+        assertFalse(
+            shouldUseTextureSurfaceForFlip(
+                isFlippedHorizontal = false,
+                isFlippedVertical = true,
+                liveBackPreview = true,
+                requiresHdrSurfaceOutput = true,
+                preferCompatibleTextureSurface = true,
+            )
+        )
+    }
+
+    @Test
+    fun `live surface switch gates navigation texture request`() {
+        assertTrue(
+            resolveNavigationLiveSurfaceTextureEnabled(
+                cardTransitionEnabled = true,
+                liveSurfaceCardTransitionEnabled = true,
+            )
+        )
+        assertFalse(
+            resolveNavigationLiveSurfaceTextureEnabled(
+                cardTransitionEnabled = true,
+                liveSurfaceCardTransitionEnabled = false,
+            )
+        )
+        assertFalse(
+            resolveNavigationLiveSurfaceTextureEnabled(
+                cardTransitionEnabled = false,
+                liveSurfaceCardTransitionEnabled = true,
+            )
+        )
+    }
+
+    @Test
+    fun `live player shared element never attaches under hdr`() {
+        assertTrue(
+            resolveAllowLivePlayerSharedElementForMorph(
+                cardTransitionEnabled = true,
+                liveSurfaceCardTransitionEnabled = true,
+                requiresHdrSurfaceOutput = false,
+            )
+        )
+        assertFalse(
+            resolveAllowLivePlayerSharedElementForMorph(
+                cardTransitionEnabled = true,
+                liveSurfaceCardTransitionEnabled = true,
+                requiresHdrSurfaceOutput = true,
+            )
+        )
+        assertFalse(
+            resolveAllowLivePlayerSharedElementForMorph(
+                cardTransitionEnabled = true,
+                liveSurfaceCardTransitionEnabled = false,
+            )
+        )
+    }
+
+    @Test
+    fun `hdr surface required for quality 125 126 and pq hlg transfer`() {
+        assertTrue(requiresHdrSurfaceOutput(currentQualityId = 125))
+        assertTrue(requiresHdrSurfaceOutput(currentQualityId = 126))
+        assertTrue(requiresHdrSurfaceOutput(currentQualityId = 129))
+        assertTrue(requiresHdrSurfaceOutput(currentQualityId = 80, colorTransfer = 6))
+        assertTrue(requiresHdrSurfaceOutput(currentQualityId = 80, colorTransfer = 7))
+        assertFalse(requiresHdrSurfaceOutput(currentQualityId = 80, colorTransfer = 0))
+        assertFalse(requiresHdrSurfaceOutput(currentQualityId = 120, colorTransfer = 0))
     }
 
     @Test
@@ -68,7 +163,6 @@ class VideoPlayerSurfacePolicyTest {
         )
 
         assertEquals(0f, spec.alpha)
-        assertEquals(0.985f, spec.scale)
     }
 
     @Test
@@ -80,7 +174,6 @@ class VideoPlayerSurfacePolicyTest {
         )
 
         assertEquals(1f, spec.alpha)
-        assertEquals(1f, spec.scale)
     }
 
     @Test
@@ -97,14 +190,13 @@ class VideoPlayerSurfacePolicyTest {
         )
 
         assertEquals(0f, forcedReturnSpec.alpha)
-        assertEquals(1f, forcedReturnSpec.scale)
         assertEquals(0f, manualStartSpec.alpha)
-        assertEquals(1f, manualStartSpec.scale)
     }
 
     @Test
-    fun `inline player view is invisible during manual start cover`() {
-        assertFalse(
+    fun `inline player view stays visible under manual start cover`() {
+        // CoverFirst 只叠封面，不得 INVISIBLE PlayerView，否则首帧事件永不触发。
+        assertTrue(
             shouldShowInlinePlayerView(
                 isPortraitFullscreen = false,
                 forceCoverDuringReturnAnimation = false,
@@ -116,6 +208,123 @@ class VideoPlayerSurfacePolicyTest {
                 isPortraitFullscreen = false,
                 forceCoverDuringReturnAnimation = false,
                 shouldKeepCoverForManualStart = false
+            )
+        )
+        assertFalse(
+            shouldShowInlinePlayerView(
+                isPortraitFullscreen = false,
+                forceCoverDuringReturnAnimation = true,
+                shouldKeepCoverForManualStart = false
+            )
+        )
+    }
+
+    @Test
+    fun `collection switch waits when success arrives before paused player output`() {
+        assertEquals(
+            MediaSwitchSurfaceRebindAction.WAIT_FOR_OUTPUT,
+            resolveMediaSwitchSurfaceRebindAction(
+                hasSuccessPlaybackIdentity = true,
+                shouldBindInlinePlayerView = true,
+                isInPipMode = false,
+                hasPlayerView = true,
+                mediaItemCount = 0
+            )
+        )
+    }
+
+    @Test
+    fun `collection switch rebinds once player view and media item are ready`() {
+        assertEquals(
+            MediaSwitchSurfaceRebindAction.REBIND,
+            resolveMediaSwitchSurfaceRebindAction(
+                hasSuccessPlaybackIdentity = true,
+                shouldBindInlinePlayerView = true,
+                isInPipMode = false,
+                hasPlayerView = true,
+                mediaItemCount = 1
+            )
+        )
+    }
+
+    @Test
+    fun `collection switch surface recovery skips pip and stale success`() {
+        assertEquals(
+            MediaSwitchSurfaceRebindAction.SKIP,
+            resolveMediaSwitchSurfaceRebindAction(
+                hasSuccessPlaybackIdentity = true,
+                shouldBindInlinePlayerView = true,
+                isInPipMode = true,
+                hasPlayerView = true,
+                mediaItemCount = 1
+            )
+        )
+        assertEquals(
+            MediaSwitchSurfaceRebindAction.SKIP,
+            resolveMediaSwitchSurfaceRebindAction(
+                hasSuccessPlaybackIdentity = false,
+                shouldBindInlinePlayerView = true,
+                isInPipMode = false,
+                hasPlayerView = true,
+                mediaItemCount = 1
+            )
+        )
+    }
+
+    @Test
+    fun `collection switch retries surface when ready playback still has no first frame`() {
+        assertTrue(
+            shouldRetryMediaSwitchSurfaceRebind(
+                hasRenderedFirstFrame = false,
+                shouldBindInlinePlayerView = true,
+                isInPipMode = false,
+                hasPlayerView = true,
+                playWhenReady = true,
+                playbackState = Player.STATE_READY
+            )
+        )
+    }
+
+    @Test
+    fun `collection switch stops surface retries after frame or outside active host`() {
+        assertFalse(
+            shouldRetryMediaSwitchSurfaceRebind(
+                hasRenderedFirstFrame = true,
+                shouldBindInlinePlayerView = true,
+                isInPipMode = false,
+                hasPlayerView = true,
+                playWhenReady = true,
+                playbackState = Player.STATE_READY
+            )
+        )
+        assertFalse(
+            shouldRetryMediaSwitchSurfaceRebind(
+                hasRenderedFirstFrame = false,
+                shouldBindInlinePlayerView = true,
+                isInPipMode = true,
+                hasPlayerView = true,
+                playWhenReady = true,
+                playbackState = Player.STATE_READY
+            )
+        )
+        assertFalse(
+            shouldRetryMediaSwitchSurfaceRebind(
+                hasRenderedFirstFrame = false,
+                shouldBindInlinePlayerView = true,
+                isInPipMode = false,
+                hasPlayerView = true,
+                playWhenReady = false,
+                playbackState = Player.STATE_READY
+            )
+        )
+        assertFalse(
+            shouldRetryMediaSwitchSurfaceRebind(
+                hasRenderedFirstFrame = false,
+                shouldBindInlinePlayerView = true,
+                isInPipMode = false,
+                hasPlayerView = true,
+                playWhenReady = true,
+                playbackState = Player.STATE_BUFFERING
             )
         )
     }

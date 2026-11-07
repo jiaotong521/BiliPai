@@ -1,8 +1,23 @@
 package com.android.purebilibili.feature.home.components
 
+import com.android.purebilibili.core.ui.motion.AppMotionEasing
+import com.android.purebilibili.core.ui.AppContentColors
+
+import android.os.Build
+import com.android.purebilibili.core.ui.AppChromeSizeTokens
+import com.android.purebilibili.core.ui.AppSpacingTokens
+import com.android.purebilibili.core.theme.AppUiStyle
+import com.android.purebilibili.core.theme.LocalAppUiStyle
+
+import com.android.purebilibili.core.ui.OpticalContrastPalette
+
 import androidx.compose.animation.core.EaseOut
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -16,30 +31,39 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import com.android.purebilibili.core.ui.components.AppText
+import com.android.purebilibili.core.ui.components.AppNativeTabRow
+import com.android.purebilibili.core.ui.components.AppSegmentOption
+import com.android.purebilibili.core.ui.components.MiuixNonGlassTabItemWidthMode
+import com.android.purebilibili.core.ui.components.AppExactTouchTargets
+import com.android.purebilibili.core.ui.components.AppNativeSegmentedControl
+import com.android.purebilibili.core.ui.components.AppTabRowIndicatorPresentation
+import com.android.purebilibili.core.ui.components.rememberMeasuredTabMinWidth
+import com.android.purebilibili.core.ui.components.resolveLiquidGlassTabSlotHorizontalPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshots.SnapshotStateList
+import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.GraphicsLayerScope
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -47,57 +71,48 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.android.purebilibili.core.store.SettingsManager
-import com.android.purebilibili.core.store.HomeSettings
-import com.android.purebilibili.core.store.resolveSharedLiquidGlassChromeEnabled
-import com.android.purebilibili.core.theme.LocalUiPreset
-import com.android.purebilibili.core.theme.UiPreset
-import com.android.purebilibili.core.ui.AppShapes
+import com.android.purebilibili.core.ui.rememberAppSemanticVisualPolicy
 import com.android.purebilibili.core.ui.AppSurfaceTokens
-import com.android.purebilibili.core.ui.ContainerLevel
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import com.android.purebilibili.core.ui.animation.DampedDragAnimationState
-import com.android.purebilibili.core.ui.animation.horizontalDragGesture
-import com.android.purebilibili.core.ui.animation.rememberDampedDragAnimationState
-import com.android.purebilibili.core.ui.adaptive.MotionTier
+import com.android.purebilibili.core.ui.animation.DampedDragTrackingMode
+import com.android.purebilibili.feature.home.components.miuix.inspectDragGestures
+import kotlinx.coroutines.flow.distinctUntilChanged
 import com.android.purebilibili.core.ui.blur.currentUnifiedBlurIntensity
+import com.android.purebilibili.core.ui.blur.shouldAllowHomeChromeLiquidGlass
 import com.android.purebilibili.core.ui.motion.BottomBarMotionProfile
 import com.android.purebilibili.core.ui.motion.BottomBarMotionSpec
 import com.android.purebilibili.core.ui.motion.resolveBottomBarMotionSpec
-import com.kyant.backdrop.Backdrop
-import com.kyant.backdrop.backdrops.layerBackdrop
-import com.kyant.backdrop.backdrops.rememberLayerBackdrop
-import com.kyant.backdrop.drawBackdrop
-import com.kyant.backdrop.effects.blur
-import com.kyant.backdrop.effects.lens
-import com.kyant.backdrop.effects.vibrancy
-import com.kyant.backdrop.highlight.Highlight
-import com.kyant.backdrop.shadow.InnerShadow
-import com.kyant.backdrop.shadow.Shadow
 import com.android.purebilibili.feature.home.components.liquid.lens as miuixLens
+import com.android.purebilibili.feature.home.components.liquid.rememberCombinedBackdrop as rememberMiuixCombinedBackdrop
 import com.android.purebilibili.feature.home.components.liquid.vibrancy as miuixVibrancy
+import com.android.purebilibili.feature.home.components.miuix.InteractiveHighlight
 import top.yukonga.miuix.kmp.blur.Backdrop as MiuixBackdrop
 import top.yukonga.miuix.kmp.blur.blur as miuixBlur
 import top.yukonga.miuix.kmp.blur.drawBackdrop as miuixDrawBackdrop
 import top.yukonga.miuix.kmp.blur.layerBackdrop as miuixLayerBackdrop
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop as rememberMiuixLayerBackdrop
 import kotlin.math.abs
+import kotlin.math.floor
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sign
 
 internal fun resolveSegmentedControlLiquidGlassEnabled(
     storedLiquidGlassEnabled: Boolean,
     liquidGlassEffectsEnabled: Boolean,
-    uiPreset: UiPreset,
-    androidNativeLiquidGlassEnabled: Boolean
+    supportsIndependentLiquidGlass: Boolean,
+    androidNativeLiquidGlassEnabled: Boolean,
+    sdkInt: Int = Build.VERSION.SDK_INT,
 ): Boolean {
-    if (!liquidGlassEffectsEnabled) return false
-    // Same shared contract as top dock / search / bottom bar: global master ORs
-    // with the per-surface toggle and always reuses bottom-bar liquid material.
-    return resolveSharedLiquidGlassChromeEnabled(
-        individualEnabled = storedLiquidGlassEnabled,
-        uiPreset = uiPreset,
-        androidNativeLiquidGlassEnabled = androidNativeLiquidGlassEnabled
-    )
+    @Suppress("UNUSED_PARAMETER")
+    val ignoredStored = storedLiquidGlassEnabled
+    @Suppress("UNUSED_PARAMETER")
+    val ignoredIndependent = supportsIndependentLiquidGlass
+    if (!liquidGlassEffectsEnabled || !shouldAllowHomeChromeLiquidGlass(sdkInt)) return false
+    return androidNativeLiquidGlassEnabled
 }
 
 internal enum class SegmentedControlChromeStyle {
@@ -106,18 +121,33 @@ internal enum class SegmentedControlChromeStyle {
 }
 
 internal const val BOTTOM_BAR_LIQUID_SEGMENTED_CONTROL_HEIGHT_DP = 58
-internal const val BOTTOM_BAR_LIQUID_SEGMENTED_CONTROL_INDICATOR_HEIGHT_DP = 56
+internal val BOTTOM_BAR_LIQUID_SEGMENTED_CONTROL_INDICATOR_HEIGHT_DP =
+    com.android.purebilibili.core.ui.roundMatchedLiquidIndicatorHeightDp(
+        BOTTOM_BAR_LIQUID_SEGMENTED_CONTROL_HEIGHT_DP.toFloat()
+    )
 private const val SEGMENTED_CONTROL_MIN_INDICATOR_ASPECT_RATIO = 1.6f
+private const val SEGMENTED_CONTROL_MAX_INDICATOR_ASPECT_RATIO = 3.2f
+private const val SEGMENTED_CONTROL_INDICATOR_HORIZONTAL_INSET_DP = 4f
 
 internal fun resolveSegmentedControlChromeStyle(
-    uiPreset: UiPreset,
+    uiStyle: AppUiStyle,
+    prefersNativeChrome: Boolean,
     androidNativeLiquidGlassEnabled: Boolean,
     preferInlineContentStyle: Boolean = false
 ): SegmentedControlChromeStyle {
-    return if (uiPreset == UiPreset.MD3 && !androidNativeLiquidGlassEnabled) {
-        SegmentedControlChromeStyle.ANDROID_NATIVE_UNDERLINE
-    } else {
-        SegmentedControlChromeStyle.LIQUID_PILL
+    @Suppress("UNUSED_PARAMETER")
+    val ignoredNativeChrome = prefersNativeChrome
+    @Suppress("UNUSED_PARAMETER")
+    val ignoredInline = preferInlineContentStyle
+    return when (
+        resolveHomeSelectionIndicatorStyle(
+            uiStyle = uiStyle,
+            liquidGlassEnabled = androidNativeLiquidGlassEnabled,
+        )
+    ) {
+        HomeSelectionIndicatorStyle.CAPSULE -> SegmentedControlChromeStyle.LIQUID_PILL
+        HomeSelectionIndicatorStyle.MD3_UNDERLINE ->
+            SegmentedControlChromeStyle.ANDROID_NATIVE_UNDERLINE
     }
 }
 
@@ -132,7 +162,15 @@ internal fun resolveSegmentedControlIndicatorWidthDp(
     itemCount: Int
 ): Float {
     if (slotWidthDp <= 0f || indicatorHeightDp <= 0f || itemCount <= 0) return 0f
-    return slotWidthDp
+    val insetWidth = (slotWidthDp - SEGMENTED_CONTROL_INDICATOR_HORIZONTAL_INSET_DP * 2f)
+        .coerceAtLeast(0f)
+    // Every selectable row follows the home dock exactly: the moving indicator owns
+    // the complete tab slot, so two-item rows do not accumulate an extra inner inset.
+    if (itemCount >= 2) return slotWidthDp
+    return min(
+        insetWidth,
+        indicatorHeightDp * SEGMENTED_CONTROL_MAX_INDICATOR_ASPECT_RATIO,
+    )
 }
 
 internal fun resolveSegmentedControlIndicatorHeightDp(
@@ -186,6 +224,53 @@ internal fun resolveSegmentedControlIndicatorPosition(
         .coerceIn(0f, (itemCount - 1).toFloat())
 }
 
+internal data class NativeUnderlineGeometry(
+    val offsetDp: Float,
+    val widthDp: Float,
+)
+
+internal fun resolveNativeUnderlineGeometry(
+    indicatorPosition: Float,
+    segmentWidthDp: Float,
+    labelWidthsDp: List<Float>,
+    minimumWidthDp: Float = 24f,
+    fallbackWidthFraction: Float = 0.42f,
+): NativeUnderlineGeometry {
+    if (segmentWidthDp <= 0f || labelWidthsDp.isEmpty()) {
+        return NativeUnderlineGeometry(offsetDp = 0f, widthDp = 0f)
+    }
+
+    val lastIndex = labelWidthsDp.lastIndex
+    val safePosition = indicatorPosition.coerceIn(0f, lastIndex.toFloat())
+    val startIndex = floor(safePosition).toInt()
+    val endIndex = (startIndex + 1).coerceAtMost(lastIndex)
+    val fraction = safePosition - startIndex
+    val fallbackWidth = segmentWidthDp * fallbackWidthFraction
+    val effectiveMinimumWidth = minimumWidthDp.coerceAtMost(segmentWidthDp)
+
+    fun resolvedWidth(index: Int): Float = labelWidthsDp[index]
+        .takeIf { it > 0f }
+        ?.coerceIn(effectiveMinimumWidth, segmentWidthDp)
+        ?: fallbackWidth.coerceIn(effectiveMinimumWidth, segmentWidthDp)
+
+    val startWidth = resolvedWidth(startIndex)
+    val endWidth = resolvedWidth(endIndex)
+    // Flutter TabIndicatorAnimation.elastic: target-side edge decelerates with sine while
+    // the trailing edge accelerates with cosine, producing PiliPlus' fast-then-slow pull.
+    val trailingEdgeProgress = 1f - kotlin.math.cos(fraction * Math.PI.toFloat() / 2f)
+    val leadingEdgeProgress = kotlin.math.sin(fraction * Math.PI.toFloat() / 2f)
+    val startLeft = segmentWidthDp * (startIndex + 0.5f) - startWidth / 2f
+    val startRight = startLeft + startWidth
+    val endLeft = segmentWidthDp * (endIndex + 0.5f) - endWidth / 2f
+    val endRight = endLeft + endWidth
+    val left = startLeft + (endLeft - startLeft) * trailingEdgeProgress
+    val right = startRight + (endRight - startRight) * leadingEdgeProgress
+    return NativeUnderlineGeometry(
+        offsetDp = left,
+        widthDp = (right - left).coerceAtLeast(0f),
+    )
+}
+
 internal fun shouldDrawSegmentedControlIndicatorBackdrop(
     liquidGlassEnabled: Boolean,
     motionProgress: Float,
@@ -207,79 +292,6 @@ internal fun shouldDrawSegmentedControlExportCaptureBackdrop(
     return liquidGlassEnabled && hasExternalBackdrop
 }
 
-@Composable
-internal fun BottomBarLiquidIndicatorSurface(
-    modifier: Modifier = Modifier,
-    shape: Shape = resolveSharedBottomBarCapsuleShape(),
-    liquidGlassEnabled: Boolean,
-    backdrop: Backdrop? = null,
-    hasExternalBackdrop: Boolean = backdrop != null,
-    indicatorLensSpec: BottomBarBackdropPresetLensSpec = resolveBottomBarBackdropPresetIndicatorLens(
-        progress = if (liquidGlassEnabled) 1f else 0f
-    ),
-    indicatorHighlightAlpha: Float = resolveBottomBarLiquidGlassHighlightAlpha(
-        motionProgress = if (liquidGlassEnabled) 1f else 0f
-    ),
-    indicatorGlowAlpha: Float = resolveBottomBarIndicatorGlowAlpha(
-        glassEnabled = liquidGlassEnabled,
-        pressProgress = 0f
-    ),
-    motionProgress: Float = 0f,
-    idleSurfaceColor: Color = Color.Unspecified,
-    layerBlock: GraphicsLayerScope.() -> Unit = {}
-) {
-    val resolvedIdleSurfaceColor = if (idleSurfaceColor == Color.Unspecified) {
-        resolveAndroidNativeIdleIndicatorSurfaceColor(darkTheme = isSystemInDarkTheme())
-    } else {
-        idleSurfaceColor
-    }
-    Box(
-        modifier = modifier.run {
-            if (backdrop != null && shouldDrawSegmentedControlIndicatorBackdrop(
-                    liquidGlassEnabled = liquidGlassEnabled,
-                    motionProgress = motionProgress,
-                    hasExternalBackdrop = hasExternalBackdrop
-                )
-            ) {
-                drawBackdrop(
-                    backdrop = backdrop,
-                    shape = { shape },
-                    effects = {
-                        lens(
-                            refractionHeight = indicatorLensSpec.refractionHeightDp.dp.toPx(),
-                            refractionAmount = indicatorLensSpec.refractionAmountDp.dp.toPx(),
-                            depthEffect = true,
-                            chromaticAberration = true
-                        )
-                    },
-                    highlight = {
-                        Highlight.Default.copy(alpha = maxOf(indicatorHighlightAlpha, indicatorGlowAlpha))
-                    },
-                    shadow = {
-                        Shadow(alpha = indicatorGlowAlpha)
-                    },
-                    innerShadow = {
-                        InnerShadow(
-                            radius = 8.dp * indicatorGlowAlpha,
-                            alpha = indicatorGlowAlpha
-                        )
-                    },
-                    layerBlock = layerBlock,
-                    onDrawSurface = {
-                        drawRect(
-                            color = resolvedIdleSurfaceColor,
-                            alpha = 1f - motionProgress
-                        )
-                        drawRect(Color.Black.copy(alpha = 0.03f * motionProgress))
-                    }
-                )
-            } else {
-                background(resolvedIdleSurfaceColor, shape)
-            }
-        }
-    )
-}
-
 internal fun resolveSegmentedControlMotionProgress(
     pressProgress: Float,
     refractionProgress: Float,
@@ -287,6 +299,27 @@ internal fun resolveSegmentedControlMotionProgress(
 ): Float {
     val resolvedPressProgress = if (tapPressRefractionEnabled) pressProgress else 0f
     return maxOf(resolvedPressProgress, refractionProgress)
+}
+
+internal fun resolveSegmentedControlExternalPagerVelocityItemsPerSecond(
+    currentPosition: Float,
+    previousPosition: Float,
+    elapsedNanos: Long,
+): Float {
+    if (elapsedNanos <= 0L) return 0f
+    val elapsedSeconds = elapsedNanos / 1_000_000_000f
+    if (elapsedSeconds <= 0f) return 0f
+    return ((currentPosition - previousPosition) / elapsedSeconds)
+        .coerceIn(-12f, 12f)
+}
+
+internal fun shouldStretchSegmentedControlExternalPagerIndicator(
+    position: Float,
+    externalPagerMotionActive: Boolean,
+    positionEpsilon: Float = 0.015f,
+): Boolean {
+    if (!externalPagerMotionActive) return false
+    return abs(position - position.roundToInt().toFloat()) > positionEpsilon
 }
 
 /**
@@ -298,8 +331,8 @@ internal fun resolveSegmentedControlMotionSpec(): BottomBarMotionSpec {
 }
 
 /**
- * Same panel-offset formula as [KernelSuAlignedBottomBar]: fraction of full dock width,
- * capped at 4.dp, EaseOut mapped.
+ * Same panel-offset formula as [BiliPaiFloatingBottomBar]: fraction of full dock width,
+ * capped at AppSpacingTokens.ExtraSmall, EaseOut mapped.
  */
 internal fun resolveSharedLiquidIndicatorPanelOffsetPx(
     dragOffsetPx: Float,
@@ -333,7 +366,7 @@ internal fun resolveSharedLiquidIndicatorUseGlassColorPath(
     lensProgress: Float
 ): Boolean = liquidGlassEnabled && lensProgress > 0.001f
 
-/** Capture lens strength: full 24dp while interacting, like KernelSu bottom bar capture. */
+/** Capture lens strength: full 24dp while interacting, like BiliPai bottom bar capture. */
 internal fun resolveSharedLiquidIndicatorCaptureLensProgress(
     lensProgress: Float,
     isDragging: Boolean
@@ -349,9 +382,9 @@ internal fun resolveSharedLiquidIndicatorCaptureLensProgress(
 internal fun resolveSharedLiquidExportMonochromeColor(
     darkTheme: Boolean
 ): Color = if (darkTheme) {
-    Color.White.copy(alpha = 0.96f)
+    OpticalContrastPalette.Highlight.copy(alpha = 0.96f)
 } else {
-    Color.White
+    OpticalContrastPalette.Highlight
 }
 
 @Composable
@@ -360,18 +393,29 @@ fun BottomBarLiquidSegmentedControl(
     selectedIndex: Int,
     onSelected: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    scrollState: ScrollState? = null,
     enabled: Boolean = true,
     itemWidth: Dp? = null,
     height: Dp = BOTTOM_BAR_LIQUID_SEGMENTED_CONTROL_HEIGHT_DP.dp,
     indicatorHeight: Dp = BOTTOM_BAR_LIQUID_SEGMENTED_CONTROL_INDICATOR_HEIGHT_DP.dp,
-    labelFontSize: TextUnit = 14.sp,
-    containerHorizontalPadding: Dp = 3.dp,
-    containerVerticalPadding: Dp = 3.dp,
+    labelFontSize: TextUnit = TextUnit.Unspecified,
+    allowNativeLabelOverflow: Boolean = false,
+    containerHorizontalPadding: Dp = AppSpacingTokens.ExtraSmall,
+    containerVerticalPadding: Dp = AppSpacingTokens.ExtraSmall,
     liquidGlassEffectsEnabled: Boolean = true,
+    // False reserves horizontal gestures for the scrollable rail; taps still select a tab.
     dragSelectionEnabled: Boolean = true,
+    // Compatibility alias for drag enablement; indicators now always start dragging directly.
+    longPressDragSelectionEnabled: Boolean = false,
     preferInlineContentStyle: Boolean = false,
-    forceLiquidChrome: Boolean = false,
-    backdrop: Backdrop? = null,
+    forceEqualWidth: Boolean = false,
+    compactMiuixWhenTwoOptions: Boolean = true,
+    nativeSegmentedControl: Boolean = false,
+    nativeIndicatorPresentation: AppTabRowIndicatorPresentation = AppTabRowIndicatorPresentation.UNDERLINE,
+    equalizeMiuixNonGlassItemWidths: Boolean = false,
+    // Keep non-glass Miuix tabs as two independent items instead of adding a
+    // redundant middle dock behind them.
+    drawMiuixNonGlassTrack: Boolean = false,
     miuixBackdrop: MiuixBackdrop? = null,
     tapPressRefractionEnabled: Boolean = true,
     containerColorOverride: Color? = null,
@@ -379,487 +423,226 @@ fun BottomBarLiquidSegmentedControl(
     unselectedTextColorOverride: Color? = null,
     indicatorIdleSurfaceColorOverride: Color? = null,
     indicatorPositionProvider: (() -> Float)? = null,
-    onIndicatorPositionChanged: ((Float) -> Unit)? = null
-) {
-    if (items.isEmpty()) return
-
-    val context = LocalContext.current
-    val uiPreset = LocalUiPreset.current
-    val homeSettings by SettingsManager
-        .getHomeSettings(context)
-        .collectAsStateWithLifecycle(initialValue = HomeSettings(),
-            context = kotlin.coroutines.EmptyCoroutineContext
-        )
-    val effectiveAndroidNativeLiquidGlassEnabled =
-        forceLiquidChrome || homeSettings.androidNativeLiquidGlassEnabled
-    val chromeStyle = resolveSegmentedControlChromeStyle(
-        uiPreset = uiPreset,
-        androidNativeLiquidGlassEnabled = effectiveAndroidNativeLiquidGlassEnabled,
-        preferInlineContentStyle = preferInlineContentStyle
-    )
-    if (chromeStyle == SegmentedControlChromeStyle.ANDROID_NATIVE_UNDERLINE) {
-        AndroidNativeUnderlinedSegmentedControl(
-            items = items,
-            selectedIndex = selectedIndex,
-            onSelected = onSelected,
+    onIndicatorPositionChanged: ((Float) -> Unit)? = null,
+    onIndicatorDragStateChanged: ((Boolean) -> Unit)? = null,
+    isScrollInProgressProvider: () -> Boolean = { false },
+    externalPagerMotionEffectsEnabled: Boolean = false,
+    // Glass pager release and landing signals; native branches keep their existing motion.
+    isPagerDraggingProvider: (() -> Boolean)? = null,
+    pagerTargetPositionProvider: (() -> Float)? = null,
+    liquidGlassTuningOverride: LiquidGlassTuning? = null,
+    geometryMode: FloatingBottomBarGeometryMode = FloatingBottomBarGeometryMode.Segmented,
+    centerGlassContent: Boolean = false,
+    // Applied below the native renderer returns; native indicator geometry stays unchanged.
+    liquidGlassAdaptIndicatorToLabel: Boolean = true,
+    liquidGlassAlignShellStart: Boolean = false,
+    liquidGlassLabelHorizontalPadding: Dp? = null,
+    // Geometry-only labels for asynchronous badges. Native renderers and visible text ignore them.
+    liquidGlassMeasurementLabels: List<String>? = null,
+    liquidGlassAnimateLabelWidthChanges: Boolean = false,
+    // Explicit native placement opt-in, independent from glass-only geometry and shared defaults.
+    centerNativeContent: Boolean = false,
+    // Glass-only indicator measurement can follow visible labels while slots reserve badge limits.
+    liquidGlassIndicatorMeasurementLabels: List<String>? = null,
+): Unit = AppExactTouchTargets {
+    if (items.isEmpty()) return@AppExactTouchTargets
+    val effectiveLabelFontSize = com.android.purebilibili.core.ui.appTabLabelFontSize(labelFontSize)
+    if (com.android.purebilibili.core.ui.isMiuixNonGlassEnabled()) {
+        val nativeOptions = remember(items) {
+            items.mapIndexed { index, label -> AppSegmentOption(index, label) }
+        }
+        // Fixed liquid slots and capture heights are visual hints, not native
+        // content constraints. Let the opaque renderer fit labels and font scale.
+        AppNativeTabRow(
+            options = nativeOptions,
+            selectedValue = selectedIndex.coerceIn(0, items.lastIndex),
+            onSelectionChange = onSelected,
             modifier = modifier,
             enabled = enabled,
-            itemWidth = itemWidth,
-            height = height,
-            labelFontSize = labelFontSize,
+            centerContent = centerNativeContent,
+            scrollable = !nativeSegmentedControl && !forceEqualWidth &&
+                (scrollState != null || items.size > 2),
+            forceEqualWidth = forceEqualWidth,
+            minTabWidth = AppChromeSizeTokens.MinimumTouchTarget,
+            labelFontSize = effectiveLabelFontSize,
+            containerHorizontalPadding = containerHorizontalPadding,
+            compactMiuixWhenTwoOptions = compactMiuixWhenTwoOptions,
+            indicatorPositionProvider = indicatorPositionProvider,
+            miuixNonGlassItemWidthMode = if (equalizeMiuixNonGlassItemWidths) {
+                MiuixNonGlassTabItemWidthMode.EQUAL_TO_LONGEST_LABEL
+            } else MiuixNonGlassTabItemWidthMode.CONTENT,
+            drawMiuixNonGlassTrack = drawMiuixNonGlassTrack,
+        )
+        return@AppExactTouchTargets
+    }
+    val shellHeight = height.coerceAtLeast(0.dp)
+    val horizontalPadding = containerHorizontalPadding.coerceAtLeast(0.dp)
+    val fixedItemWidth = itemWidth?.coerceAtLeast(0.dp)
+    val shellModifier = if (fixedItemWidth != null) {
+        modifier.width(fixedItemWidth * items.size + horizontalPadding * 2)
+    } else {
+        modifier.fillMaxWidth()
+    }
+    // Geometry is independent from material sampling. Sampling and press
+    // bloom are draw-only children and cannot change this layout or hit viewport.
+    BoxWithConstraints(modifier = shellModifier.height(shellHeight)) {
+        val renderedItemWidth = fixedItemWidth ?: if (!constraints.hasBoundedWidth) {
+            rememberMeasuredTabMinWidth(
+                requestedMinWidth = AppChromeSizeTokens.CompactTabMinWidth,
+                labels = items,
+                textStyle = MaterialTheme.typography.labelLarge.copy(
+                    fontSize = effectiveLabelFontSize,
+                    fontWeight = FontWeight.SemiBold,
+                ),
+            )
+        } else {
+            null
+        }
+        val visualPolicy = rememberAppSemanticVisualPolicy()
+        // Material selection shares the same resolved theme as its parent and glass child.
+        val androidNativeLiquidGlassEnabled =
+            com.android.purebilibili.core.ui.LocalAppThemeConfig.current.liquidGlassEnabled
+        if (!androidNativeLiquidGlassEnabled) {
+            val nativeOptions = remember(items) {
+                items.mapIndexed { index, label -> AppSegmentOption(index, label) }
+            }
+            val nativeItemWidth = renderedItemWidth ?:
+                (maxWidth - horizontalPadding * 2).coerceAtLeast(0.dp) / items.size
+            val nativeModifier = (if (renderedItemWidth == null) Modifier.fillMaxWidth() else Modifier)
+                .then(if (centerNativeContent) Modifier.align(Alignment.Center) else Modifier)
+            if (nativeSegmentedControl) {
+                AppNativeSegmentedControl(
+                    options = nativeOptions,
+                    selectedValue = selectedIndex.coerceIn(0, items.lastIndex),
+                    onSelectionChange = onSelected,
+                    modifier = nativeModifier,
+                    enabled = enabled,
+                    height = shellHeight,
+                    itemWidth = nativeItemWidth,
+                    labelFontSize = effectiveLabelFontSize,
+                    containerHorizontalPadding = horizontalPadding,
+                    indicatorPositionProvider = indicatorPositionProvider,
+                )
+            } else {
+                AppNativeTabRow(
+                    options = nativeOptions,
+                    selectedValue = selectedIndex.coerceIn(0, items.lastIndex),
+                    onSelectionChange = onSelected,
+                    modifier = nativeModifier,
+                    enabled = enabled,
+                    centerContent = centerNativeContent,
+                    scrollable = scrollState != null,
+                    forceEqualWidth = forceEqualWidth,
+                    fixedItemWidth = nativeItemWidth,
+                    height = shellHeight,
+                    labelFontSize = effectiveLabelFontSize,
+                    containerHorizontalPadding = horizontalPadding,
+                    compactMiuixWhenTwoOptions = compactMiuixWhenTwoOptions,
+                    allowLabelOverflow = allowNativeLabelOverflow,
+                    indicatorPresentation = nativeIndicatorPresentation,
+                    indicatorPositionProvider = indicatorPositionProvider,
+                    miuixNonGlassItemWidthMode = if (equalizeMiuixNonGlassItemWidths) {
+                        MiuixNonGlassTabItemWidthMode.EQUAL_TO_LONGEST_LABEL
+                    } else {
+                        MiuixNonGlassTabItemWidthMode.CONTENT
+                    },
+                    drawMiuixNonGlassTrack = drawMiuixNonGlassTrack,
+                )
+            }
+            return@BoxWithConstraints
+        }
+        val chromeStyle = resolveSegmentedControlChromeStyle(
+            uiStyle = LocalAppUiStyle.current,
+            prefersNativeChrome = visualPolicy.prefersNativeChrome,
+            androidNativeLiquidGlassEnabled = androidNativeLiquidGlassEnabled,
+            preferInlineContentStyle = preferInlineContentStyle,
+        )
+        if (chromeStyle == SegmentedControlChromeStyle.ANDROID_NATIVE_UNDERLINE) {
+            AndroidNativeUnderlinedSegmentedControl(
+                items = items,
+                selectedIndex = selectedIndex,
+                onSelected = onSelected,
+                modifier = Modifier,
+                enabled = enabled,
+                itemWidth = fixedItemWidth,
+                height = shellHeight,
+                labelFontSize = effectiveLabelFontSize,
+                allowLabelOverflow = allowNativeLabelOverflow,
+                selectedTextColorOverride = selectedTextColorOverride,
+                unselectedTextColorOverride = unselectedTextColorOverride,
+                indicatorPositionProvider = indicatorPositionProvider,
+                onIndicatorPositionChanged = onIndicatorPositionChanged,
+            )
+            return@BoxWithConstraints
+        }
+        // Material boundary: only tune glass sizing below the native-renderer returns above.
+        // Direct consumers (search, listen-video, settings and page filters) bypass
+        // AppLiquidAwareTabRow. Give them the same measured compact slots here.
+        val glassMeasurementLabels = liquidGlassMeasurementLabels
+            ?.takeIf { it.size == items.size } ?: items
+        val measuredLiquidItemWidth = renderedItemWidth ?: if (
+            !forceEqualWidth && geometryMode == FloatingBottomBarGeometryMode.Segmented
+        ) {
+            rememberMeasuredTabMinWidth(
+                requestedMinWidth = AppChromeSizeTokens.MinimumTouchTarget,
+                labels = glassMeasurementLabels,
+                textStyle = MaterialTheme.typography.labelLarge.copy(
+                    fontSize = effectiveLabelFontSize,
+                    fontWeight = FontWeight.SemiBold,
+                ),
+                horizontalPadding = liquidGlassLabelHorizontalPadding ?: resolveLiquidGlassTabSlotHorizontalPadding(items.size),
+            )
+        } else null
+        val animateLabelWidths = liquidGlassAnimateLabelWidthChanges &&
+            com.android.purebilibili.core.ui.LocalComponentMotionEnabled.current &&
+            !com.android.purebilibili.core.ui.LocalSystemReduceMotion.current
+        // Native paths have already returned. Retarget only data-driven glass geometry.
+        val liquidItemWidth = if (animateLabelWidths && renderedItemWidth == null && measuredLiquidItemWidth != null) {
+            animateDpAsState(
+                targetValue = measuredLiquidItemWidth,
+                animationSpec = tween(180, easing = AppMotionEasing.M1Standard),
+                label = "glassAsyncBadgeSlotWidth",
+            ).value
+        } else measuredLiquidItemWidth
+        BottomBarFloatingSegmentedControl(
+            adaptIndicatorToLabel = liquidGlassAdaptIndicatorToLabel,
+            liquidGlassAlignShellStart = liquidGlassAlignShellStart,
+            items = items,
+            liquidGlassMeasurementLabels = liquidGlassIndicatorMeasurementLabels
+                ?.takeIf { it.size == items.size } ?: glassMeasurementLabels,
+            liquidGlassAnimateLabelWidthChanges = liquidGlassAnimateLabelWidthChanges,
+            liquidGlassLabelHorizontalPadding = liquidGlassLabelHorizontalPadding,
+            selectedIndex = selectedIndex,
+            onSelected = onSelected,
+            // Only the glass child is centered; native branches keep their established placement.
+            modifier = if (centerGlassContent) Modifier.align(Alignment.Center) else Modifier,
+            enabled = enabled,
+            itemWidth = liquidItemWidth,
+            height = shellHeight,
+            indicatorHeight = indicatorHeight,
+            labelFontSize = effectiveLabelFontSize,
+            allowLabelOverflow = allowNativeLabelOverflow,
+            containerHorizontalPadding = horizontalPadding,
+            containerVerticalPadding = containerVerticalPadding,
+            liquidGlassEffectsEnabled = liquidGlassEffectsEnabled,
+            dragSelectionEnabled = dragSelectionEnabled,
+            longPressDragSelectionEnabled = longPressDragSelectionEnabled,
+            tapPressRefractionEnabled = tapPressRefractionEnabled,
+            indicatorIdleSurfaceColorOverride = indicatorIdleSurfaceColorOverride,
+            miuixBackdrop = miuixBackdrop,
+            containerColorOverride = containerColorOverride,
             selectedTextColorOverride = selectedTextColorOverride,
             unselectedTextColorOverride = unselectedTextColorOverride,
             indicatorPositionProvider = indicatorPositionProvider,
-            onIndicatorPositionChanged = onIndicatorPositionChanged
-        )
-        return
-    }
-
-    val liquidGlassEnabled = resolveSegmentedControlLiquidGlassEnabled(
-        storedLiquidGlassEnabled = homeSettings.isBottomBarLiquidGlassEnabled,
-        liquidGlassEffectsEnabled = liquidGlassEffectsEnabled,
-        uiPreset = uiPreset,
-        androidNativeLiquidGlassEnabled = effectiveAndroidNativeLiquidGlassEnabled
-    )
-    val blurIntensity = currentUnifiedBlurIntensity()
-    val density = LocalDensity.current
-    val itemCount = items.size
-    val safeSelectedIndex = selectedIndex.coerceIn(0, itemCount - 1)
-    val motionSpec = remember { resolveSegmentedControlMotionSpec() }
-    val clickPulseKey = remember { mutableIntStateOf(0) }
-    val clickPulseTransform = rememberBottomBarClickPulseTransform(clickPulseKey.intValue)
-    val dragState = rememberDampedDragAnimationState(
-        initialIndex = safeSelectedIndex,
-        itemCount = itemCount,
-        motionSpec = motionSpec,
-        notifyIndexChangedOnReleaseStart = indicatorPositionProvider != null,
-        // Match home bottom bar: hold press glass until settle finishes.
-        holdPressUntilReleaseTargetSettles = true,
-        onIndexChanged = { index ->
-            if (enabled && index in items.indices) {
-                onSelected(index)
-            }
-        }
-    )
-    val indicatorShape = resolveSharedBottomBarCapsuleShape()
-    val containerShapeToken = AppShapes.container(ContainerLevel.Pill)
-    val containerShape = indicatorShape
-    val indicatorCorner = indicatorHeight / 2
-    val isDarkTheme = isSystemInDarkTheme()
-    val surfaceColor = AppSurfaceTokens.cardContainer()
-    val androidNativeTuning = resolveAndroidNativeBottomBarTuning(
-        blurEnabled = liquidGlassEnabled,
-        darkTheme = isDarkTheme
-    )
-    val containerColor = containerColorOverride ?: resolveAndroidNativeFloatingBottomBarContainerColor(
-        surfaceColor = surfaceColor,
-        tuning = androidNativeTuning,
-        glassEnabled = liquidGlassEnabled,
-        blurEnabled = liquidGlassEnabled,
-        blurIntensity = blurIntensity,
-        liquidGlassPreset = homeSettings.bottomBarLiquidGlassPreset
-    )
-    val themeColor = MaterialTheme.colorScheme.primary
-    val selectedTextColor = selectedTextColorOverride ?: themeColor
-    val unselectedTextColor = unselectedTextColorOverride
-        ?: resolveLiquidSegmentedControlUnselectedTextColor(
-            onSurface = MaterialTheme.colorScheme.onSurface,
-            enabled = enabled
-        )
-    // Bottom-bar path: export is monochrome so SrcIn tint becomes pure theme color under glass.
-    val exportTintColor = resolveAndroidNativeExportTintColor(
-        themeColor = themeColor,
-        darkTheme = isDarkTheme
-    )
-    val exportMonochromeColor = resolveSharedLiquidExportMonochromeColor(darkTheme = isDarkTheme)
-    fun selectFromTap(index: Int) {
-        if (!enabled || index !in items.indices) return
-        clickPulseKey.intValue += 1
-        // Animate indicator with the same spring path as home bottom bar taps.
-        dragState.updateIndex(index)
-        onSelected(index)
-    }
-    LaunchedEffect(safeSelectedIndex) {
-        dragState.updateIndex(safeSelectedIndex)
-    }
-
-    BoxWithConstraints(
-        modifier = modifier
-            .then(
-                if (itemWidth != null) {
-                    Modifier.width((itemWidth.value * itemCount).dp + containerHorizontalPadding * 2)
-                } else {
-                    Modifier.fillMaxWidth()
-                }
-            )
-            .height(height)
-    ) {
-        val contentPadding = containerHorizontalPadding
-        val contentVerticalInset = containerVerticalPadding
-        val slotWidth = (maxWidth - (contentPadding * 2)) / itemCount
-        val indicatorWidth = resolveSegmentedControlIndicatorWidthDp(
-            slotWidthDp = slotWidth.value,
-            indicatorHeightDp = indicatorHeight.value,
-            itemCount = itemCount
-        ).dp
-        val resolvedIndicatorHeight = resolveSegmentedControlIndicatorHeightDp(
-            slotWidthDp = slotWidth.value,
-            indicatorHeightDp = indicatorHeight.value
-        ).dp
-        val indicatorOffset = resolveSegmentedControlIndicatorOffsetDp(
-            position = resolveSegmentedControlIndicatorPosition(
-                internalPosition = dragState.value,
-                externalPosition = if (dragState.isDragging) null else indicatorPositionProvider?.invoke(),
-                itemCount = itemCount
-            ),
-            slotWidthDp = slotWidth.value,
-            contentPaddingDp = contentPadding.value
-        ).dp
-        val itemWidthPx = with(density) { slotWidth.toPx() }.coerceAtLeast(1f)
-        val dockWidthPx = with(density) { maxWidth.toPx() }.coerceAtLeast(1f)
-        // Match home bottom bar: drag anywhere on the dock, not only from the capsule.
-        val dragModifier = if (enabled && itemCount > 1 && dragSelectionEnabled) {
-            Modifier.horizontalDragGesture(
-                dragState = dragState,
-                itemWidthPx = itemWidthPx
-            )
-        } else {
-            Modifier
-        }
-        val indicatorPosition = resolveSegmentedControlIndicatorPosition(
-            internalPosition = dragState.value,
-            externalPosition = if (dragState.isDragging) null else indicatorPositionProvider?.invoke(),
-            itemCount = itemCount
-        )
-        SideEffect {
-            onIndicatorPositionChanged?.invoke(indicatorPosition)
-        }
-        val pressMotionProgress by remember {
-            derivedStateOf { dragState.pressProgress }
-        }
-        val refractionMotionProfile = resolveBottomBarEffectiveRefractionMotionProfile(
-            preset = homeSettings.bottomBarLiquidGlassPreset,
-            profile = resolveBottomBarRefractionMotionProfile(
-                position = indicatorPosition,
-                velocity = dragState.velocityPxPerSecond,
-                isDragging = dragState.isDragging,
-                motionSpec = motionSpec
-            )
-        )
-        val motionProgress = resolveSegmentedControlMotionProgress(
-            pressProgress = pressMotionProgress,
-            refractionProgress = refractionMotionProfile.progress,
-            // Always keep refraction progress for swipe glass; press is still used for scale/lens floor.
-            tapPressRefractionEnabled = true
-        )
-        val effectivePressProgress = if (tapPressRefractionEnabled) {
-            pressMotionProgress
-        } else {
-            // Even when call sites disable "tap press refraction", drag still calls press()
-            // in DampedDragAnimation — keep that press for scale/lens while dragging.
-            if (dragState.isDragging) pressMotionProgress else 0f
-        }
-        val indicatorDragScaleProgress = rememberBottomBarIndicatorDragScaleProgress(
-            isDragging = dragState.isDragging
-        )
-        // Match bottom bar: 88/56 drag-scale + velocity stretch (no compound scaleX/Y).
-        val indicatorLayerScaleProgress = maxOf(indicatorDragScaleProgress, effectivePressProgress)
-        val lensProgress = resolveSharedLiquidIndicatorLensProgress(
-            pressProgress = effectivePressProgress,
-            motionProgress = motionProgress,
-            isDragging = dragState.isDragging
-        )
-        val useGlassColorPath = resolveSharedLiquidIndicatorUseGlassColorPath(
-            liquidGlassEnabled = liquidGlassEnabled,
-            lensProgress = lensProgress
-        )
-        val rawPanelOffsetPx by remember(density, dockWidthPx) {
-            derivedStateOf {
-                val maxOffsetPx = with(density) { 4.dp.toPx() }
-                resolveSharedLiquidIndicatorPanelOffsetPx(
-                    dragOffsetPx = dragState.dragOffset,
-                    dockWidthPx = dockWidthPx,
-                    maxOffsetPx = maxOffsetPx
-                )
-            }
-        }
-        val presetPanelOffsets = remember(homeSettings.bottomBarLiquidGlassPreset, rawPanelOffsetPx) {
-            resolveBottomBarPresetPanelOffsets(
-                preset = homeSettings.bottomBarLiquidGlassPreset,
-                rawPanelOffsetPx = rawPanelOffsetPx
-            )
-        }
-        val panelOffsetPx = presetPanelOffsets.indicatorPanelOffsetPx
-        val exportPanelOffsetPx = presetPanelOffsets.exportPanelOffsetPx
-        val tabsBackdrop = rememberLayerBackdrop()
-        val tabsMiuixBackdrop = rememberMiuixLayerBackdrop()
-        // Never fall back export/shell sampling to tabsBackdrop: that LayerBackdrop is
-        // recorded on the export node, and self-drawBackdrop overflows HyperOS
-        // MiBackgroundBlurBlend (RenderThread stack overflow). Also never CombinedBackdrop
-        // the page + tabs layers — same nested RenderNode failure mode as the dock bar.
-        val hasExternalBackdrop = backdrop != null
-        val hasMiuixExternalBackdrop = miuixBackdrop != null
-        val containerBackdrop = backdrop
-        val captureLensProgress = resolveSharedLiquidIndicatorCaptureLensProgress(
-            lensProgress = lensProgress,
-            isDragging = dragState.isDragging
-        )
-        // Full 24dp capture lens while interacting — same constant strength as bottom bar capture.
-        val captureLensSpec = resolveBottomBarBackdropPresetCaptureLens(
-            progress = captureLensProgress
-        )
-        // Indicator capsule lens follows swipe, not only finger-down press.
-        val indicatorLensSpec = resolveBottomBarBackdropPresetIndicatorLens(
-            progress = lensProgress
-        )
-        val captureHighlightAlpha = resolveBottomBarLiquidGlassHighlightAlpha(captureLensProgress)
-        val indicatorGlowAlpha = resolveBottomBarIndicatorGlowAlpha(
-            glassEnabled = liquidGlassEnabled,
-            pressProgress = effectivePressProgress,
-            motionProgress = lensProgress
-        )
-        val indicatorIdleSurfaceColor = indicatorIdleSurfaceColorOverride
-            ?: resolveBottomBarIdleIndicatorSurfaceColor(
-                preset = homeSettings.bottomBarLiquidGlassPreset,
-                darkTheme = isDarkTheme
-            )
-        val foregroundAboveIndicator = shouldRenderBottomBarForegroundAboveIndicator(
-            homeSettings.bottomBarLiquidGlassPreset
-        )
-
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .run {
-                    if (miuixBackdrop != null) {
-                        this.kernelSuMiuixFloatingDockSurface(
-                            shape = containerShape,
-                            backdrop = miuixBackdrop,
-                            containerColor = containerColor,
-                            blurEnabled = liquidGlassEnabled,
-                            glassEnabled = liquidGlassEnabled,
-                            blurRadius = androidNativeTuning.shellBlurRadiusDp.dp,
-                            hazeState = null,
-                            motionTier = MotionTier.Normal,
-                            isTransitionRunning = false,
-                            forceLowBlurBudget = false,
-                            liquidGlassPreset = homeSettings.bottomBarLiquidGlassPreset
-                        )
-                    } else {
-                        this.kernelSuFloatingDockSurface(
-                            shape = containerShape,
-                            backdrop = backdrop,
-                            containerColor = containerColor,
-                            blurEnabled = liquidGlassEnabled,
-                            glassEnabled = liquidGlassEnabled,
-                            blurRadius = androidNativeTuning.shellBlurRadiusDp.dp,
-                            hazeState = null,
-                            motionTier = MotionTier.Normal,
-                            isTransitionRunning = false,
-                            forceLowBlurBudget = false,
-                            liquidGlassPreset = homeSettings.bottomBarLiquidGlassPreset
-                        )
-                    }
-                }
-        )
-
-        // 1) Visible labels BEHIND the capsule (bottom-bar z-order).
-        //    While sliding they stay neutral; theme color is revealed only through glass.
-        BottomBarLiquidSegmentedLabels(
-            items = items,
-            selectedIndex = safeSelectedIndex,
-            indicatorPosition = indicatorPosition,
-            motionProgress = motionProgress,
-            selectionEmphasis = refractionMotionProfile.visibleSelectionEmphasis,
-            selectedTextColor = selectedTextColor,
-            unselectedTextColor = unselectedTextColor,
-            enabled = enabled,
-            labelFontSize = labelFontSize,
-            indicatorCorner = indicatorCorner,
-            onSelected = onSelected,
-            interactive = false,
-            applyItemScale = true,
-            forceUnselectedColor = useGlassColorPath,
-            modifier = Modifier
-                .matchParentSize()
-                .padding(horizontal = contentPadding, vertical = contentVerticalInset)
-                .zIndex(if (foregroundAboveIndicator) 1f else 0f)
-                .graphicsLayer { translationX = panelOffsetPx }
-        )
-
-        // 2) Hidden export capture: monochrome glyphs, theme tint on content only (not backdrop).
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .clearAndSetSemantics {}
-                .alpha(0f)
-                .run {
-                    if (hasMiuixExternalBackdrop) {
-                        this.miuixLayerBackdrop(tabsMiuixBackdrop)
-                            .graphicsLayer { translationX = exportPanelOffsetPx }
-                            .run {
-                                if (
-                                    shouldDrawSegmentedControlExportCaptureBackdrop(
-                                        liquidGlassEnabled = liquidGlassEnabled,
-                                        hasExternalBackdrop = true
-                                    )
-                                ) {
-                                    miuixDrawBackdrop(
-                                        backdrop = miuixBackdrop,
-                                        shape = { containerShape },
-                                        effects = {
-                                            miuixVibrancy()
-                                            miuixBlur(4.dp.toPx(), 4.dp.toPx())
-                                            if (captureLensProgress > 0.001f) {
-                                                miuixLens(
-                                                    refractionHeight = captureLensSpec.refractionHeightDp.dp.toPx(),
-                                                    refractionAmount = captureLensSpec.refractionAmountDp.dp.toPx(),
-                                                    depthEffect = true,
-                                                    chromaticAberration = 0.5f
-                                                )
-                                            }
-                                        },
-                                        onDrawSurface = { drawRect(containerColor) }
-                                    )
-                                } else {
-                                    this
-                                }
-                            }
-                    } else {
-                        this.layerBackdrop(tabsBackdrop)
-                            .graphicsLayer { translationX = exportPanelOffsetPx }
-                            .run {
-                                if (
-                                    shouldDrawSegmentedControlExportCaptureBackdrop(
-                                        liquidGlassEnabled = liquidGlassEnabled,
-                                        hasExternalBackdrop = hasExternalBackdrop
-                                    ) && containerBackdrop != null
-                                ) {
-                                    drawBackdrop(
-                                        backdrop = containerBackdrop,
-                                        shape = { containerShape },
-                                        effects = {
-                                            vibrancy()
-                                            blur(androidNativeTuning.shellBlurRadiusDp.dp.toPx())
-                                            if (captureLensProgress > 0.001f) {
-                                                lens(
-                                                    refractionHeight = captureLensSpec.refractionHeightDp.dp.toPx(),
-                                                    refractionAmount = captureLensSpec.refractionAmountDp.dp.toPx(),
-                                                    depthEffect = true,
-                                                    chromaticAberration = true
-                                                )
-                                            }
-                                        },
-                                        highlight = {
-                                            Highlight.Default.copy(alpha = captureHighlightAlpha)
-                                        },
-                                        onDrawSurface = { drawRect(containerColor) }
-                                    )
-                                } else {
-                                    this
-                                }
-                            }
-                    }
-                }
-        ) {
-            BottomBarLiquidSegmentedLabels(
-                items = items,
-                selectedIndex = safeSelectedIndex,
-                indicatorPosition = indicatorPosition,
-                motionProgress = motionProgress,
-                selectionEmphasis = refractionMotionProfile.exportSelectionEmphasis,
-                // Match bottom bar export: neutral glyphs then SrcIn-tint to primary.
-                selectedTextColor = exportMonochromeColor,
-                unselectedTextColor = exportMonochromeColor,
-                enabled = enabled,
-                labelFontSize = labelFontSize,
-                indicatorCorner = indicatorCorner,
-                onSelected = onSelected,
-                interactive = false,
-                applyItemScale = true,
-                forceUnselectedColor = false,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = contentPadding, vertical = contentVerticalInset)
-                    .graphicsLayer(colorFilter = ColorFilter.tint(exportTintColor))
-            )
-        }
-
-        // 3) Capsule on top — samples export theme glyphs through glass.
-        if (miuixBackdrop != null) {
-            KernelSuMiuixBottomBarIndicatorLayer(
-                visible = true,
-                dockContentAlpha = 1f,
-                indicatorTranslationXPx = with(density) { indicatorOffset.toPx() },
-                indicatorPanelOffsetPx = panelOffsetPx,
-                indicatorWidth = indicatorWidth,
-                indicatorHeight = resolvedIndicatorHeight,
-                shellShape = indicatorShape,
-                liquidGlassPreset = homeSettings.bottomBarLiquidGlassPreset,
-                contentBackdrop = tabsMiuixBackdrop,
-                backdrop = miuixBackdrop,
-                indicatorLensSpec = indicatorLensSpec,
-                effectivePressProgress = lensProgress,
-                indicatorIdleSurfaceColor = indicatorIdleSurfaceColor,
-                glassEnabled = liquidGlassEnabled,
-                motionProgress = motionProgress,
-                velocityItemsPerSecond = dragState.deformationVelocityItemsPerSecond,
-                isDragging = dragState.isDragging,
-                indicatorLayerScaleProgress = indicatorLayerScaleProgress,
-                indicatorLayerScaleTransform = null,
-                bottomBarMotionSpec = motionSpec,
-                isDarkTheme = isDarkTheme
-            )
-        } else {
-            KernelSuBottomBarIndicatorLayer(
-                visible = true,
-                dockContentAlpha = 1f,
-                indicatorTranslationXPx = with(density) { indicatorOffset.toPx() },
-                indicatorPanelOffsetPx = panelOffsetPx,
-                indicatorSettleReboundTransform = clickPulseTransform,
-                indicatorWidth = indicatorWidth,
-                indicatorHeight = resolvedIndicatorHeight,
-                shellShape = indicatorShape,
-                liquidGlassPreset = homeSettings.bottomBarLiquidGlassPreset,
-                contentBackdrop = tabsBackdrop,
-                backdrop = backdrop,
-                indicatorLensSpec = indicatorLensSpec,
-                effectivePressProgress = lensProgress,
-                indicatorIdleSurfaceColor = indicatorIdleSurfaceColor,
-                glassEnabled = liquidGlassEnabled,
-                motionProgress = motionProgress,
-                velocityItemsPerSecond = dragState.deformationVelocityItemsPerSecond,
-                isDragging = dragState.isDragging,
-                indicatorLayerScaleProgress = indicatorLayerScaleProgress,
-                indicatorLayerScaleTransform = null,
-                bottomBarMotionSpec = motionSpec,
-                isDarkTheme = isDarkTheme
-            )
-        }
-
-        // 4) Invisible hit / drag layer above everything.
-        BottomBarLiquidSegmentedLabels(
-            items = items,
-            selectedIndex = safeSelectedIndex,
-            indicatorPosition = indicatorPosition,
-            motionProgress = motionProgress,
-            selectionEmphasis = refractionMotionProfile.visibleSelectionEmphasis,
-            selectedTextColor = selectedTextColor,
-            unselectedTextColor = unselectedTextColor,
-            enabled = enabled,
-            labelFontSize = labelFontSize,
-            indicatorCorner = indicatorCorner,
-            onSelected = ::selectFromTap,
-            interactive = true,
-            onPressChanged = dragState::setPressed,
-            applyItemScale = false,
-            forceUnselectedColor = false,
-            modifier = Modifier
-                .matchParentSize()
-                .padding(horizontal = contentPadding, vertical = contentVerticalInset)
-                .alpha(0f)
-                .graphicsLayer { translationX = panelOffsetPx }
-                .then(dragModifier)
+            onIndicatorPositionChanged = onIndicatorPositionChanged,
+            isScrollInProgressProvider = isScrollInProgressProvider,
+            onIndicatorDragStateChanged = onIndicatorDragStateChanged,
+            externalPagerMotionEffectsEnabled = externalPagerMotionEffectsEnabled,
+            isPagerDraggingProvider = isPagerDraggingProvider,
+            pagerTargetPositionProvider = pagerTargetPositionProvider,
+            liquidGlassTuningOverride = liquidGlassTuningOverride,
+            geometryMode = geometryMode,
+            scrollState = scrollState,
         )
     }
 }
@@ -874,6 +657,7 @@ internal fun AndroidNativeUnderlinedSegmentedControl(
     itemWidth: Dp? = null,
     height: Dp,
     labelFontSize: TextUnit,
+    allowLabelOverflow: Boolean = false,
     selectedTextColorOverride: Color? = null,
     unselectedTextColorOverride: Color? = null,
     indicatorPositionProvider: (() -> Float)? = null,
@@ -881,12 +665,21 @@ internal fun AndroidNativeUnderlinedSegmentedControl(
 ) {
     val itemCount = items.size
     val safeSelectedIndex = selectedIndex.coerceIn(0, itemCount - 1)
-    val selectedTextColor = selectedTextColorOverride ?: MaterialTheme.colorScheme.primary
+    val selectedTextColor = selectedTextColorOverride ?: AppContentColors.accent()
     val unselectedTextColor = unselectedTextColorOverride
-        ?: MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 0.78f else 0.42f)
+        ?: resolveLiquidSegmentedControlUnselectedTextColor(AppContentColors.primaryText(), enabled)
     val underlineShape = CircleShape
+    val density = LocalDensity.current
+    val measuredLabelWidths: SnapshotStateList<Float> = remember(items) {
+        List(itemCount) { 0f }.toMutableStateList()
+    }
+    val animatedSelectedIndex by animateFloatAsState(
+        targetValue = safeSelectedIndex.toFloat(),
+        animationSpec = tween(durationMillis = 250, easing = EaseOut),
+        label = "nativeUnderlinePosition",
+    )
     val indicatorPosition = resolveSegmentedControlIndicatorPosition(
-        internalPosition = safeSelectedIndex.toFloat(),
+        internalPosition = animatedSelectedIndex,
         externalPosition = indicatorPositionProvider?.invoke(),
         itemCount = itemCount
     )
@@ -907,10 +700,11 @@ internal fun AndroidNativeUnderlinedSegmentedControl(
             .height(height)
     ) {
         val segmentWidth = maxWidth / itemCount
-        val underlineWidth = (segmentWidth * 0.42f)
-            .coerceAtLeast(28.dp)
-            .coerceAtMost(56.dp)
-        val underlineOffsetX = (segmentWidth * indicatorPosition) + ((segmentWidth - underlineWidth) / 2)
+        val underlineGeometry = resolveNativeUnderlineGeometry(
+            indicatorPosition = indicatorPosition,
+            segmentWidthDp = segmentWidth.value,
+            labelWidthsDp = measuredLabelWidths,
+        )
         Row(
             modifier = Modifier.fillMaxSize(),
             verticalAlignment = Alignment.CenterVertically
@@ -924,13 +718,27 @@ internal fun AndroidNativeUnderlinedSegmentedControl(
                         .clickable(enabled = enabled) { onSelected(index) },
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
+                    AppText(
                         text = label,
+                        modifier = Modifier.then(
+                            if (allowLabelOverflow) {
+                                Modifier.wrapContentWidth(unbounded = true)
+                            } else {
+                                Modifier
+                            }
+                        ),
+                        tapToCopyEnabled = false,
                         color = if (selected) selectedTextColor else unselectedTextColor,
                         fontSize = labelFontSize,
                         fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        onTextLayout = { result ->
+                            val measuredWidthDp = with(density) { result.size.width.toDp().value }
+                            if (measuredLabelWidths[index] != measuredWidthDp) {
+                                measuredLabelWidths[index] = measuredWidthDp
+                            }
+                        },
                     )
                 }
             }
@@ -938,9 +746,9 @@ internal fun AndroidNativeUnderlinedSegmentedControl(
         Box(
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .offset(x = underlineOffsetX)
-                .width(underlineWidth)
-                .height(3.dp)
+                .offset(x = underlineGeometry.offsetDp.dp)
+                .width(underlineGeometry.widthDp.dp)
+                .height(AppSpacingTokens.ExtraSmall - AppSpacingTokens.Micro / 2)
                 .clip(underlineShape)
                 .background(selectedTextColor)
         )
@@ -948,7 +756,7 @@ internal fun AndroidNativeUnderlinedSegmentedControl(
 }
 
 @Composable
-private fun BottomBarLiquidSegmentedLabels(
+internal fun BottomBarLiquidSegmentedLabels(
     items: List<String>,
     selectedIndex: Int,
     indicatorPosition: Float,
@@ -1019,8 +827,9 @@ private fun BottomBarLiquidSegmentedLabels(
                     ),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
+                AppText(
                     text = label,
+                    tapToCopyEnabled = false,
                     color = textColor,
                     fontSize = labelFontSize,
                     fontWeight = if (visual.themeWeight > 0.5f && !forceUnselectedColor) {

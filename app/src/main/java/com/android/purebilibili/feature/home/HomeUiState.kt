@@ -24,13 +24,21 @@ data class UserState(
     val name: String = "",
     val mid: Long = 0,
     val level: Int = 0,
+    val currentLevelMinExp: Int = 0,
+    val currentLevelExp: Int = 0,
+    val nextLevelExp: Int = 0,
     val coin: Double = 0.0,
     val bcoin: Double = 0.0,
     val following: Int = 0,
     val follower: Int = 0,
     val dynamic: Int = 0,
     val isVip: Boolean = false,
+    /** Server vip.label.text, e.g. 大会员 / 年度大会员 */
     val vipLabel: String = "",
+    /** vip.type: 1 monthly, 2 annual — used when [vipLabel] is empty */
+    val vipType: Int = 0,
+    /** nav.officialVerify.type: -1 无认证，0 个人认证，1 机构认证 — 头像角标用 */
+    val officialVerifyType: Int = -1,
     //  [New] 顶部背景图
     val topPhoto: String = ""
 )
@@ -111,6 +119,8 @@ data class TodayWatchPlan(
     val upRanks: ImmutableList<TodayUpRank> = persistentListOf(),
     val videoQueue: ImmutableList<VideoItem> = persistentListOf(),
     val explanationByBvid: ImmutableMap<String, String> = persistentMapOf(),
+    val scoreByBvid: ImmutableMap<String, Double> = persistentMapOf(),
+    val confidenceByBvid: ImmutableMap<String, Float> = persistentMapOf(),
     val historySampleCount: Int = 0,
     val nightSignalUsed: Boolean = false,
     val generatedAt: Long = 0L
@@ -136,7 +146,9 @@ data class CategoryContent(
     val isLoading: Boolean = false,
     val error: String? = null,
     val pageIndex: Int = 1, //  保存分页索引
-    val hasMore: Boolean = true //  保存是否还有更多数据
+    val hasMore: Boolean = true, //  保存是否还有更多数据
+    val loadMoreError: String? = null,
+    val refreshError: String? = null,
 )
 
 /**

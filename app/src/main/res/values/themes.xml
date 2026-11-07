@@ -9,12 +9,48 @@
     <style name="Theme.PureBiliBili" parent="Theme.SplashScreen.IconBackground">
         <!-- 🎨 Splash Screen 背景色 - 浅色模式使用白色 -->
         <item name="windowSplashScreenBackground">@color/splash_background</item>
-        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_bilipai</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_icon_blue_snow_maid</item>
         <item name="windowSplashScreenIconBackgroundColor">@android:color/transparent</item>
         <!-- ⏱️ 图标动画时长 -->
         <item name="windowSplashScreenAnimationDuration">300</item>
         <!-- 🔄 Splash 结束后的主题 -->
         <item name="postSplashScreenTheme">@style/Theme.PureBiliBili.Main</item>
+    </style>
+
+    <style name="Theme.PureBiliBili.Splash.BlueSnowMaid" parent="Theme.PureBiliBili">
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_icon_blue_snow_maid</item>
+    </style>
+
+    <style name="Theme.PureBiliBili.Splash.BlueSnowMaidAnnouncement" parent="Theme.PureBiliBili">
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_icon_blue_snow_maid_announcement</item>
+    </style>
+
+    <style name="Theme.PureBiliBili.Splash.BlueSnowMaidAnnouncementLight" parent="Theme.PureBiliBili">
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_icon_blue_snow_maid_announcement_light</item>
+    </style>
+
+    <style name="Theme.PureBiliBili.Splash.BlueSnowMaidAnnouncementDark" parent="Theme.PureBiliBili">
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_icon_blue_snow_maid_announcement_dark</item>
+    </style>
+
+    <style name="Theme.PureBiliBili.Splash.BlueSnowMaidFront" parent="Theme.PureBiliBili">
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_icon_blue_snow_maid_front</item>
+    </style>
+
+    <style name="Theme.PureBiliBili.Splash.BlueSnowMaidLight" parent="Theme.PureBiliBili">
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_icon_blue_snow_maid_light</item>
+    </style>
+
+    <style name="Theme.PureBiliBili.Splash.BlueSnowMaidDark" parent="Theme.PureBiliBili">
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_icon_blue_snow_maid_dark</item>
+    </style>
+
+    <style name="Theme.PureBiliBili.Splash.BlueSnowMaidFrontLight" parent="Theme.PureBiliBili">
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_icon_blue_snow_maid_front_light</item>
+    </style>
+
+    <style name="Theme.PureBiliBili.Splash.BlueSnowMaidFrontDark" parent="Theme.PureBiliBili">
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_icon_blue_snow_maid_front_dark</item>
     </style>
 
     <style name="Theme.PureBiliBili.Splash.Icon3D" parent="Theme.PureBiliBili">
@@ -35,7 +71,7 @@
     </style>
 
     <style name="Theme.PureBiliBili.Splash.BiliPaiMonet" parent="Theme.PureBiliBili">
-        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_bilipai_monet</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/splash_icon_bilipai_monet</item>
     </style>
 
     <style name="Theme.PureBiliBili.Splash.NoIcon" parent="Theme.PureBiliBili">
@@ -44,6 +80,15 @@
         <item name="windowSplashScreenAnimationDuration">0</item>
     </style>
     
+    <!-- 视频自研窗口需要透明外部区域，页面自身仍使用当前材质表面。 -->
+    <style name="Theme.PureBiliBili.AppVideoWindow" parent="Theme.PureBiliBili.Main">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowDisablePreview">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
+
     <!-- 主应用主题 (浅色模式) -->
     <style name="Theme.PureBiliBili.Main" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="android:windowBackground">@android:color/white</item>
@@ -54,4 +99,12 @@
 
     <!-- 兼容旧主题名 -->
     <style name="Theme.Purebilibili" parent="Theme.PureBiliBili" />
+    <style name="Theme.PureBiliBili.Splash.Icon3DLight" parent="Theme.PureBiliBili">
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_3d_light</item>
+    </style>
+
+    <style name="Theme.PureBiliBili.Splash.Icon3DDark" parent="Theme.PureBiliBili">
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_3d_dark</item>
+    </style>
+
 </resources>

@@ -1,16 +1,239 @@
 package com.android.purebilibili.feature.video.screen
 
-import com.android.purebilibili.core.theme.UiPreset
-import java.io.File
+import com.android.purebilibili.core.ui.AppTopTabPresentation
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class VideoContentTabBarPolicyTest {
 
     @Test
-    fun `tab bar layout reserves trailing danmaku action area`() {
+    fun `shared top material follows visible comment fraction continuously through pager settle`() {
+        val pagePositions = listOf(0f, 0.25f, 0.5f, 0.75f, 1f, 0.75f, 0.5f, 0.25f, 0f)
+        for (position in pagePositions) {
+            assertEquals(position, resolveVideoContentCommentChromeHeightFraction(position), 0.0001f)
+        }
+        // At the intro endpoint, beginning or ending a scroll cannot extend the material.
+        assertEquals(0f, resolveVideoContentCommentChromeHeightFraction(0f), 0.0001f)
+        assertEquals(1f, resolveVideoContentCommentChromeHeightFraction(1.01f), 0.0001f)
+        assertEquals(0f, resolveVideoContentCommentChromeHeightFraction(-0.01f), 0.0001f)
+        assertEquals(0f, resolveVideoContentCommentChromeHeightFraction(Float.NaN), 0.0001f)
+    }
+
+    @Test
+    fun `pager motion does not reveal collapsed comment tabs or reset their height`() {
+        for (pagerScrolling in listOf(false, true, false)) {
+            val keepCollapsed = shouldKeepVideoContentTabBarCollapse(
+                settingEnabled = true,
+                selectedTabIndex = 1,
+            )
+            assertTrue(keepCollapsed)
+            // Cover both mid-collapse at the list top and fully hidden while browsing.
+            for (listAtTop in listOf(true, false)) {
+                assertEquals(
+                    if (listAtTop) 0.5f else 1f,
+                    resolveVideoContentTabBarCollapseProgress(
+                        collapsePx = 40f,
+                        maxCollapsePx = 80f,
+                        selectedTabIndex = 1,
+                        listAtTop = listAtTop,
+                        enabled = keepCollapsed,
+                    ),
+                )
+                assertEquals(
+                    if (listAtTop) 40f else 80f,
+                    resolveVideoContentTabBarCollapsePxWhenListLeavesTop(
+                        collapsePx = 40f,
+                        maxCollapsePx = 80f,
+                        listAtTop = listAtTop,
+                        enabled = keepCollapsed,
+                    ),
+                )
+            }
+        }
+        assertFalse(shouldKeepVideoContentTabBarCollapse(true, 0))
+        assertFalse(shouldKeepVideoContentTabBarCollapse(false, 1))
+    }
+
+    @Test
+    fun `comment list at top only when first item and zero offset`() {
+        assertTrue(isVideoContentCommentListAtTop(0, 0))
+        assertFalse(isVideoContentCommentListAtTop(0, 1))
+        assertFalse(isVideoContentCommentListAtTop(1, 0))
+    }
+
+    @Test
+    fun `collapse progress follows nested collapse px and snaps full when list leaves top`() {
+        assertEquals(
+            0f,
+            resolveVideoContentTabBarCollapseProgress(
+                collapsePx = 80f,
+                maxCollapsePx = 80f,
+                selectedTabIndex = 1,
+                listAtTop = false,
+                enabled = false,
+            ),
+        )
+        assertEquals(
+            0f,
+            resolveVideoContentTabBarCollapseProgress(
+                collapsePx = 20f,
+                maxCollapsePx = 80f,
+                selectedTabIndex = 0,
+                listAtTop = true,
+            ),
+        )
+        assertEquals(
+            0.25f,
+            resolveVideoContentTabBarCollapseProgress(
+                collapsePx = 20f,
+                maxCollapsePx = 80f,
+                selectedTabIndex = 1,
+                listAtTop = true,
+            ),
+        )
+        assertEquals(
+            1f,
+            resolveVideoContentTabBarCollapseProgress(
+                collapsePx = 10f,
+                maxCollapsePx = 80f,
+                selectedTabIndex = 1,
+                listAtTop = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `preScroll collapses with downward content scroll and can reverse expand at top`() {
+        val collapse = reduceVideoContentTabBarCollapseOnPreScroll(
+            collapsePx = 10f,
+            maxCollapsePx = 80f,
+            availableY = -30f,
+            listAtTop = true,
+            enabled = true,
+        )
+        assertEquals(40f, collapse!!.nextCollapsePx)
+        assertEquals(-30f, collapse.consumedY)
+
+        val expand = reduceVideoContentTabBarCollapseOnPreScroll(
+            collapsePx = 40f,
+            maxCollapsePx = 80f,
+            availableY = 25f,
+            listAtTop = true,
+            enabled = true,
+        )
+        assertEquals(15f, expand!!.nextCollapsePx)
+        assertEquals(25f, expand.consumedY)
+    }
+
+    @Test
+    fun `preScroll expand is ignored when list not at top so browsing can keep chrome hidden`() {
+        assertNull(
+            reduceVideoContentTabBarCollapseOnPreScroll(
+                collapsePx = 80f,
+                maxCollapsePx = 80f,
+                availableY = 40f,
+                listAtTop = false,
+                enabled = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `preScroll is interruptible mid collapse`() {
+        val mid = reduceVideoContentTabBarCollapseOnPreScroll(
+            collapsePx = 0f,
+            maxCollapsePx = 100f,
+            availableY = -40f,
+            listAtTop = true,
+            enabled = true,
+        )!!
+        assertEquals(40f, mid.nextCollapsePx)
+
+        val reverse = reduceVideoContentTabBarCollapseOnPreScroll(
+            collapsePx = mid.nextCollapsePx,
+            maxCollapsePx = 100f,
+            availableY = 15f,
+            listAtTop = true,
+            enabled = true,
+        )!!
+        assertEquals(25f, reverse.nextCollapsePx)
+        assertEquals(15f, reverse.consumedY)
+    }
+
+    @Test
+    fun `postScroll expands remainder after list hits top during fling`() {
+        val update = reduceVideoContentTabBarCollapseOnPostScroll(
+            collapsePx = 50f,
+            maxCollapsePx = 80f,
+            availableY = 30f,
+            listAtTop = true,
+            enabled = true,
+        )
+        assertEquals(20f, update!!.nextCollapsePx)
+        assertEquals(30f, update.consumedY)
+    }
+
+    @Test
+    fun `leaving list top forces full collapse while intro tab resets`() {
+        assertEquals(
+            80f,
+            resolveVideoContentTabBarCollapsePxWhenListLeavesTop(
+                collapsePx = 12f,
+                maxCollapsePx = 80f,
+                listAtTop = false,
+                enabled = true,
+            ),
+        )
+        assertEquals(
+            0f,
+            resolveVideoContentTabBarCollapsePxWhenListLeavesTop(
+                collapsePx = 40f,
+                maxCollapsePx = 80f,
+                listAtTop = true,
+                enabled = false,
+            ),
+        )
+        assertEquals(
+            40f,
+            resolveVideoContentTabBarCollapsePxWhenListLeavesTop(
+                collapsePx = 40f,
+                maxCollapsePx = 80f,
+                listAtTop = true,
+                enabled = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `returning to list top restores tabs without another overscroll gesture`() {
+        assertEquals(
+            0f,
+            resolveVideoContentTabBarCollapsePxWhenListLeavesTop(
+                collapsePx = 80f,
+                maxCollapsePx = 80f,
+                listAtTop = true,
+                enabled = true,
+                returningToTop = true,
+            ),
+        )
+        // A gesture that starts at the top must retain its partial collapse.
+        assertEquals(
+            40f,
+            resolveVideoContentTabBarCollapsePxWhenListLeavesTop(
+                collapsePx = 40f,
+                maxCollapsePx = 80f,
+                listAtTop = true,
+                enabled = true,
+                returningToTop = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `tab bar layout stays compact beside danmaku actions`() {
         val spec = resolveVideoContentTabBarLayoutSpec(widthDp = 412)
 
         assertEquals(1f, spec.tabsRowWeight)
@@ -18,7 +241,7 @@ class VideoContentTabBarPolicyTest {
         assertEquals(12, spec.containerHorizontalPaddingDp)
         assertEquals(12, spec.tabHorizontalPaddingDp)
         assertEquals(40, spec.segmentedControlHeightDp)
-        assertEquals(27, spec.segmentedControlIndicatorHeightDp)
+        assertEquals(30, spec.segmentedControlIndicatorHeightDp)
         assertTrue(
             hasVideoContentTabBarIndicatorScaleClearance(
                 containerHeightDp = spec.segmentedControlHeightDp,
@@ -37,6 +260,12 @@ class VideoContentTabBarPolicyTest {
     }
 
     @Test
+    fun `danmaku send and toggle stay on intro and comments tabs`() {
+        assertTrue(shouldShowVideoContentTabBarDanmakuActions(selectedTabIndex = 0))
+        assertTrue(shouldShowVideoContentTabBarDanmakuActions(selectedTabIndex = 1))
+    }
+
+    @Test
     fun `danmaku input hidden when player is collapsed`() {
         assertFalse(
             shouldShowDanmakuSendInput(
@@ -46,14 +275,14 @@ class VideoContentTabBarPolicyTest {
     }
 
     @Test
-    fun `danmaku action layout keeps settings target comfortably tappable`() {
+    fun `danmaku action layout keeps send controls comfortably tappable`() {
         val policy = resolveVideoContentTabBarDanmakuActionLayoutPolicy(widthDp = 412)
 
         assertEquals("发弹幕", policy.sendLabel)
-        assertEquals(36, policy.secondaryControlHeightDp)
-        assertEquals(20, policy.secondaryControlCornerRadiusDp)
-        assertEquals(36, policy.settingsButtonSizeDp)
-        assertEquals(18, policy.settingsIconSizeDp)
+        assertEquals(12, policy.sendTextSizeSp)
+        assertEquals(48, policy.sendMinHeightDp)
+        assertEquals(22, policy.toggleIconSizeDp)
+        assertEquals(48, policy.toggleButtonSizeDp)
     }
 
     @Test
@@ -73,65 +302,54 @@ class VideoContentTabBarPolicyTest {
             )
         )
         assertEquals("发弹幕", policy.sendLabel)
-        assertEquals(36, policy.secondaryControlHeightDp)
-        assertEquals(20, policy.secondaryControlCornerRadiusDp)
-        assertEquals(36, policy.settingsButtonSizeDp)
-        assertEquals(18, policy.settingsIconSizeDp)
+        assertEquals(12, policy.sendTextSizeSp)
+        assertEquals(48, policy.sendMinHeightDp)
+        assertEquals(22, policy.toggleIconSizeDp)
+        assertEquals(48, policy.toggleButtonSizeDp)
+        assertEquals(4, policy.toggleTrailingPaddingDp)
     }
 
     @Test
-    fun `info comment tab bar disables tap press refraction`() {
-        val source = loadSource(
-            "app/src/main/java/com/android/purebilibili/feature/video/screen/VideoContentSection.kt"
-        )
-        val tabBarBlock = source
-            .substringAfter("fun VideoContentTabBar(")
-            .substringBefore("// [新增] 恢复画面按钮")
+    fun `danmaku action controls share native PiliPlus sizes`() {
+        val compact = resolveVideoContentTabBarDanmakuActionLayoutPolicy(widthDp = 393)
+        val regular = resolveVideoContentTabBarDanmakuActionLayoutPolicy(widthDp = 412)
 
-        assertTrue(tabBarBlock.contains("tapPressRefractionEnabled = false"))
+        listOf(compact, regular).forEach { policy ->
+            assertEquals(22, policy.toggleIconSizeDp)
+            assertEquals(48, policy.toggleButtonSizeDp)
+            assertEquals(48, policy.sendMinHeightDp)
+            assertEquals(12, policy.sendTextSizeSp)
+            assertEquals("发弹幕", policy.sendLabel)
+        }
+        assertEquals(4, compact.toggleTrailingPaddingDp)
+        assertEquals(6, regular.toggleTrailingPaddingDp)
     }
 
     @Test
-    fun `video content section wires chrome backdrop into tab and comment segmented controls`() {
-        val source = loadSource(
-            "app/src/main/java/com/android/purebilibili/feature/video/screen/VideoContentSection.kt"
-        )
-
-        assertTrue(source.contains("val videoContentChromeBackdrop = rememberLayerBackdrop()"))
-        assertTrue(source.contains("chromeBackdrop = videoContentChromeBackdrop"))
-        assertTrue(source.contains("backdrop = videoContentChromeBackdrop"))
-        assertTrue(source.contains("backdrop = chromeBackdrop"))
-        assertTrue(source.contains("Column(modifier = modifier.fillMaxSize())"))
-        assertTrue(
-            source.contains(
-                "采样层只挂在 Tab 页滚动内容上；排序栏/顶栏分段控件必须在捕获区外"
-            )
-        )
-        val commentTabSource = source.substringAfter("private fun VideoCommentTab(")
-            .substringBefore("private fun VideoHeaderContent(")
-        assertTrue(commentTabSource.contains("CommentSortFilterBar("))
-        assertFalse(commentTabSource.contains("item {\n                CommentSortFilterBar("))
-        val pagerBlock = source
-            .substringAfter("HorizontalPager(")
-            .substringBefore(") { page ->")
-        assertFalse(
-            pagerBlock.contains("layerBackdrop"),
-            "Pager must not capture backdrop; segmented controls inside would self-sample and overflow RenderThread stack on MIUI"
-        )
-        assertTrue(source.contains("forceLiquidChrome = homeSettings.androidNativeLiquidGlassEnabled"))
-        assertTrue(source.contains("liquidGlassEffectsEnabled = liquidChromeSpec.liquidGlassEffectsEnabled"))
-    }
-
-    @Test
-    fun `ios preset uses calmer intro comment tab switch motion`() {
-        val iosSpec = resolveVideoContentTabSwitchAnimationSpec(UiPreset.IOS)
-        val md3Spec = resolveVideoContentTabSwitchAnimationSpec(UiPreset.MD3)
+    fun `moving capsule uses calmer intro comment tab switch motion`() {
+        val iosSpec = resolveVideoContentTabSwitchAnimationSpec(AppTopTabPresentation.MOVING_CAPSULE)
+        val md3Spec = resolveVideoContentTabSwitchAnimationSpec(AppTopTabPresentation.MATERIAL_UNDERLINE)
 
         assertEquals(360, iosSpec.durationMs)
         assertEquals(240, md3Spec.durationMs)
         assertTrue(iosSpec.durationMs > md3Spec.durationMs)
         assertEquals(iosSpec.durationMs, resolveInlinePortraitPlayerCommentCollapseDurationMillis(iosSpec))
         assertEquals(md3Spec.durationMs, resolveInlinePortraitPlayerCommentCollapseDurationMillis(md3Spec))
+    }
+
+    @Test
+    fun `glass timing follows the visible moving capsule for every native presentation`() {
+        for (presentation in AppTopTabPresentation.entries) {
+            val glassSpec = resolveVideoContentTabSwitchAnimationSpec(presentation, liquidGlassEnabled = true)
+            assertEquals(360, glassSpec.durationMs)
+            assertEquals(glassSpec.durationMs, resolveInlinePortraitPlayerCommentCollapseDurationMillis(glassSpec))
+        }
+        assertEquals(240, resolveVideoContentTabSwitchAnimationSpec(
+            AppTopTabPresentation.MATERIAL_UNDERLINE, liquidGlassEnabled = false,
+        ).durationMs)
+        assertEquals(240, resolveVideoContentTabSwitchAnimationSpec(
+            AppTopTabPresentation.TONAL_CAPSULE, liquidGlassEnabled = false,
+        ).durationMs)
     }
 
     @Test
@@ -174,26 +392,74 @@ class VideoContentTabBarPolicyTest {
     }
 
     @Test
-    fun `intro action row exposes a labeled comment entry and opens comment tab`() {
-        val contentSource = loadSource(
-            "app/src/main/java/com/android/purebilibili/feature/video/screen/VideoContentSection.kt"
+    fun `horizontal page drags stay enabled on both intro and comment tabs`() {
+        assertTrue(
+            shouldEnableVideoContentHorizontalPagerSwipe(
+                currentPage = 1,
+                commentPageIndex = 1,
+                isPagerScrollInProgress = false,
+            )
         )
-        val actionSource = loadSource(
-            "app/src/main/java/com/android/purebilibili/feature/video/ui/section/VideoActionSection.kt"
+        assertTrue(
+            shouldEnableVideoContentHorizontalPagerSwipe(
+                currentPage = 1,
+                commentPageIndex = 1,
+                isPagerScrollInProgress = true,
+            )
         )
-
-        assertTrue(contentSource.contains("onCommentClick = { onTabSelected(1) }"))
-        assertTrue(actionSource.contains("text = \"评论 \${FormatUtils.formatStat(info.stat.reply.toLong())}\""))
-        assertTrue(actionSource.contains("onClick = onCommentClick"))
+        assertTrue(
+            shouldEnableVideoContentHorizontalPagerSwipe(
+                currentPage = 0,
+                commentPageIndex = 1,
+                isPagerScrollInProgress = false,
+            )
+        )
     }
 
-    private fun loadSource(path: String): String {
-        val normalizedPath = path.removePrefix("app/")
-        val sourceFile = listOf(
-            File(path),
-            File(normalizedPath)
-        ).firstOrNull { it.exists() }
-        require(sourceFile != null) { "Cannot locate $path from ${File(".").absolutePath}" }
-        return sourceFile.readText()
+    @Test
+    fun `video content tab bar reuses dock at scene size when global glass and backdrop are on`() {
+        val layoutSpec = resolveVideoContentTabBarLayoutSpec(widthDp = 393)
+        val spec = resolveVideoContentTabBarLiquidChromeSpec(
+            androidNativeLiquidGlassEnabled = true,
+            hasBackdrop = true,
+            layoutSpec = layoutSpec,
+        )
+
+        assertTrue(spec.reusesLiquidGlassDock)
+        assertTrue(spec.liquidGlassEffectsEnabled)
+        assertEquals(layoutSpec.segmentedControlHeightDp, spec.segmentedControlHeightDp)
+        assertEquals(layoutSpec.segmentedControlIndicatorHeightDp, spec.segmentedControlIndicatorHeightDp)
+        assertEquals(resolveVideoContentTabBarDockItemWidthDp(spec.labelFontSizeSp), spec.itemWidthDp)
+        assertEquals(70, resolveVideoContentTabBarDockItemWidthDp(labelFontSizeSp = 15))
+        assertEquals(72, resolveVideoContentTabBarDockItemWidthDp(labelFontSizeSp = 16))
+        assertEquals(66, resolveVideoContentTabBarDockItemWidthDp(labelFontSizeSp = 13))
+        assertEquals(
+            16,
+            resolveVideoContentTabBarStartPaddingDp(
+                reusesLiquidGlassDock = true,
+                containerHorizontalPaddingDp = layoutSpec.containerHorizontalPaddingDp,
+            )
+        )
+        assertEquals(
+            layoutSpec.containerHorizontalPaddingDp,
+            resolveVideoContentTabBarStartPaddingDp(
+                reusesLiquidGlassDock = false,
+                containerHorizontalPaddingDp = layoutSpec.containerHorizontalPaddingDp,
+            )
+        )
+        assertFalse(
+            shouldReuseVideoContentTabBarLiquidGlassDock(
+                androidNativeLiquidGlassEnabled = true,
+                hasBackdrop = false,
+            )
+        )
+        val nativeSpec = resolveVideoContentTabBarLiquidChromeSpec(
+            androidNativeLiquidGlassEnabled = false,
+            hasBackdrop = true,
+            layoutSpec = layoutSpec,
+        )
+        assertFalse(nativeSpec.reusesLiquidGlassDock)
+        assertFalse(nativeSpec.liquidGlassEffectsEnabled)
+        assertNull(nativeSpec.itemWidthDp)
     }
 }

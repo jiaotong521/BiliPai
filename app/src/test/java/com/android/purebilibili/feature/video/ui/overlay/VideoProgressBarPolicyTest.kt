@@ -1,11 +1,16 @@
 package com.android.purebilibili.feature.video.ui.overlay
 
-import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 
 class VideoProgressBarPolicyTest {
+
+    @Test
+    fun unknownDuration_keepsProgressAndTouchTargetAtZero() {
+        assertEquals(0f, resolveProgressFraction(positionMs = 20_000L, durationMs = 0L))
+        assertEquals(0L, resolveSeekPositionFromTouch(touchX = 100f, containerWidthPx = 200f, durationMs = 0L))
+    }
+
 
     @Test
     fun seekableDuration_usesFallbackWhenPlaybackDurationIsUnset() {
@@ -113,15 +118,14 @@ class VideoProgressBarPolicyTest {
     }
 
     @Test
-    fun progressBarDragHandler_cleansUpActiveDragWhenPointerInputIsCancelled() {
-        val source = File("src/main/java/com/android/purebilibili/feature/video/ui/overlay/BottomControlBar.kt")
-            .readText()
-
-        assertTrue(
-            source.contains("finally") &&
-                source.contains("shouldCancelSeekDragOnPointerInputCompletion(dragInProgress)") &&
-                source.contains("currentOnSeekDragCancel()"),
-            "Progress bar drag handling must cancel an active seek scrub if the pointerInput coroutine is cancelled before onDragEnd/onDragCancel."
+    fun seekGestureHost_staysOnSharedOuterContainer_evenWhenChapterLabelExists() {
+        assertEquals(
+            VideoProgressBarSeekGestureHost.SharedOuterContainer,
+            resolveVideoProgressBarSeekGestureHost(hasChapterLabel = false)
+        )
+        assertEquals(
+            VideoProgressBarSeekGestureHost.SharedOuterContainer,
+            resolveVideoProgressBarSeekGestureHost(hasChapterLabel = true)
         )
     }
 }

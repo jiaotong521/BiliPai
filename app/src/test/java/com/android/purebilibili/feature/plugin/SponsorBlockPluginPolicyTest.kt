@@ -13,6 +13,21 @@ import kotlin.test.assertTrue
 class SponsorBlockPluginPolicyTest {
 
     @Test
+    fun sponsorBlockConfig_normalizationCreatesValidStableUserId() {
+        val config = SponsorBlockConfig().normalized()
+
+        assertNull(validateSponsorBlockUserId(config.userId))
+        assertEquals(config.userId, config.normalized().userId)
+    }
+
+    @Test
+    fun sponsorBlockConfig_normalizationPreservesImportedUserId() {
+        val userId = "a".repeat(32)
+
+        assertEquals(userId, SponsorBlockConfig(userId = userId).normalized().userId)
+    }
+
+    @Test
     fun normalizeSponsorSegments_discardsInvalidRangesAndSortsByStartTime() {
         val normalized = normalizeSponsorSegments(
             listOf(
@@ -116,6 +131,36 @@ class SponsorBlockPluginPolicyTest {
             SponsorBlockMarkerMode.SPONSOR_ONLY,
             resolveSponsorBlockMarkerMode(rawValue = "mystery")
         )
+    }
+
+    @Test
+    fun sponsorBlockConfig_migratesLegacyManualModeToPerCategoryManualBehaviors() {
+        val config = SponsorBlockConfig(autoSkip = false).normalized()
+
+        assertTrue(config.categoryBehaviorRaw.isNotEmpty())
+        assertEquals(
+            SponsorBlockSegmentBehavior.MANUAL,
+            config.behaviorFor(SponsorCategory.SPONSOR)
+        )
+    }
+
+    @Test
+    fun sponsorBlockConfig_disablesLegacyDisabledCategoriesAndOmitsThemFromRequests() {
+        val config = SponsorBlockConfig(skipIntro = false).normalized()
+
+        assertEquals(
+            SponsorBlockSegmentBehavior.DISABLED,
+            config.behaviorFor(SponsorCategory.INTRO)
+        )
+        assertTrue(SponsorCategory.INTRO !in config.requestedCategories)
+    }
+
+    @Test
+    fun normalizeSponsorBlockServerUrl_acceptsHttpAndHttpsApiUrlsOnly() {
+        assertEquals("https://example.com/api", normalizeSponsorBlockServerUrl("https://example.com/api/"))
+        assertEquals("http://localhost:8080/api", normalizeSponsorBlockServerUrl("http://localhost:8080/api"))
+        assertNull(normalizeSponsorBlockServerUrl("ftp://example.com/api"))
+        assertNull(normalizeSponsorBlockServerUrl("not-a-url"))
     }
 
     @Test

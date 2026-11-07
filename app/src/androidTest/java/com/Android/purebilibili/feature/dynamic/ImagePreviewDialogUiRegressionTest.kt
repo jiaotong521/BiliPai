@@ -4,21 +4,26 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertCountEquals
-import androidx.compose.ui.test.click
 import androidx.compose.ui.test.doubleClick
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
+import com.android.purebilibili.core.ui.components.appElasticPress
+import java.util.concurrent.atomic.AtomicInteger
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.android.purebilibili.feature.dynamic.components.IMAGE_PREVIEW_COMMENT_PANEL_TAG
 import com.android.purebilibili.feature.dynamic.components.IMAGE_PREVIEW_PAGE_TAG
+import com.android.purebilibili.feature.dynamic.components.IMAGE_PREVIEW_PAGE_INDICATOR_TAG
 import com.android.purebilibili.feature.dynamic.components.ImagePreviewDialog
 import com.android.purebilibili.feature.dynamic.components.ImagePreviewCommentContext
 import com.android.purebilibili.feature.dynamic.components.ImagePreviewOverlayHost
@@ -33,6 +38,49 @@ class ImagePreviewDialogUiRegressionTest {
 
     @get:Rule
     val composeTestRule = createComposeRule()
+
+    @Test
+    fun swipeUpWithElasticFeedbackAncestor_dismissesPreviewOnce() {
+        val dismissCount = AtomicInteger(0)
+        composeTestRule.setContent {
+            MaterialTheme {
+                Box(Modifier.fillMaxSize().appElasticPress()) {
+                    ImagePreviewDialog(
+                        images = listOf(""),
+                        initialIndex = 0,
+                        onDismiss = { dismissCount.incrementAndGet() },
+                    )
+                    ImagePreviewOverlayHost()
+                }
+            }
+        }
+        composeTestRule.onNodeWithTag(IMAGE_PREVIEW_PAGE_TAG)
+            .performTouchInput { swipeUp() }
+        composeTestRule.waitUntil(timeoutMillis = 3_000) { dismissCount.get() > 0 }
+        composeTestRule.runOnIdle { assertEquals(1, dismissCount.get()) }
+    }
+
+    @Test
+    fun replacingPreviewRequest_startsAtNewInitialPage() {
+        val replaceRequest = mutableStateOf(false)
+        // Distinct pager keys with empty image payloads: no network or decoding dependency.
+        val images = listOf("", " ", "  ")
+        composeTestRule.setContent {
+            MaterialTheme {
+                ImagePreviewDialog(
+                    images = if (replaceRequest.value) images.take(2) else images,
+                    initialIndex = if (replaceRequest.value) 0 else 2,
+                    onDismiss = {},
+                )
+                ImagePreviewOverlayHost()
+            }
+        }
+        composeTestRule.onNodeWithTag(IMAGE_PREVIEW_PAGE_INDICATOR_TAG)
+            .assertIsDisplayed()
+        composeTestRule.onNodeWithText("3 / 3").assertIsDisplayed()
+        composeTestRule.runOnIdle { replaceRequest.value = true }
+        composeTestRule.onNodeWithText("1 / 2").assertIsDisplayed()
+    }
 
     @Test
     fun doubleTapOnPreviewImage_keepsPreviewOpen() {
@@ -99,8 +147,35 @@ class ImagePreviewDialogUiRegressionTest {
     }
 
     @Test
-    fun commentPreview_keepsOpenWhenImageTappedAndShowsCommentChrome() {
-        var dismissed = false
+    fun longPressOnPreviewImage_showsNativeActionDialog() {
+        composeTestRule.setContent {
+            MaterialTheme {
+                Box(modifier = Modifier.size(width = 390.dp, height = 844.dp)) {
+                    ImagePreviewDialog(
+                        images = listOf(
+                            "https://example.com/one.jpg",
+                            "https://example.com/two.jpg"
+                        ),
+                        initialIndex = 0,
+                        onDismiss = {}
+                    )
+                    ImagePreviewOverlayHost(modifier = Modifier.fillMaxSize())
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithTag(IMAGE_PREVIEW_PAGE_TAG).performTouchInput {
+            longClick(center)
+        }
+
+        composeTestRule.onNodeWithText("分享").assertIsDisplayed()
+        composeTestRule.onNodeWithText("复制链接").assertIsDisplayed()
+        composeTestRule.onNodeWithText("保存图片").assertIsDisplayed()
+        composeTestRule.onNodeWithText("保存全部图片").assertIsDisplayed()
+    }
+
+    @Test
+    fun commentPreview_usesTheSameGalleryChromeAsOrdinaryImages() {
         var liked = false
         var replied = false
 
@@ -129,23 +204,17 @@ class ImagePreviewDialogUiRegressionTest {
                                 onReplyClick = { replied = true }
                             )
                         ),
-                        onDismiss = { dismissed = true }
+                        onDismiss = {}
                     )
                     ImagePreviewOverlayHost(modifier = Modifier.fillMaxSize())
                 }
             }
         }
 
-        composeTestRule.onNodeWithTag(IMAGE_PREVIEW_COMMENT_PANEL_TAG).assertIsDisplayed()
-
-        composeTestRule
-            .onNodeWithTag(IMAGE_PREVIEW_PAGE_TAG)
-            .performTouchInput {
-                click(center)
-            }
+        composeTestRule.onAllNodesWithTag(IMAGE_PREVIEW_COMMENT_PANEL_TAG).assertCountEquals(0)
+        composeTestRule.onNodeWithTag(IMAGE_PREVIEW_PAGE_INDICATOR_TAG).assertIsDisplayed()
 
         composeTestRule.runOnIdle {
-            assertEquals(false, dismissed)
             assertEquals(false, liked)
             assertEquals(false, replied)
         }

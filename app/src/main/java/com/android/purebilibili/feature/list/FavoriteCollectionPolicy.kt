@@ -6,6 +6,7 @@ import com.android.purebilibili.data.model.response.FavoriteData
 import com.android.purebilibili.data.model.response.VideoItem
 import com.android.purebilibili.data.repository.FavoriteRequestException
 import java.io.IOException
+import kotlin.math.abs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 
@@ -27,12 +28,22 @@ internal fun resolveFavoriteCollectionSharedElementId(
     return "$normalizedType:$id"
 }
 
-internal fun resolveFavoriteFolderContentPageSize(): Int = 40
+/** 文档 x/v3/fav/resource/list：ps 定义域 1-20。 */
+internal const val FAVORITE_RESOURCE_PAGE_SIZE_MAX = 20
+
+internal fun resolveFavoriteFolderContentPageSize(): Int = FAVORITE_RESOURCE_PAGE_SIZE_MAX
+
+internal fun normalizeFavoriteResourcePageSize(ps: Int): Int =
+    ps.coerceIn(1, FAVORITE_RESOURCE_PAGE_SIZE_MAX)
 
 internal fun resolveSubscribedFavoritePreviewCover(folder: FavFolder): String? {
     if (folder.source != FavFolderSource.SUBSCRIBED) return null
     return folder.cover.trim().takeIf { it.isNotEmpty() }
 }
+
+/** collected/list 的 id/fid 只在各自 type 内唯一。 */
+internal fun resolveSubscribedFavoriteFolderKey(folder: FavFolder): String =
+    "${folder.type}:${folder.id}_${folder.fid}"
 
 internal fun resolveFavoriteFolderPreviewCover(
     folder: FavFolder,
@@ -98,6 +109,22 @@ internal fun resolveSubscribedFavoriteCollectionRoute(folder: FavFolder): Favori
     )
 }
 
+/** 非 type=21 的订阅夹也走合集详情页时，允许列表→详情做共享元素。 */
+internal fun resolveSubscribedFavoriteFolderRoute(folder: FavFolder): FavoriteCollectionRoute? {
+    resolveSubscribedFavoriteCollectionRoute(folder)?.let { return it }
+    if (folder.source != FavFolderSource.SUBSCRIBED) return null
+    val mediaId = resolveFavoriteFolderMediaId(folder)
+    if (mediaId <= 0L || folder.title.isBlank()) return null
+    return FavoriteCollectionRoute(
+        type = "favorite",
+        id = mediaId,
+        mid = folder.mid,
+        title = folder.title,
+        ownerName = folder.upper?.name.orEmpty(),
+        sharedElementTransition = true
+    )
+}
+
 internal fun filterFavoriteFoldersByQuery(
     folders: List<FavFolder>,
     query: String
@@ -112,7 +139,7 @@ internal fun filterFavoriteFoldersByQuery(
 internal fun resolveFavoriteCollectionRoute(item: VideoItem): FavoriteCollectionRoute? {
     if (!item.isCollectionResource || item.collectionId <= 0L) return null
     return FavoriteCollectionRoute(
-        type = "season",
+        type = "favorite_season",
         id = item.collectionId,
         mid = item.collectionMid,
         title = item.title,
@@ -206,13 +233,14 @@ internal fun resolveFavoriteErrorMessage(throwable: Throwable): String {
         ?: "加载收藏夹失败，请稍后重试"
 }
 
-private fun isFavoriteRiskControlError(throwable: Throwable): Boolean {
+internal fun isFavoriteRiskControlError(throwable: Throwable): Boolean {
     val requestError = throwable as? FavoriteRequestException
     if (requestError?.apiCode in setOf(-412, 412, -429, 429)) return true
     if (requestError?.httpCode in setOf(412, 429)) return true
     val message = throwable.message.orEmpty()
     return message.contains("HTTP 412", ignoreCase = true) ||
-        message.contains("HTTP 429", ignoreCase = true)
+        message.contains("HTTP 429", ignoreCase = true) ||
+        throwable.cause?.let(::isFavoriteRiskControlError) == true
 }
 
 internal fun shouldApplyFavoriteFolderResult(
@@ -226,4 +254,24 @@ internal fun shouldApplyFavoriteFolderResult(
     return requestGeneration == currentGeneration &&
         requestedMediaId == currentMediaId &&
         requestedOrder == currentOrder
+}
+
+/** 收藏夹 pager 逐步滚动最多展示的中间页数；更远的跨度先跳到窗口起点再动画落地。 */
+internal const val FAVORITE_FOLDER_SWITCH_MAX_TRAVERSED_PAGES = 4
+
+/**
+ * Near folder hops keep progressive traversal. Distant hops pre-jump so the
+ * pager only animates the final [FAVORITE_FOLDER_SWITCH_MAX_TRAVERSED_PAGES] pages
+ * and long folder gaps do not cruise every intermediate folder.
+ */
+internal fun resolveFavoriteFolderSwitchPreJumpPage(
+    currentPage: Int,
+    targetPage: Int,
+    maxTraversedPages: Int = FAVORITE_FOLDER_SWITCH_MAX_TRAVERSED_PAGES
+): Int? {
+    val traversedWindow = maxTraversedPages.coerceAtLeast(1)
+    val distance = abs(targetPage - currentPage)
+    if (distance <= traversedWindow) return null
+    val direction = if (targetPage >= currentPage) 1 else -1
+    return targetPage - direction * traversedWindow
 }

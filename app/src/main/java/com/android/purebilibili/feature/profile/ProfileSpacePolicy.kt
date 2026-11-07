@@ -14,13 +14,14 @@ import com.android.purebilibili.data.model.response.SpaceVideoItem
 import com.android.purebilibili.feature.dynamic.DynamicDeleteAction
 import com.android.purebilibili.feature.home.UserState
 import com.android.purebilibili.feature.list.resolveFavoriteFolderMediaId
+import com.android.purebilibili.core.util.FormatUtils
 
 enum class ProfileSpaceMainTab(val title: String) {
     HOME("主页"),
     DYNAMIC("动态"),
     CONTRIBUTION("投稿"),
     FAVORITE("收藏"),
-    BANGUMI("追番")
+    BANGUMI("番剧")
 }
 
 data class ProfileSpaceTabItem(
@@ -34,14 +35,12 @@ data class ProfileSpaceTabChromeSpec(
     val selectedIndicatorAlpha: Float,
     val selectedTextAlpha: Float,
     val unselectedTextAlpha: Float,
-    val rowCornerRadiusDp: Int,
     val rowHorizontalInsetDp: Int,
     val controlHorizontalInsetDp: Int,
     val rowVerticalInsetDp: Int
 )
 
 data class ProfileSpaceContentPanelSpec(
-    val topCornerRadiusDp: Int,
     val horizontalInsetDp: Int,
     val topOverlapDp: Int,
     val topPaddingDp: Int,
@@ -73,12 +72,27 @@ enum class ProfileSpaceHomeSection {
     SERVICES
 }
 
+enum class ProfileContributionLoadState {
+    IDLE,
+    LOADING,
+    LOADED,
+    ERROR
+}
+
+enum class ProfileContributionContentState {
+    CONTENT,
+    LOADING,
+    EMPTY,
+    ERROR
+}
+
 data class ProfileSpaceUiState(
     val selectedTab: ProfileSpaceMainTab = ProfileSpaceMainTab.HOME,
     val isLoading: Boolean = false,
     val favoriteFolders: List<FavFolder> = emptyList(),
     val bangumiItems: List<FollowBangumiItem> = emptyList(),
     val contributionVideos: List<SpaceVideoItem> = emptyList(),
+    val contributionLoadState: ProfileContributionLoadState = ProfileContributionLoadState.IDLE,
     val coinVideos: List<SpaceAggregateArchiveItem> = emptyList(),
     val likeVideos: List<SpaceAggregateArchiveItem> = emptyList(),
     val dynamicItems: List<SpaceDynamicItem> = emptyList(),
@@ -131,7 +145,6 @@ fun resolveProfileSpaceTabChromeSpec(): ProfileSpaceTabChromeSpec {
         selectedIndicatorAlpha = 0.18f,
         selectedTextAlpha = 1f,
         unselectedTextAlpha = 0.72f,
-        rowCornerRadiusDp = 22,
         rowHorizontalInsetDp = 2,
         controlHorizontalInsetDp = 2,
         rowVerticalInsetDp = 0
@@ -140,7 +153,6 @@ fun resolveProfileSpaceTabChromeSpec(): ProfileSpaceTabChromeSpec {
 
 fun resolveProfileSpaceContentPanelSpec(): ProfileSpaceContentPanelSpec {
     return ProfileSpaceContentPanelSpec(
-        topCornerRadiusDp = 28,
         horizontalInsetDp = 12,
         topOverlapDp = 28,
         topPaddingDp = 14,
@@ -215,15 +227,34 @@ fun resolveProfileSpaceHomeSections(
     bangumiItems: List<FollowBangumiItem>,
     coinVideos: List<SpaceAggregateArchiveItem>,
     likeVideos: List<SpaceAggregateArchiveItem>,
-    contributionVideos: List<SpaceVideoItem>
+    contributionVideos: List<SpaceVideoItem>,
+    includeDashboardOwnedSections: Boolean = true,
 ): List<ProfileSpaceHomeSection> {
     return buildList {
-        if (favoriteFolders.any { it.id > 0L && it.title.isNotBlank() }) add(ProfileSpaceHomeSection.FAVORITES)
+        if (
+            includeDashboardOwnedSections &&
+            favoriteFolders.any { it.id > 0L && it.title.isNotBlank() }
+        ) {
+            add(ProfileSpaceHomeSection.FAVORITES)
+        }
         if (bangumiItems.any { it.seasonId > 0L && it.title.isNotBlank() }) add(ProfileSpaceHomeSection.BANGUMI)
         if (coinVideos.any { it.aid > 0L && it.title.isNotBlank() }) add(ProfileSpaceHomeSection.COIN_VIDEOS)
         if (likeVideos.any { it.aid > 0L && it.title.isNotBlank() }) add(ProfileSpaceHomeSection.LIKE_VIDEOS)
         if (contributionVideos.any { it.bvid.isNotBlank() || it.aid > 0L }) add(ProfileSpaceHomeSection.CONTRIBUTIONS)
-        add(ProfileSpaceHomeSection.SERVICES)
+        if (includeDashboardOwnedSections) add(ProfileSpaceHomeSection.SERVICES)
+    }
+}
+
+fun resolveProfileContributionContentState(
+    loadState: ProfileContributionLoadState,
+    hasVideos: Boolean
+): ProfileContributionContentState {
+    if (hasVideos) return ProfileContributionContentState.CONTENT
+    return when (loadState) {
+        ProfileContributionLoadState.IDLE,
+        ProfileContributionLoadState.LOADING -> ProfileContributionContentState.LOADING
+        ProfileContributionLoadState.LOADED -> ProfileContributionContentState.EMPTY
+        ProfileContributionLoadState.ERROR -> ProfileContributionContentState.ERROR
     }
 }
 
@@ -297,6 +328,8 @@ internal fun mergeProfileAggregateState(
     val aggregateFavoriteFolders = aggregate.favourite2?.item.orEmpty()
         .map(::mapProfileAggregateFavoriteFolder)
     val contributionVideos = aggregate.archive?.item.orEmpty().map(::mapProfileAggregateVideoItem)
+    val shouldSeedContributions = current.contributionLoadState != ProfileContributionLoadState.LOADED &&
+        current.contributionVideos.isEmpty()
     return current.copy(
         favoriteFolders = if (aggregate.favourite2 != null) {
             mergeProfileFavoriteFolders(current.favoriteFolders, aggregateFavoriteFolders)
@@ -304,12 +337,17 @@ internal fun mergeProfileAggregateState(
             current.favoriteFolders
         },
         favoriteFolderCount = aggregate.favourite2?.count ?: current.favoriteFolderCount,
-        contributionVideos = if (aggregate.archive != null) {
+        contributionVideos = if (aggregate.archive != null && shouldSeedContributions) {
             contributionVideos
         } else {
             current.contributionVideos
         },
-        contributionVideoCount = aggregate.archive?.count ?: current.contributionVideoCount,
+        contributionVideoCount = if (aggregate.archive != null && shouldSeedContributions) {
+            val checkedAggregateArchive = requireNotNull(aggregate.archive)
+            checkedAggregateArchive.count
+        } else {
+            current.contributionVideoCount
+        },
         coinVideos = aggregate.coinArchive?.item ?: current.coinVideos,
         coinVideoCount = aggregate.coinArchive?.count ?: current.coinVideoCount,
         likeVideos = aggregate.likeArchive?.item ?: current.likeVideos,
@@ -336,12 +374,10 @@ internal fun mergeProfileContributionVideoState(
     videos: List<SpaceVideoItem>,
     totalCount: Int
 ): ProfileSpaceUiState {
-    if (videos.isEmpty() && totalCount <= current.contributionVideoCount) {
-        return current
-    }
     return current.copy(
-        contributionVideos = videos.ifEmpty { current.contributionVideos },
-        contributionVideoCount = maxOf(current.contributionVideoCount, totalCount, videos.size)
+        contributionVideos = videos,
+        contributionVideoCount = maxOf(totalCount, videos.size),
+        contributionLoadState = ProfileContributionLoadState.LOADED
     )
 }
 
@@ -484,9 +520,9 @@ fun resolveProfileDynamicCover(item: SpaceDynamicItem): String {
 fun resolveProfileDynamicImageUrls(item: SpaceDynamicItem): List<String> {
     val major = item.modules.module_dynamic?.major
     return when {
-        major?.draw?.items?.isNotEmpty() == true -> major.draw.items.mapNotNull { it.src.takeIf(String::isNotBlank) }
-        major?.opus?.pics?.isNotEmpty() == true -> major.opus.pics.mapNotNull { it.src.takeIf(String::isNotBlank) }
-        major?.article?.covers?.isNotEmpty() == true -> major.article.covers.mapNotNull { it.takeIf(String::isNotBlank) }
+        major?.draw?.items?.isNotEmpty() == true -> major?.draw?.items.orEmpty().mapNotNull { it.src.takeIf(String::isNotBlank) }
+        major?.opus?.pics?.isNotEmpty() == true -> major?.opus?.pics.orEmpty().mapNotNull { it.src.takeIf(String::isNotBlank) }
+        major?.article?.covers?.isNotEmpty() == true -> major?.article?.covers.orEmpty().mapNotNull { it.takeIf(String::isNotBlank) }
         else -> emptyList()
     }
 }
@@ -555,17 +591,5 @@ private fun List<String?>.firstNotBlank(): String {
     return firstOrNull { !it.isNullOrBlank() }?.orEmpty() ?: ""
 }
 
-private fun formatProfileDynamicCount(count: Int): String {
-    return when {
-        count >= 10000 -> {
-            val wan = count / 10000.0
-            val text = if (count % 10000 == 0) {
-                (count / 10000).toString()
-            } else {
-                String.format(java.util.Locale.US, "%.1f", wan).trimEnd('0').trimEnd('.')
-            }
-            "${text}万"
-        }
-        else -> count.toString()
-    }
-}
+private fun formatProfileDynamicCount(count: Int): String =
+    FormatUtils.formatStat(count.toLong())

@@ -1,9 +1,29 @@
 // 文件路径: feature/bangumi/ui/player/BangumiPlayerComponents.kt
 package com.android.purebilibili.feature.bangumi.ui.player
 
+import com.android.purebilibili.core.plugin.BuiltinPluginIds
+
+import com.android.purebilibili.core.ui.AppSurfaceTokens
+
+import com.android.purebilibili.core.ui.MediaContrastPalette
+
+import com.android.purebilibili.core.ui.AppContentColors
+
+import com.android.purebilibili.feature.video.ui.overlay.NextWatchOverlay
+import com.android.purebilibili.feature.video.usecase.togglePlayerPlaybackFromUserAction
+import com.android.purebilibili.core.ui.components.AppIcon
+import com.android.purebilibili.core.ui.components.AppText
+import com.android.purebilibili.core.ui.components.AppHorizontalDivider
+
 import android.app.Activity
+import android.os.SystemClock
+import com.android.purebilibili.core.player.SeekTickHapticPolicy
+import com.android.purebilibili.core.util.HapticType
+import com.android.purebilibili.core.util.rememberHapticFeedback
 import android.content.Context
 import android.media.AudioManager
+import android.view.Surface
+import android.view.View
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -15,52 +35,85 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.shape.RoundedCornerShape
-//  Cupertino Icons - iOS SF Symbols 风格图标
-import io.github.alexzhirkevich.cupertino.icons.CupertinoIcons
-import io.github.alexzhirkevich.cupertino.icons.outlined.*
-import io.github.alexzhirkevich.cupertino.icons.filled.*
 import androidx.compose.material3.*
 // 🌈 Material Icons Extended - 亮度图标
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BrightnessLow
 import androidx.compose.material.icons.filled.BrightnessMedium
 import androidx.compose.material.icons.filled.BrightnessHigh
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.currentStateAsState
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.media3.common.Format
+import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.common.PlaybackParameters
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.ui.PlayerView
+import com.android.purebilibili.core.plugin.PluginManager
 import com.android.purebilibili.data.model.response.Page
+import com.android.purebilibili.data.model.response.VideoshotData
 import com.android.purebilibili.core.util.FormatUtils
+import com.android.purebilibili.core.util.Logger
+import com.android.purebilibili.plugin.sdk.Anime4KConfig
+import com.android.purebilibili.feature.anime4k.gl.Anime4KGLSurfaceView
+import com.android.purebilibili.feature.anime4k.isAnime4KGles3Available
+import com.android.purebilibili.feature.anime4k.resolveInitialVideoEnhancementEnabled
+import com.android.purebilibili.feature.anime4k.resolveAnime4KOutputDecision
 import com.android.purebilibili.feature.video.danmaku.DanmakuManager
+import com.android.purebilibili.danmaku.engine.DanmakuRenderView
+import com.android.purebilibili.core.ui.rememberAppPlayerChromeProfile
+import com.android.purebilibili.core.ui.components.AppSurface
 import com.android.purebilibili.feature.video.ui.components.AnimatedGesturePercentText
 import com.android.purebilibili.feature.video.ui.components.SponsorSkipButton
 import com.android.purebilibili.feature.video.ui.components.VideoAspectRatio
+import com.android.purebilibili.feature.video.ui.components.resolveVideoViewportLayout
+import com.android.purebilibili.feature.video.ui.components.toAnime4KDisplayScaleMode
+import com.android.purebilibili.feature.video.ui.gesture.GestureLevelOverlayContent
+import com.android.purebilibili.feature.video.ui.gesture.GestureLevelOverlayHost
+import com.android.purebilibili.feature.video.ui.gesture.resolveGestureLevelKind
+import com.android.purebilibili.feature.video.ui.gesture.resolveGestureLevelOverlaySpec
+import com.android.purebilibili.feature.video.ui.gesture.rememberGestureLevelOverlayStyle
 import com.android.purebilibili.feature.video.ui.overlay.PlaybackDebugInfo
+import com.android.purebilibili.feature.video.playback.audio.AudioQualityOption
+import com.android.purebilibili.feature.video.ui.section.resolveLongPressPlaybackParameters
+import com.android.purebilibili.feature.video.ui.section.VideoOutputRouter
+import com.android.purebilibili.feature.video.ui.section.VideoGestureMode
+import com.android.purebilibili.feature.video.ui.section.resolveVerticalGestureMode
+import com.android.purebilibili.feature.video.ui.section.shouldTriggerFullscreenBySwipe
 import com.android.purebilibili.feature.video.ui.section.resolveSystemStreamVolumeFromGesture
 import com.android.purebilibili.feature.video.util.captureAndSaveVideoScreenshot
 import com.android.purebilibili.data.model.response.SponsorSegment
+import com.android.purebilibili.plugin.sdk.VideoEnhancementPluginApi
 import com.android.purebilibili.feature.bangumi.resolveBangumiDanmakuTopInsetDp
 import com.android.purebilibili.feature.bangumi.resolveBangumiPlayerTopControlsPaddingTopDp
 import com.android.purebilibili.core.store.DEFAULT_LONG_PRESS_SPEED
 import com.android.purebilibili.core.store.SettingsManager
 import kotlinx.coroutines.launch
+import com.android.purebilibili.core.ui.AppShapes
+import com.android.purebilibili.core.ui.ContainerLevel
 
 /**
  * 手势模式枚举
  */
-enum class BangumiGestureMode { None, Brightness, Volume, Seek }
+enum class BangumiGestureMode { None, Brightness, Volume, Seek, SwipeToFullscreen }
 
 /**
  * 增强版播放器视图
@@ -80,6 +133,7 @@ fun BangumiPlayerView(
     bvid: String = "",
     aid: Long = 0L,
     cid: Long = 0L,
+    videoshotData: VideoshotData? = null,
     coverUrl: String = "",
     currentVideoUrl: String = "",
     currentAudioUrl: String = "",
@@ -88,6 +142,7 @@ fun BangumiPlayerView(
     currentPageIndex: Int = 0,
     onPageSelect: (Int) -> Unit = {},
     modifier: Modifier = Modifier,
+    features: BangumiPlayerFeatures = BangumiPlayerFeatures(),
     isFullscreen: Boolean = false,
     currentQuality: Int = 0,
     acceptQuality: List<Int> = emptyList(),
@@ -95,8 +150,13 @@ fun BangumiPlayerView(
     isLoggedIn: Boolean = false,
     isVip: Boolean = false,
     onQualityChange: (Int) -> Unit = {},
+    requestedAudioQuality: Int = -1,
+    selectedAudioQuality: Int = -1,
+    availableAudioQualities: List<AudioQualityOption> = emptyList(),
+    onAudioQualityChange: (Int) -> Unit = {},
     onBack: () -> Unit,
     onToggleFullscreen: () -> Unit,
+    onScreenLockChanged: (Boolean) -> Unit = {},
     sponsorSegment: SponsorSegment? = null,
     showSponsorSkipButton: Boolean = false,
     onSponsorSkip: () -> Unit = {},
@@ -120,13 +180,20 @@ fun BangumiPlayerView(
     onDanmakuDuplicateMergeWindowMsChange: (Int) -> Unit = {},
     onDanmakuDuplicateMergeCountThresholdChange: (Int) -> Unit = {},
     isLiked: Boolean = false,
+    likeStatusKnown: Boolean = false,
     coinCount: Int = 0,
     onToggleLike: () -> Unit = {},
     onCoin: () -> Unit = {},
     onReloadVideo: () -> Unit = {},
     onShowMessage: (String) -> Unit = {}
 ) {
+    val keepPlaybackAwake = com.android.purebilibili.feature.video.screen.rememberVideoPlaybackKeepAwake(exoPlayer)
     val context = LocalContext.current
+    val playerInteractionSettings by SettingsManager.getPlayerInteractionSettings(context)
+        .collectAsStateWithLifecycle(
+            initialValue = com.android.purebilibili.core.store.PlayerInteractionSettings()
+        )
+    val latestOnToggleFullscreen by rememberUpdatedState(onToggleFullscreen)
     val statusBarsInsetTopDp = WindowInsets.statusBars
         .asPaddingValues()
         .calculateTopPadding()
@@ -139,30 +206,207 @@ fun BangumiPlayerView(
         isFullscreen = isFullscreen,
         statusBarsInsetDp = statusBarsInsetTopDp
     ).dp
-    
+
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     val maxVolume = remember { audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC) }
-    
+
     // 控制层状态
     var showControls by remember { mutableStateOf(true) }
     var isScreenLocked by rememberSaveable { mutableStateOf(false) }
+    val latestOnScreenLockChanged by rememberUpdatedState(onScreenLockChanged)
+    LaunchedEffect(isScreenLocked) {
+        latestOnScreenLockChanged(isScreenLocked)
+    }
+    DisposableEffect(Unit) {
+        onDispose { latestOnScreenLockChanged(false) }
+    }
     var currentAspectRatio by remember { mutableStateOf(VideoAspectRatio.FIT) }
     var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
     val scope = rememberCoroutineScope()
-    
+    com.android.purebilibili.feature.video.player.PlayerBackgroundPlaybackLifecycleEffect(
+        player = exoPlayer, key = "video:$bvid", isInPipMode = features.isInPipMode,
+    )
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val lifecycleState by lifecycleOwner.lifecycle.currentStateAsState()
+    val hostLifecycleStarted = lifecycleState.isAtLeast(Lifecycle.State.STARTED)
+    val registeredPlugins by PluginManager.pluginsFlow.collectAsStateWithLifecycle()
+    val anime4kPluginInfo = registeredPlugins.firstOrNull { it.plugin.id == BuiltinPluginIds.VIDEO_ENHANCEMENT }
+    val anime4kPlugin = PluginManager.getPlugin(VideoEnhancementPluginApi::class)
+    val anime4kConfig = if (anime4kPlugin == null) {
+        Anime4KConfig()
+    } else {
+        anime4kPlugin.configState.collectAsStateWithLifecycle().value
+    }
+    val anime4kGlesAvailable = remember(context) { isAnime4KGles3Available(context) }
+    var anime4kPipelineFailed by remember(exoPlayer) { mutableStateOf(false) }
+    var anime4kInputSurface by remember(exoPlayer) { mutableStateOf<Surface?>(null) }
+    var anime4kDisplayedFirstFrame by remember(currentVideoUrl, exoPlayer) { mutableStateOf(false) }
+    var anime4kSurfaceViewRef by remember(exoPlayer) { mutableStateOf<Anime4KGLSurfaceView?>(null) }
+    var videoEnhancementSessionOverride by remember(currentVideoUrl, exoPlayer) {
+        mutableStateOf<Boolean?>(null)
+    }
+    val videoEnhancementSessionRequested = videoEnhancementSessionOverride
+        ?: resolveInitialVideoEnhancementEnabled(
+            pluginEnabled = anime4kPluginInfo?.enabled == true,
+            config = anime4kConfig
+        )
+    val videoEnhancementEnabled = anime4kPluginInfo?.enabled == true &&
+        videoEnhancementSessionRequested
+    LaunchedEffect(anime4kConfig.algorithm) {
+        anime4kPipelineFailed = false
+    }
+    var videoInputFormat by remember(exoPlayer) { mutableStateOf<Format?>(null) }
+    var videoSizeState by remember(exoPlayer) {
+        mutableStateOf(exoPlayer.videoSize.let { it.width to it.height })
+    }
+    val anime4kOutputDecision = remember(
+        videoEnhancementEnabled,
+        anime4kGlesAvailable,
+        anime4kPipelineFailed,
+        videoInputFormat,
+        lifecycleState,
+        features.isInPipMode,
+        features.isAudioOnly,
+    ) {
+        resolveAnime4KOutputDecision(
+            pluginEnabled = videoEnhancementEnabled,
+            glAvailable = anime4kGlesAvailable && !anime4kPipelineFailed,
+            colorTransfer = videoInputFormat?.colorInfo?.colorTransfer ?: 0,
+            sampleMimeType = videoInputFormat?.sampleMimeType,
+            isInPipMode = features.isInPipMode,
+            isAudioOnly = features.isAudioOnly,
+            hostLifecycleStarted = hostLifecycleStarted
+        )
+    }
+    val requiresHdrSurface = com.android.purebilibili.feature.video.ui.section.requiresHdrSurfaceOutput(
+        currentQualityId = currentQuality, colorTransfer = videoInputFormat?.colorInfo?.colorTransfer ?: 0,
+    )
+    val shouldUseAnime4kPipeline = anime4kOutputDecision.shouldUsePipeline
+    val playerPageBackdrop = com.android.purebilibili.feature.video.ui.section.rememberPlayerPageBackdrop()
+    val pageGlassSupported = com.android.purebilibili.feature.video.ui.section.supportsPlayerPageGlass(
+        liquidGlassEnabled = com.android.purebilibili.core.ui.LocalAppThemeConfig.current.liquidGlassEnabled,
+        fullscreen = isFullscreen,
+        portraitFullscreen = false,
+        detailInline = !isFullscreen,
+        hdr = requiresHdrSurface,
+        anime4k = shouldUseAnime4kPipeline,
+        audioOnly = features.isAudioOnly,
+        pip = features.isInPipMode,
+    )
+    var hasUsedPageGlassTexture by remember(exoPlayer) { mutableStateOf(false) }
+    LaunchedEffect(pageGlassSupported) {
+        if (pageGlassSupported) hasUsedPageGlassTexture = true
+    }
+    val useTextureSurface = com.android.purebilibili.feature.video.ui.section.shouldUsePlayerPageTexture(
+        glassSupported = pageGlassSupported,
+        retainedGlassTexture = hasUsedPageGlassTexture,
+        hdr = requiresHdrSurface,
+        existingTextureRequest = com.android.purebilibili.feature.video.ui.section.shouldUseTextureSurfaceForFlip(
+            isFlippedHorizontal = features.isFlippedHorizontal,
+            isFlippedVertical = features.isFlippedVertical,
+            requiresHdrSurfaceOutput = requiresHdrSurface,
+        ),
+    )
+    val shouldRenderAnime4kPipeline = shouldUseAnime4kPipeline &&
+        videoSizeState.first > 0 &&
+        videoSizeState.second > 0
+    val anime4kBypassReason = anime4kOutputDecision.bypassReason
+    val anime4kSurfaceReady = shouldRenderAnime4kPipeline && anime4kInputSurface != null
+    val anime4kFrameVisible = anime4kSurfaceReady && anime4kDisplayedFirstFrame
+    val videoOutputRouter = remember(exoPlayer) { VideoOutputRouter(exoPlayer) }
+
+    val immersiveStatusBarBackdropEnabled by SettingsManager.getHideVideoPageStatusBar(context)
+        .collectAsStateWithLifecycle(initialValue = SettingsManager.getHideVideoPageStatusBarSync(context))
+    var firstFrameReady by remember(exoPlayer, cid) { mutableStateOf(false) }
+    com.android.purebilibili.feature.video.ambient.BindPlayerAmbient(
+        player = exoPlayer,
+        playerView = playerViewRef,
+        identity = cid,
+        quality = currentQuality,
+        width = videoSizeState.first,
+        height = videoSizeState.second,
+        foreground = hostLifecycleStarted,
+        excluded = isFullscreen || features.isInPipMode || features.isAudioOnly,
+        hdr = com.android.purebilibili.feature.video.ui.section.requiresHdrSurfaceOutput(
+            currentQualityId = currentQuality,
+            colorTransfer = videoInputFormat?.colorInfo?.colorTransfer ?: 0,
+        ),
+        anime4k = shouldUseAnime4kPipeline,
+        transitioning = false,
+        firstFrameReady = firstFrameReady,
+        statusBar = immersiveStatusBarBackdropEnabled && !isFullscreen,
+        diagnosticLogging = false,
+    )
+
+    DisposableEffect(exoPlayer, cid) {
+        val analyticsListener = object : AnalyticsListener {
+            override fun onVideoInputFormatChanged(
+                eventTime: AnalyticsListener.EventTime,
+                format: Format,
+                decoderReuseEvaluation: androidx.media3.exoplayer.DecoderReuseEvaluation?
+            ) {
+                videoInputFormat = format
+            }
+        }
+        val playerListener = object : Player.Listener {
+            override fun onRenderedFirstFrame() { firstFrameReady = true }
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                videoSizeState = videoSize.width to videoSize.height
+            }
+        }
+        exoPlayer.addAnalyticsListener(analyticsListener)
+        exoPlayer.addListener(playerListener)
+        onDispose {
+            exoPlayer.removeAnalyticsListener(analyticsListener)
+            exoPlayer.removeListener(playerListener)
+        }
+    }
+
+    DisposableEffect(videoOutputRouter) {
+        onDispose { videoOutputRouter.release() }
+    }
+
+    LaunchedEffect(hostLifecycleStarted, shouldRenderAnime4kPipeline, anime4kSurfaceViewRef) {
+        val surfaceView = anime4kSurfaceViewRef ?: return@LaunchedEffect
+        if (shouldRenderAnime4kPipeline && hostLifecycleStarted) {
+            surfaceView.onResume()
+        } else {
+            surfaceView.onPause()
+        }
+    }
+
+    LaunchedEffect(
+        playerViewRef,
+        anime4kInputSurface,
+        shouldRenderAnime4kPipeline,
+        hostLifecycleStarted
+    ) {
+        videoOutputRouter.update(
+            playerView = playerViewRef,
+            inputSurface = anime4kInputSurface,
+            shouldBindDirectPlayerView = hostLifecycleStarted,
+            shouldUseAnime4K = shouldRenderAnime4kPipeline
+        )
+    }
+
+    val seekHaptic = rememberHapticFeedback(com.android.purebilibili.core.ui.AppHapticScene.PLAYER_SEEK)
+    val latestSeekHaptic by rememberUpdatedState(seekHaptic)
+    val seekHaptics = remember(exoPlayer, epId, cid) { SeekTickHapticPolicy() }
+
     // 手势状态
     var gestureMode by remember { mutableStateOf(BangumiGestureMode.None) }
     var gestureValue by remember { mutableFloatStateOf(0f) }
-    var dragDelta by remember { mutableFloatStateOf(0f) }
     var startVolumeStep by remember { mutableIntStateOf(0) }
     var totalVolumeDragDistanceY by remember { mutableFloatStateOf(0f) }
     var seekPreviewPosition by remember { mutableLongStateOf(0L) }
+    // 横滑快进的起点在拖动开始时定格：拖动期间播放继续推进，目标不随播飘移。
+    var seekGestureStartPosition by remember { mutableLongStateOf(0L) }
     val longPressSpeed by SettingsManager.getLongPressSpeed(context)
         .collectAsState(initial = DEFAULT_LONG_PRESS_SPEED)
     var longPressOriginalPlaybackParameters by remember(exoPlayer) {
         mutableStateOf(exoPlayer.playbackParameters)
     }
-    
+
     // 亮度状态
     var currentBrightness by remember {
         mutableFloatStateOf(
@@ -171,35 +415,44 @@ fun BangumiPlayerView(
             } catch (e: Exception) { 0.5f }
         )
     }
-    
+
     // 播放器状态
     var isPlaying by remember { mutableStateOf(exoPlayer.isPlaying) }
-    var currentProgress by remember { mutableFloatStateOf(0f) }
-    var currentPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(1L) }
-    
+
     // 监听播放器状态
     LaunchedEffect(exoPlayer) {
         while (true) {
             isPlaying = exoPlayer.isPlaying
             duration = exoPlayer.duration.coerceAtLeast(1L)
-            currentPosition = exoPlayer.currentPosition
-            if (gestureMode != BangumiGestureMode.Seek) {
-                currentProgress = (currentPosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
-            }
             kotlinx.coroutines.delay(200)
         }
     }
-    
-    Box(
+
+    val glassCaptureVisibility = androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (showControls || !isPlaying || gestureMode != BangumiGestureMode.None) 1f else 0f,
+        animationSpec = com.android.purebilibili.core.ui.motion.continuityTween<Float>(
+            com.android.purebilibili.feature.video.ui.overlay.PLAYER_GLASS_VISIBILITY_DURATION_MS,
+        ),
+        label = "bangumiPageGlassCapture",
+    )
+    val glassCaptureVisible by remember(glassCaptureVisibility) {
+        derivedStateOf { glassCaptureVisibility.value > 0f }
+    }
+    val capturePlayerPage = pageGlassSupported && glassCaptureVisible
+
+    BoxWithConstraints(
         modifier = modifier
             .background(Color.Black)
-            .pointerInput(isScreenLocked, longPressSpeed, exoPlayer) {
+            .pointerInput(isScreenLocked, longPressSpeed, requestedAudioQuality, exoPlayer) {
                 detectDragGesturesAfterLongPress(
                     onDragStart = {
                         if (isScreenLocked) return@detectDragGesturesAfterLongPress
                         longPressOriginalPlaybackParameters = exoPlayer.playbackParameters
-                        exoPlayer.playbackParameters = PlaybackParameters(longPressSpeed)
+                        exoPlayer.playbackParameters = resolveLongPressPlaybackParameters(
+                            requestedSpeed = longPressSpeed,
+                            currentAudioQuality = requestedAudioQuality
+                        )
                     },
                     onDragEnd = {
                         exoPlayer.playbackParameters = longPressOriginalPlaybackParameters
@@ -217,55 +470,98 @@ fun BangumiPlayerView(
                     },
                     onDoubleTap = {
                         if (isScreenLocked) return@detectTapGestures
-                        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                        togglePlayerPlaybackFromUserAction(exoPlayer)
                     }
                 )
             }
             .then(
-                Modifier.pointerInput(isFullscreen, isScreenLocked) {
+                Modifier.pointerInput(isFullscreen, isScreenLocked, playerInteractionSettings, exoPlayer) {
                     val screenWidth = size.width.toFloat()
                     val screenHeight = size.height.toFloat()
-                    
+                    val minDragThreshold = 20.dp.toPx()
+                    val boundaryPadding = 16.dp.toPx()
+                    var dragStartX = 0f
+                    var totalDragDistanceX = 0f
+                    var totalDragDistanceY = 0f
+
                     detectDragGestures(
-                        onDragStart = {
+                        onDragStart = { position ->
                             showControls = true
-                            dragDelta = 0f
+                            dragStartX = position.x
+                            totalDragDistanceX = 0f
+                            totalDragDistanceY = 0f
                             totalVolumeDragDistanceY = 0f
-                            seekPreviewPosition = currentPosition
+                            seekPreviewPosition = exoPlayer.currentPosition
+                            seekGestureStartPosition = seekPreviewPosition
                             gestureMode = BangumiGestureMode.None
                         },
                         onDragEnd = {
-                            if (gestureMode == BangumiGestureMode.Seek && kotlin.math.abs(dragDelta) > 20f) {
-                                exoPlayer.seekTo(seekPreviewPosition)
+                            seekHaptics.finish()
+                            if (gestureMode == BangumiGestureMode.Seek) {
+                                com.android.purebilibili.feature.video.usecase.seekPlayerFromUserAction(
+                                    exoPlayer, seekPreviewPosition
+                                )
+                                danmakuManager.seekTo(seekPreviewPosition)
+                            }
+                            if (!isScreenLocked && gestureMode == BangumiGestureMode.SwipeToFullscreen &&
+                                shouldTriggerFullscreenBySwipe(
+                                    isFullscreen = isFullscreen,
+                                    reverseGesture = playerInteractionSettings.fullscreenGestureReverse,
+                                    totalDragDistanceY = totalDragDistanceY,
+                                    thresholdPx = 50.dp.toPx()
+                                )
+                            ) {
+                                latestOnToggleFullscreen()
                             }
                             gestureMode = BangumiGestureMode.None
                         },
-                        onDragCancel = { gestureMode = BangumiGestureMode.None },
+                        onDragCancel = {
+                            seekHaptics.finish()
+                            gestureMode = BangumiGestureMode.None
+                        },
                         onDrag = { change, dragAmount ->
                             change.consume()
                             if (isScreenLocked) return@detectDragGestures
-                            
+                            totalDragDistanceX += dragAmount.x
+                            totalDragDistanceY += dragAmount.y
+
                             if (gestureMode == BangumiGestureMode.None) {
-                                gestureMode = if (isFullscreen && kotlin.math.abs(dragAmount.x) > kotlin.math.abs(dragAmount.y)) {
+                                if (kotlin.math.hypot(totalDragDistanceX, totalDragDistanceY) < minDragThreshold) {
+                                    return@detectDragGestures
+                                }
+                                gestureMode = if (kotlin.math.abs(totalDragDistanceX) > kotlin.math.abs(totalDragDistanceY)) {
+                                    if (seekHaptics.start(seekGestureStartPosition, duration, SystemClock.uptimeMillis())) {
+                                        latestSeekHaptic(HapticType.LIGHT)
+                                    }
                                     BangumiGestureMode.Seek
-                                } else if (kotlin.math.abs(dragAmount.y) > kotlin.math.abs(dragAmount.x)) {
-                                    if (change.position.x < screenWidth * 0.5f) {
-                                        gestureValue = currentBrightness
-                                        BangumiGestureMode.Brightness
-                                    } else {
-                                        startVolumeStep = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-                                        gestureValue = if (maxVolume > 0) {
-                                            startVolumeStep.toFloat() / maxVolume.toFloat()
-                                        } else {
-                                            0f
+                                } else if (kotlin.math.abs(totalDragDistanceY) > kotlin.math.abs(totalDragDistanceX)) {
+                                    when (resolveVerticalGestureMode(
+                                        isFullscreen = isFullscreen,
+                                        isSwipeUp = totalDragDistanceY < -minDragThreshold,
+                                        startX = dragStartX,
+                                        leftZoneEnd = (screenWidth / 3f - boundaryPadding).coerceAtLeast(0f),
+                                        rightZoneStart = (screenWidth * 2f / 3f + boundaryPadding).coerceAtMost(screenWidth),
+                                        portraitSwipeToFullscreenEnabled = playerInteractionSettings.portraitSwipeToFullscreenEnabled,
+                                        centerSwipeToFullscreenEnabled = playerInteractionSettings.centerSwipeToFullscreenEnabled,
+                                        slideVolumeBrightnessEnabled = playerInteractionSettings.slideVolumeBrightnessEnabled
+                                    )) {
+                                        VideoGestureMode.Brightness -> {
+                                            gestureValue = currentBrightness
+                                            BangumiGestureMode.Brightness
                                         }
-                                        BangumiGestureMode.Volume
+                                        VideoGestureMode.Volume -> {
+                                            startVolumeStep = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                                            gestureValue = if (maxVolume > 0) startVolumeStep.toFloat() / maxVolume.toFloat() else 0f
+                                            BangumiGestureMode.Volume
+                                        }
+                                        VideoGestureMode.SwipeToFullscreen -> BangumiGestureMode.SwipeToFullscreen
+                                        else -> BangumiGestureMode.None
                                     }
                                 } else {
                                     BangumiGestureMode.None
                                 }
                             }
-                            
+
                             when (gestureMode) {
                                 BangumiGestureMode.Brightness -> {
                                     gestureValue = (gestureValue - dragAmount.y / screenHeight).coerceIn(0f, 1f)
@@ -297,10 +593,20 @@ fun BangumiPlayerView(
                                     }
                                 }
                                 BangumiGestureMode.Seek -> {
-                                    dragDelta += dragAmount.x
-                                    val seekDelta = (dragDelta / screenWidth * duration).toLong()
-                                    seekPreviewPosition = (currentPosition + seekDelta).coerceIn(0L, duration)
-                                    currentProgress = (seekPreviewPosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+                                    // 详情页与全屏共用按时长和灵敏度计算的横滑进度。
+                                    val seekDelta = com.android.purebilibili.feature.video.ui.section
+                                        .resolveHorizontalSeekDeltaMs(
+                                            totalDragDistanceX = totalDragDistanceX,
+                                            containerWidthPx = screenWidth,
+                                            gestureSensitivity = playerInteractionSettings.gestureSensitivity,
+                                            durationMs = duration,
+                                        )
+                                    if (seekDelta != null) {
+                                        seekPreviewPosition = (seekGestureStartPosition + seekDelta).coerceIn(0L, duration)
+                                        if (seekHaptics.update(seekPreviewPosition, SystemClock.uptimeMillis())) {
+                                            latestSeekHaptic(HapticType.GESTURE_STEP)
+                                        }
+                                    }
                                 }
                                 else -> {}
                             }
@@ -309,82 +615,264 @@ fun BangumiPlayerView(
                 }
             )
     ) {
-        // PlayerView
-        //  [修复] 在 factory 和 update 中都设置 player，确保 PlayerView 正确附加到 ExoPlayer
-        AndroidView(
-            factory = { ctx ->
-                android.util.Log.w("BangumiPlayer", "🎬 PlayerView FACTORY: creating new view, player=${exoPlayer.hashCode()}, isFullscreen=$isFullscreen")
-                PlayerView(ctx).apply {
-                    playerViewRef = this
-                    player = exoPlayer  // [关键] 在 factory 中也设置 player
-                    useController = false
-                    keepScreenOn = true
-                    resizeMode = currentAspectRatio.playerResizeMode
-                    setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)  // 禁用系统缓冲指示器
-                    setBackgroundColor(android.graphics.Color.BLACK)
-                    
-                    // 添加视频尺寸日志
-                    android.util.Log.w("BangumiPlayer", "🎬 PlayerView: videoSize=${exoPlayer.videoSize.width}x${exoPlayer.videoSize.height}")
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxSize()
+                .then(if (capturePlayerPage) playerPageBackdrop.video.modifier else Modifier)
+                .clipToBounds(),
+            contentAlignment = Alignment.Center
+        ) {
+            val density = LocalDensity.current
+            val playerFrameViewport = remember(
+                maxWidth,
+                maxHeight,
+                currentAspectRatio,
+                density
+            ) {
+                with(density) {
+                    resolveVideoViewportLayout(
+                        containerWidth = maxWidth.roundToPx(),
+                        containerHeight = maxHeight.roundToPx(),
+                        aspectRatio = currentAspectRatio
+                    )
                 }
-            },
-            update = { view ->
-                //  [关键] 无条件设置 player，确保 MediaSource 变化后 PlayerView 能正确刷新
-                val videoSize = exoPlayer.videoSize
-                android.util.Log.w("BangumiPlayer", "🔗 PlayerView UPDATE: player=${exoPlayer.hashCode()}, mediaItems=${exoPlayer.mediaItemCount}, videoSize=${videoSize.width}x${videoSize.height}, isFullscreen=$isFullscreen, viewSize=${view.width}x${view.height}")
-                playerViewRef = view
-                view.player = exoPlayer
-                view.resizeMode = currentAspectRatio.playerResizeMode
-            },
-            modifier = Modifier.fillMaxSize()
-        )
-        
-        // 弹幕层 - 使用 DanmakuRenderEngine
-        if (danmakuEnabled) {
-            AndroidView(
-                factory = { ctx ->
-                    com.bytedance.danmaku.render.engine.DanmakuView(ctx).apply {
-                        setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                        android.util.Log.w("BangumiPlayer", "🎯 DanmakuView factory: creating new view")
-                        danmakuManager.attachView(this)
-                    }
-                },
-                update = { view ->
-                    if (view.width > 0 && view.height > 0) {
-                        val sizeTag = "${view.width}x${view.height}"
-                        if (view.tag != sizeTag) {
-                            view.tag = sizeTag
-                            android.util.Log.d("BangumiPlayer", " DanmakuView update: size=${view.width}x${view.height}")
-                            danmakuManager.attachView(view)
+            }
+            // 镜像直出使用 TextureView；HDR 保留 SurfaceView 输出。
+            key(useTextureSurface) {
+                AndroidView(
+                    factory = { ctx ->
+                        android.util.Log.w("BangumiPlayer", "🎬 PlayerView FACTORY: creating new view, player=${exoPlayer.hashCode()}, isFullscreen=$isFullscreen")
+                        val baseView = if (useTextureSurface) {
+                            android.view.LayoutInflater.from(ctx).inflate(
+                                com.android.purebilibili.R.layout.view_player_texture, null, false
+                            ) as PlayerView
+                        } else PlayerView(ctx)
+                        baseView.apply {
+                            playerViewRef = this
+                            // 普通直出必须显式绑定 player，否则未启用 Anime4K 时无视频输出
+                            //（只有音频）。Anime4K 启用后由 VideoOutputRouter 主动解除本绑定并接管 surface。
+                            player = exoPlayer
+                            useController = false
+                            keepScreenOn = keepPlaybackAwake
+                            resizeMode = currentAspectRatio.playerResizeMode
+                            setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
+                            setBackgroundColor(android.graphics.Color.BLACK)
+                        }
+                    },
+                    update = { view ->
+                        playerViewRef = view
+                        view.keepScreenOn = keepPlaybackAwake
+                        view.resizeMode = currentAspectRatio.playerResizeMode
+                        view.visibility = if (anime4kFrameVisible) View.INVISIBLE else View.VISIBLE
+                        // MediaSource/Player 变化后确保直出绑定仍与播放器同步；
+                        // Anime4K 接管期间不抢回绑定，避免与路由争抢 Surface。
+                        if (view.player !== exoPlayer && !shouldRenderAnime4kPipeline) {
+                            view.player = exoPlayer
+                        }
+                    },
+                    modifier = with(density) {
+                        Modifier.requiredSize(
+                            width = playerFrameViewport.width.toDp(),
+                            height = playerFrameViewport.height.toDp()
+                        ).graphicsLayer {
+                            scaleX = if (useTextureSurface && features.isFlippedHorizontal) -1f else 1f
+                            scaleY = if (useTextureSurface && features.isFlippedVertical) -1f else 1f
                         }
                     }
-                },
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = danmakuTopInset)
-                    .clipToBounds()
+                )
+            }
+
+            if (shouldRenderAnime4kPipeline) {
+                AndroidView(
+                    factory = { ctx ->
+                        Anime4KGLSurfaceView(ctx, initialConfig = anime4kConfig).apply {
+                            anime4kSurfaceViewRef = this
+                            onInputSurfaceChanged = { surface ->
+                                anime4kInputSurface = surface
+                                if (surface == null) anime4kDisplayedFirstFrame = false
+                            }
+                            onFirstFrameRendered = {
+                                anime4kDisplayedFirstFrame = true
+                            }
+                            onPipelineError = { error ->
+                                Logger.e("BangumiPlayer", "Anime4K 管线不可用，已回退原始视频输出", error)
+                                anime4kPipelineFailed = true
+                                anime4kInputSurface = null
+                            }
+                            updateConfig(anime4kConfig)
+                            updateInputSize(videoSizeState.first, videoSizeState.second)
+                            updateFlip(features.isFlippedHorizontal, features.isFlippedVertical)
+                            updateDisplayScaleMode(currentAspectRatio.toAnime4KDisplayScaleMode())
+                            visibility = View.VISIBLE
+                        }
+                    },
+                    update = { surfaceView ->
+                        anime4kSurfaceViewRef = surfaceView
+                        surfaceView.onInputSurfaceChanged = { surface ->
+                            anime4kInputSurface = surface
+                            if (surface == null) anime4kDisplayedFirstFrame = false
+                        }
+                        surfaceView.onFirstFrameRendered = {
+                            anime4kDisplayedFirstFrame = true
+                        }
+                        surfaceView.onPipelineError = { error ->
+                            Logger.e("BangumiPlayer", "Anime4K 管线不可用，已回退原始视频输出", error)
+                            anime4kPipelineFailed = true
+                            anime4kInputSurface = null
+                        }
+                        surfaceView.updateConfig(anime4kConfig)
+                        surfaceView.updateInputSize(videoSizeState.first, videoSizeState.second)
+                        surfaceView.updateFlip(features.isFlippedHorizontal, features.isFlippedVertical)
+                        surfaceView.updateDisplayScaleMode(currentAspectRatio.toAnime4KDisplayScaleMode())
+                        surfaceView.visibility = View.VISIBLE
+                    },
+                    modifier = with(density) {
+                        Modifier.requiredSize(
+                            width = playerFrameViewport.width.toDp(),
+                            height = playerFrameViewport.height.toDp()
+                        )
+                    }
+                )
+            }
+        }
+
+        // 弹幕层 - 使用 DanmakuRenderEngine
+        if (features.isAudioOnly) {
+            coil3.compose.AsyncImage(
+                model = com.android.purebilibili.core.util.FormatUtils.fixImageUrl(coverUrl),
+                contentDescription = "番剧封面",
+                contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                modifier = Modifier.fillMaxSize().background(Color.Black),
             )
         }
-        
-        // 手势指示器（横屏：全部，竖屏：仅亮度和音量）
-        val showGestureIndicator = gestureMode != BangumiGestureMode.None && 
-            (isFullscreen || gestureMode == BangumiGestureMode.Brightness || gestureMode == BangumiGestureMode.Volume)
-        if (showGestureIndicator) {
-            BangumiGestureIndicator(
-                mode = gestureMode,
-                value = when (gestureMode) {
-                    BangumiGestureMode.Brightness -> currentBrightness
-                    BangumiGestureMode.Volume -> gestureValue
-                    BangumiGestureMode.Seek -> currentProgress
-                    else -> 0f
-                },
-                seekTime = if (gestureMode == BangumiGestureMode.Seek) seekPreviewPosition else null,
-                duration = duration,
-                modifier = Modifier.align(Alignment.Center)
-            )
+        if (danmakuEnabled && !features.isAudioOnly && !features.isInPipMode) {
+            key(danmakuManager) {
+                AndroidView(
+                    factory = { ctx ->
+                        DanmakuRenderView(ctx).apply {
+                            danmakuManager.useFullscreenTextSize = isFullscreen
+                            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                            android.util.Log.w("BangumiPlayer", "🎯 DanmakuView factory: creating new view")
+                            danmakuManager.attachView(this)
+                        }
+                    },
+                    update = { view ->
+                        danmakuManager.useFullscreenTextSize = isFullscreen
+                        if (view.width > 0 && view.height > 0) {
+                            val sizeTag = "${view.width}x${view.height}"
+                            if (view.tag != sizeTag) {
+                                view.tag = sizeTag
+                                android.util.Log.d("BangumiPlayer", " DanmakuView update: size=${view.width}x${view.height}")
+                                danmakuManager.attachView(view)
+                            }
+                        }
+                    },
+                    onRelease = { view -> danmakuManager.detachView(view) },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .then(if (capturePlayerPage) playerPageBackdrop.danmaku.modifier else Modifier)
+                        .padding(top = danmakuTopInset)
+                        .clipToBounds()
+                )
+            }
         }
-        
-        BangumiPlayerOverlayHost(
+
+        // 详情页与全屏都显示当前手势反馈。
+        val showGestureIndicator = gestureMode != BangumiGestureMode.None
+        GestureLevelOverlayHost(
+            visible = gestureMode == BangumiGestureMode.Brightness || gestureMode == BangumiGestureMode.Volume,
+            mode = if (gestureMode == BangumiGestureMode.Brightness) VideoGestureMode.Brightness else VideoGestureMode.Volume,
+            percent = if (gestureMode == BangumiGestureMode.Brightness) currentBrightness else gestureValue,
+            compact = !isFullscreen,
+            glassBackdrop = playerPageBackdrop.backdrop.takeIf {
+                capturePlayerPage && playerPageBackdrop.video.isReady &&
+                    playerViewRef?.videoSurfaceView is android.view.TextureView
+            },
+        )
+        if (showGestureIndicator && gestureMode == BangumiGestureMode.Seek) {
+            // 与普通视频一致：预览气泡展示目标时间与相对起点的时间增量；
+            // 无缩略图时使用简版气泡，同样带增量文本。
+            if (videoshotData?.isValid == true) {
+                com.android.purebilibili.feature.video.ui.components.SeekPreviewBubble(
+                    videoshotData = videoshotData,
+                    targetPositionMs = seekPreviewPosition,
+                    currentPositionMs = seekGestureStartPosition,
+                    durationMs = duration,
+                    offsetX = 0f,
+                    containerWidth = 0f,
+                    placement = com.android.purebilibili.feature.video.ui.components.SeekPreviewBubblePlacement.Centered,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+            } else {
+                com.android.purebilibili.feature.video.ui.components.SeekPreviewBubbleSimple(
+                    targetPositionMs = seekPreviewPosition,
+                    currentPositionMs = seekGestureStartPosition,
+                    offsetX = 0f,
+                    containerWidth = 0f,
+                    placement = com.android.purebilibili.feature.video.ui.components.SeekPreviewBubblePlacement.Centered,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+            }
+        }
+
+        NextWatchOverlay(
             player = exoPlayer,
+            mediaKey = "bangumi:$epId:$cid",
+            eligible = !features.isInPipMode && !showControls && !isScreenLocked && !showGestureIndicator &&
+                exoPlayer.repeatMode != androidx.media3.common.Player.REPEAT_MODE_ONE,
+            resolve = {
+                pages.getOrNull(currentPageIndex + 1)?.let { next ->
+                    com.android.purebilibili.feature.video.playback.next.NextWatchSuggestion(
+                        bvid, cid, bvid, next.cid, next.part, coverUrl, "下一集", pageIndex = currentPageIndex + 1
+                    )
+                }
+            },
+            play = { target ->
+                val index = target.pageIndex
+                if (index != null && target.sourceCid == cid && target.sourceBvid == bvid && index == currentPageIndex + 1 &&
+                    pages.getOrNull(index)?.cid == target.cid) {
+                    onPageSelect(index)
+                    true
+                } else false
+            },
+        )
+
+        if (!features.isInPipMode && !features.isAudioOnly) {
+            Box(Modifier.fillMaxSize().then(
+                if (capturePlayerPage) playerPageBackdrop.subtitles.modifier else Modifier,
+            )) {
+                BangumiSubtitleOverlay(exoPlayer, features.subtitle, showControls, isFullscreen, playerViewRef?.height ?: 0)
+            }
+        }
+        CompositionLocalProvider(
+            com.android.purebilibili.feature.video.ui.overlay.LocalPlayerLevelGestureActive provides
+                (gestureMode == BangumiGestureMode.Brightness || gestureMode == BangumiGestureMode.Volume),
+            com.android.purebilibili.feature.video.ui.overlay.LocalPlayerPageBackdrop provides
+                playerPageBackdrop.backdrop.takeIf {
+                    capturePlayerPage && playerPageBackdrop.video.isReady &&
+                        playerViewRef?.videoSurfaceView is android.view.TextureView
+                },
+        ) {
+        val captureAndShareScreenshot = com.android.purebilibili.feature.video.ui.components.rememberVideoScreenshotAction()
+        BangumiPlayerOverlayHost(
+            gestureSeekPositionProvider = {
+                seekPreviewPosition.takeIf { gestureMode == BangumiGestureMode.Seek }
+            },
+            viewportWidthDp = maxWidth.value.toInt(),
+            player = exoPlayer,
+            danmakuManager = danmakuManager,
+            features = features.copy(
+                isFlippedHorizontal = features.isFlippedHorizontal && !requiresHdrSurface,
+                isFlippedVertical = features.isFlippedVertical && !requiresHdrSurface,
+                onFlipHorizontal = {
+                    if (requiresHdrSurface) onShowMessage("HDR 画面暂不支持镜像，请先切换至普通画质")
+                    else features.onFlipHorizontal()
+                },
+                onFlipVertical = {
+                    if (requiresHdrSurface) onShowMessage("HDR 画面暂不支持翻转，请先切换至普通画质")
+                    else features.onFlipVertical()
+                },
+            ),
             seasonId = seasonId,
             epId = epId,
             title = title,
@@ -392,11 +880,12 @@ fun BangumiPlayerView(
             bvid = bvid,
             aid = aid,
             cid = cid,
+            videoshotData = videoshotData,
             coverUrl = coverUrl,
             currentVideoUrl = currentVideoUrl,
             currentAudioUrl = currentAudioUrl,
             debugInfo = debugInfo,
-            isVisible = showControls && gestureMode == BangumiGestureMode.None,
+            isVisible = showControls && gestureMode == BangumiGestureMode.None && !features.isInPipMode,
             onToggleVisible = { showControls = !showControls },
             isFullscreen = isFullscreen,
             isScreenLocked = isScreenLocked,
@@ -407,6 +896,11 @@ fun BangumiPlayerView(
             isLoggedIn = isLoggedIn,
             isVip = isVip,
             onQualityChange = onQualityChange,
+            requestedAudioQuality = requestedAudioQuality,
+            selectedAudioQuality = selectedAudioQuality,
+            availableAudioQualities = availableAudioQualities,
+            onAudioQualityChange = onAudioQualityChange,
+            onPlaybackSpeedChange = onSpeedChange,
             onBack = onBack,
             onToggleFullscreen = onToggleFullscreen,
             danmakuEnabled = danmakuEnabled,
@@ -431,6 +925,7 @@ fun BangumiPlayerView(
             currentPageIndex = currentPageIndex,
             onPageSelect = onPageSelect,
             isLiked = isLiked,
+            likeStatusKnown = likeStatusKnown,
             coinCount = coinCount,
             onToggleLike = onToggleLike,
             onCoin = onCoin,
@@ -440,21 +935,39 @@ fun BangumiPlayerView(
                     onShowMessage("截图失败，请稍后重试")
                     return@BangumiPlayerOverlayHost
                 }
-                scope.launch {
-                    val success = captureAndSaveVideoScreenshot(
-                        context = context,
-                        playerView = playerView,
-                        videoWidth = exoPlayer.videoSize.width,
-                        videoHeight = exoPlayer.videoSize.height,
-                        videoTitle = subtitle.ifBlank { title.ifBlank { "bangumi" } }
-                    )
-                    onShowMessage(if (success) "截图已保存到相册" else "截图失败，请稍后重试")
-                }
+                captureAndShareScreenshot(playerView, exoPlayer.videoSize.width, exoPlayer.videoSize.height,
+                    subtitle.ifBlank { title.ifBlank { "bangumi" } })
             },
             onReloadVideo = onReloadVideo,
+            anime4kEnabled = videoEnhancementEnabled,
+            anime4kAvailable = anime4kGlesAvailable,
+            anime4kBypassReason = anime4kBypassReason,
+            videoEnhancementAlgorithm = anime4kConfig.algorithm,
+            anime4kPreset = anime4kConfig.preset,
+            fsrSharpness = anime4kConfig.fsrSharpness,
+            onAnime4kToggle = { enabled ->
+                anime4kPipelineFailed = false
+                videoEnhancementSessionOverride = enabled
+                scope.launch {
+                    if (enabled && anime4kPluginInfo?.enabled != true) {
+                        PluginManager.setEnabled(BuiltinPluginIds.VIDEO_ENHANCEMENT, true)
+                    }
+                    anime4kPlugin?.rememberCurrentVideoEnabled(enabled)
+                }
+            },
+            onVideoEnhancementAlgorithmChange = { algorithm ->
+                anime4kPlugin?.setAlgorithm(algorithm)
+            },
+            onAnime4kPresetChange = { preset ->
+                anime4kPlugin?.setPreset(preset)
+            },
+            onFsrSharpnessChange = { sharpness ->
+                anime4kPlugin?.setFsrSharpness(sharpness)
+            },
             onShowMessage = onShowMessage
         )
-        
+
+        }
         // 空降助手跳过按钮 (位置调整到进度条上方)
         SponsorSkipButton(
             segment = sponsorSegment,
@@ -465,74 +978,6 @@ fun BangumiPlayerView(
                 .align(Alignment.BottomEnd)
                 .padding(bottom = 60.dp, end = 16.dp)  //  向上偏移避免与进度条重叠
         )
-    }
-}
-
-/**
- * 手势指示器
- */
-@Composable
-fun BangumiGestureIndicator(
-    mode: BangumiGestureMode,
-    value: Float,
-    seekTime: Long?,
-    duration: Long,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(12.dp),
-        color = Color.Transparent
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(24.dp)
-        ) {
-            when (mode) {
-                BangumiGestureMode.Brightness -> {
-                    //  亮度图标：CupertinoIcons SunMax (iOS SF Symbols 风格)
-                    Icon(CupertinoIcons.Default.SunMax, null, tint = Color.White, modifier = Modifier.size(36.dp))
-                    Spacer(Modifier.height(8.dp))
-                    Text("亮度", color = Color.White, fontSize = 14.sp)
-                    Spacer(Modifier.height(4.dp))
-                    AnimatedGesturePercentText(
-                        percent = (value * 100).toInt(),
-                        color = Color.White,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                        label = "bangumi-brightness-percent"
-                    )
-                }
-                BangumiGestureMode.Volume -> {
-                    //  动态音量图标：3 级
-                    val volumeIcon = when {
-                        value < 0.01f -> CupertinoIcons.Default.SpeakerSlash
-                        value < 0.5f -> CupertinoIcons.Default.Speaker
-                        else -> CupertinoIcons.Default.SpeakerWave2
-                    }
-                    Icon(volumeIcon, null, tint = Color.White, modifier = Modifier.size(36.dp))
-                    Spacer(Modifier.height(8.dp))
-                    Text("音量", color = Color.White, fontSize = 14.sp)
-                    Spacer(Modifier.height(4.dp))
-                    AnimatedGesturePercentText(
-                        percent = (value * 100).toInt(),
-                        color = Color.White,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                        label = "bangumi-volume-percent"
-                    )
-                }
-                BangumiGestureMode.Seek -> {
-                    Text(
-                        "${FormatUtils.formatDuration(((seekTime ?: 0) / 1000).toInt())} / ${FormatUtils.formatDuration((duration / 1000).toInt())}",
-                        color = Color.White,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-                else -> {}
-            }
-        }
     }
 }
 
@@ -548,7 +993,7 @@ fun BangumiMiniProgressBar(
     var bufferedProgress by remember { mutableFloatStateOf(0f) }
     var isDragging by remember { mutableStateOf(false) }
     var dragProgress by remember { mutableFloatStateOf(0f) }
-    
+
     // 定期更新进度
     LaunchedEffect(player) {
         while (true) {
@@ -559,7 +1004,7 @@ fun BangumiMiniProgressBar(
             kotlinx.coroutines.delay(200)
         }
     }
-    
+
     Box(
         modifier = modifier
             .height(12.dp)
@@ -594,7 +1039,7 @@ fun BangumiMiniProgressBar(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(3.dp)
-                .background(Color.DarkGray.copy(alpha = 0.5f))
+                .background(MediaContrastPalette.Track)
         ) {
             // 缓冲进度
             Box(
@@ -608,7 +1053,7 @@ fun BangumiMiniProgressBar(
                 modifier = Modifier
                     .fillMaxHeight()
                     .fillMaxWidth((if (isDragging) dragProgress else progress).coerceIn(0f, 1f))
-                    .background(MaterialTheme.colorScheme.primary)
+                    .background(AppContentColors.accent())
             )
         }
     }
@@ -631,7 +1076,7 @@ fun BangumiQualityMenu(
             else -> null
         }
     }
-    
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -642,68 +1087,68 @@ fun BangumiQualityMenu(
             ) { onDismiss() },
         contentAlignment = Alignment.Center
     ) {
-        Surface(
+        AppSurface(
             modifier = Modifier
                 .widthIn(min = 200.dp, max = 280.dp)
-                .clip(RoundedCornerShape(12.dp))
+                .clip(AppShapes.container(ContainerLevel.Card))
                 .clickable(enabled = false) {},
-            color = Color(0xFF2B2B2B),
-            shape = RoundedCornerShape(12.dp),
+            color = AppSurfaceTokens.cardContainer(),
+            shape = AppShapes.container(ContainerLevel.Card),
             tonalElevation = 8.dp
         ) {
             Column(modifier = Modifier.padding(vertical = 8.dp)) {
-                Text(
+                AppText(
                     text = "画质选择",
-                    color = Color.White,
-                    fontSize = 15.sp,
+                    color = AppContentColors.primaryText(),
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
                 )
-                HorizontalDivider(color = Color.White.copy(0.1f))
-                
+                AppHorizontalDivider(color = AppSurfaceTokens.divider())
+
                 qualities.forEachIndexed { index, quality ->
                     val qn = qualityIds.getOrNull(index) ?: 0
                     val isSelected = qn == currentQualityId
                     val tag = getQualityTag(qn)
-                    
+
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { onQualitySelected(qn) }
-                            .background(if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else Color.Transparent)
+                            .background(if (isSelected) AppContentColors.accent().copy(alpha = 0.15f) else Color.Transparent)
                             .padding(horizontal = 16.dp, vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
+                        AppText(
                             text = quality,
-                            color = if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(0.9f),
-                            fontSize = 14.sp,
+                            color = if (isSelected) AppContentColors.link() else AppContentColors.primaryText(),
+                            style = MaterialTheme.typography.bodyMedium,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                         )
-                        
+
                         if (tag != null) {
                             Spacer(modifier = Modifier.width(8.dp))
-                            Surface(
-                                color = MaterialTheme.colorScheme.primary,
-                                shape = RoundedCornerShape(4.dp)
+                            AppSurface(
+                                color = AppContentColors.accent(),
+                                shape = AppShapes.container(ContainerLevel.Tag)
                             ) {
-                                Text(
+                                AppText(
                                     text = tag,
-                                    color = Color.White,
-                                    fontSize = 10.sp,
+                                    color = AppContentColors.onAccent(),
+                                    style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Medium,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
                             }
                         }
-                        
+
                         Spacer(modifier = Modifier.weight(1f))
-                        
+
                         if (isSelected) {
-                            Icon(
-                                CupertinoIcons.Default.Checkmark,
+                            AppIcon(
+                                Icons.Outlined.Check,
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
+                                tint = AppContentColors.accent(),
                                 modifier = Modifier.size(18.dp)
                             )
                         }
@@ -727,20 +1172,20 @@ fun BangumiSlimProgressBar(
 ) {
     var isDragging by remember { mutableStateOf(false) }
     var tempProgress by remember { mutableFloatStateOf(progress) }
-    val primaryColor = MaterialTheme.colorScheme.primary
-    
+    val primaryColor = AppContentColors.accent()
+
     // 同步外部进度
     LaunchedEffect(progress) {
         if (!isDragging) {
             tempProgress = progress
         }
     }
-    
+
     val displayProgress = if (isDragging) tempProgress else progress
-    
+
     Box(
         modifier = modifier
-            .height(24.dp)  // 触摸区域高度
+            .height(48.dp)
             .pointerInput(Unit) {
                 detectTapGestures { offset ->
                     val newProgress = (offset.x / size.width).coerceIn(0f, 1f)
@@ -777,17 +1222,17 @@ fun BangumiSlimProgressBar(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(3.dp)
-                .background(Color.White.copy(alpha = 0.3f), RoundedCornerShape(1.5.dp))
+                .background(Color.White.copy(alpha = 0.3f), AppShapes.container(ContainerLevel.Micro))
         )
-        
+
         // 当前进度
         Box(
             modifier = Modifier
                 .fillMaxWidth(displayProgress.coerceIn(0f, 1f))
                 .height(3.dp)
-                .background(primaryColor, RoundedCornerShape(1.5.dp))
+                .background(primaryColor, AppShapes.container(ContainerLevel.Micro))
         )
-        
+
         // 滑块（圆点）- 拖动时放大
         Box(
             modifier = Modifier
@@ -797,7 +1242,7 @@ fun BangumiSlimProgressBar(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
                     .size(if (isDragging) 16.dp else 12.dp)
-                    .offset(x = if (isDragging) 8.dp else 6.dp)
+                    .offset { IntOffset(x = (if (isDragging) 8.dp else 6.dp).roundToPx(), y = 0) }
                     .background(primaryColor, androidx.compose.foundation.shape.CircleShape)
             )
         }

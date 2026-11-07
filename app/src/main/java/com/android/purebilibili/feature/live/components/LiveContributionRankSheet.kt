@@ -1,23 +1,28 @@
 package com.android.purebilibili.feature.live.components
+import com.android.purebilibili.navigation.tabSelectedPage
+import com.android.purebilibili.navigation.tabIndicatorPosition
+import com.android.purebilibili.core.ui.components.AppHorizontalDivider
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
+import com.android.purebilibili.core.ui.components.AppLazyColumn as LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
-import androidx.compose.material3.PrimaryTabRow
-import androidx.compose.material3.Text
+import com.android.purebilibili.core.ui.AppModalBottomSheet
+import com.android.purebilibili.core.ui.components.AppSurface
+import com.android.purebilibili.core.ui.components.AppSegmentOption
+import com.android.purebilibili.core.ui.components.AppThemeAdaptiveTabRow
+import com.android.purebilibili.core.ui.components.AppText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -30,7 +35,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.android.purebilibili.core.ui.AppShapes
+import com.android.purebilibili.core.ui.AppSpacingTokens
+import com.android.purebilibili.core.ui.AppSurfaceTokens
+import com.android.purebilibili.core.ui.ContainerLevel
+import com.android.purebilibili.feature.live.resolveLiveSheetVisualSpec
 import com.android.purebilibili.feature.live.AnchorInfo
 import com.android.purebilibili.feature.live.RoomInfo
 import com.android.purebilibili.feature.live.formatLiveDuration
@@ -45,200 +54,161 @@ fun LiveContributionRankSheet(
     roomTitle: String,
     anchorInfo: AnchorInfo,
     roomInfo: RoomInfo,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onUserClick: (Long) -> Unit = {},
 ) {
-    var selectedTab by remember { mutableIntStateOf(0) }
-    var items by remember { mutableStateOf<List<LiveContributionRankItem>>(emptyList()) }
-    var isLoading by remember { mutableStateOf(true) }
-    var error by remember { mutableStateOf<String?>(null) }
-    val rankTypes = remember {
-        listOf(
-            LiveContributionRankType.ONLINE,
-            LiveContributionRankType.DAILY,
-            LiveContributionRankType.WEEKLY,
-            LiveContributionRankType.MONTHLY
-        )
-    }
-
-    LaunchedEffect(roomInfo.roomId, anchorInfo.uid, selectedTab) {
-        isLoading = true
-        error = null
-        LiveRepository.getLiveContributionRank(
-            roomId = roomInfo.roomId,
-            ruid = anchorInfo.uid,
-            type = rankTypes[selectedTab]
-        ).onSuccess {
-            items = it
-            isLoading = false
-        }.onFailure {
-            error = it.message ?: "获取高能榜失败"
-            isLoading = false
-        }
-    }
-
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Text(
-                text = "高能榜",
-                color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 22.sp,
-                fontWeight = FontWeight.Bold
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val rankTypes = remember { LiveContributionRankType.entries.toList() }
+    val pager = androidx.compose.foundation.pager.rememberPagerState(pageCount = { rankTypes.size })
+    val pageStates = remember(roomInfo.roomId) { rankTypes.associateWith { LiveRankPageState() } }
+    val listStates = remember(roomInfo.roomId) { rankTypes.map { androidx.compose.foundation.lazy.LazyListState() } }
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val panelHeight = (configuration.screenHeightDp * if (
+        configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    ) 1f else 0.7f).dp
+    AppModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.fillMaxWidth().height(panelHeight)) {
+            AppText("高能榜", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(12.dp))
+            AppThemeAdaptiveTabRow(
+                // Glass indicator fills the measured slot; native geometry keeps its defaults.
+                liquidGlassAdaptIndicatorToLabel = !com.android.purebilibili.core.ui.LocalAppThemeConfig.current.liquidGlassEnabled,
+                role = com.android.purebilibili.core.ui.components.AppTabRowRole.SECONDARY,
+                options = rankTypes.mapIndexed { index, type -> AppSegmentOption(index, type.title) },
+                selectedValue = pager.tabSelectedPage,
+                onSelectionChange = { index -> scope.launch {
+                    if (index == pager.currentPage) listStates[index].animateScrollToItem(0)
+                    else com.android.purebilibili.navigation.animatePagerSelection(pager, index)
+                } },
+                indicatorPositionProvider = { pager.tabIndicatorPosition },
+                isScrollInProgressProvider = { pager.isScrollInProgress },
+                modifier = Modifier.fillMaxWidth(),
             )
-            Text(
-                text = roomTitle.ifBlank { anchorInfo.uname },
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 13.sp
-            )
-            PrimaryTabRow(selectedTabIndex = selectedTab) {
-                rankTypes.forEachIndexed { index, type ->
-                    Tab(
-                        selected = selectedTab == index,
-                        onClick = { selectedTab = index },
-                        text = { Text(type.title) }
-                    )
-                }
-            }
-            Surface(
-                shape = RoundedCornerShape(22.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow
-            ) {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        RankMetricRow("主播", anchorInfo.uname.ifBlank { "直播间" })
-                        RankMetricRow("人气", formatLiveViewerCount(roomInfo.online))
-                        RankMetricRow("观看", roomInfo.watchedText.ifBlank { "暂无数据" })
-                        RankMetricRow("高能观众", roomInfo.onlineRankText.ifBlank { "暂无数据" })
-                        RankMetricRow("开播时长", formatLiveDuration(roomInfo.liveStartTime).ifBlank { "刚刚开播" })
-                    }
-                    HorizontalDivider()
-                    when {
-                        isLoading -> {
-                            Text(
-                                text = "榜单加载中…",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 13.sp,
-                                modifier = Modifier.padding(16.dp)
-                            )
-                        }
-                        error != null -> {
-                            Text(
-                                text = error ?: "",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 13.sp,
-                                modifier = Modifier.padding(16.dp)
-                            )
-                        }
-                        items.isEmpty() -> {
-                            Text(
-                                text = "当前榜单暂无数据",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 13.sp,
-                                modifier = Modifier.padding(16.dp)
-                            )
-                        }
-                        else -> {
-                            LazyColumn(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(max = 360.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                items(items, key = { "${it.uid}_${it.rank}" }) { item ->
-                                    RankItemRow(item = item)
-                                }
-                            }
-                        }
-                    }
-                }
+            com.android.purebilibili.core.ui.components.AppHorizontalPager(state = pager, modifier = Modifier.weight(1f)) { page ->
+                LiveRankPage(roomInfo.roomId, anchorInfo.uid, rankTypes[page], pageStates.getValue(rankTypes[page]), listStates[page], onUserClick)
             }
         }
     }
 }
 
+private class LiveRankPageState {
+    var items by mutableStateOf<List<LiveContributionRankItem>>(emptyList())
+    var loading by mutableStateOf(false)
+    var loadingMore by mutableStateOf(false)
+    var hasMore by mutableStateOf(false)
+    var error by mutableStateOf<String?>(null)
+    var initialized = false
+    val requests = com.android.purebilibili.feature.live.LiveBrowseRequestPolicy()
+}
+
 @Composable
-private fun RankMetricRow(
-    label: String,
-    value: String
+private fun LiveRankPage(
+    roomId: Long,
+    anchorId: Long,
+    type: LiveContributionRankType,
+    state: LiveRankPageState,
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    onUserClick: (Long) -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Text(
-            text = label,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 13.sp
-        )
-        androidx.compose.foundation.layout.Spacer(Modifier.width(8.dp))
-        Text(
-            text = value,
-            color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            textAlign = TextAlign.End,
-            modifier = Modifier.weight(1f)
-        )
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    fun load(reset: Boolean) {
+        val request = if (reset) state.requests.refresh(replace = true) else state.requests.loadMore(state.hasMore)
+        if (request == null) return
+        state.loading = reset
+        state.loadingMore = !reset
+        state.error = null
+        scope.launch {
+            try {
+                LiveRepository.getLiveContributionRank(roomId, anchorId, type, request.page).onSuccess { next ->
+                    if (!state.requests.succeed(request)) return@onSuccess
+                    val previous = if (reset) emptyList() else state.items
+                    state.hasMore = next.isNotEmpty() && next.any { candidate -> previous.none { it.uid == candidate.uid } }
+                    state.items = (previous + next).distinctBy { it.uid }
+                    state.initialized = true
+                    state.loading = false
+                    state.loadingMore = false
+                }.onFailure {
+                    if (!state.requests.fail(request)) return@onFailure
+                    state.error = it.message ?: "获取高能榜失败"
+                    state.loading = false
+                    state.loadingMore = false
+                }
+            } finally {
+                if (state.requests.owns(request)) {
+                    state.requests.fail(request)
+                    state.loading = false
+                    state.loadingMore = false
+                }
+            }
+        }
+    }
+    LaunchedEffect(roomId, type) { if (!state.initialized) load(true) }
+    com.android.purebilibili.core.ui.AdaptivePullToRefreshBox(isRefreshing = state.loading, onRefresh = { load(true) }, modifier = Modifier.fillMaxSize()) {
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp)) {
+            if (state.items.isEmpty()) item {
+                Column(Modifier.fillMaxWidth().padding(24.dp)) {
+                    AppText(if (state.loading) "榜单加载中…" else state.error ?: "暂无榜单数据")
+                    if (!state.loading) com.android.purebilibili.core.ui.components.AppTextButton(onClick = { load(true) }) { AppText("重新加载") }
+                }
+            }
+            items(state.items, key = { it.uid }) { item -> RankItemRow(item) { onUserClick(item.uid) } }
+            if (state.items.isNotEmpty()) item {
+                com.android.purebilibili.feature.live.LiveHomeLoadMoreFooter(state.loadingMore, state.items.size, state.hasMore, state.error) { load(false) }
+            }
+        }
     }
 }
 
 @Composable
 private fun RankItemRow(
-    item: LiveContributionRankItem
+    item: LiveContributionRankItem,
+    onClick: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .clickable(onClick = onClick)
+            .padding(
+                horizontal = AppSpacingTokens.Large,
+                vertical = AppSpacingTokens.Small
+            ),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Row(
             modifier = Modifier.weight(1f),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(AppSpacingTokens.Medium)
         ) {
-            Text(
+            AppText(
                 text = item.rank.takeIf { it > 0 }?.toString() ?: "-",
-                color = MaterialTheme.colorScheme.primary,
-                fontSize = 14.sp,
+                color = AppSurfaceTokens.primary(),
+                style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Bold
             )
             Column(modifier = Modifier.weight(1f)) {
-                Text(
+                AppText(
                     text = item.name.ifBlank { "用户" },
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 14.sp,
+                    color = AppSurfaceTokens.onSurface(),
+                    style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 val medal = item.medalInfo
                 if (medal != null && medal.medalName.isNotBlank()) {
-                    Text(
+                    AppText(
                         text = "${medal.medalName} Lv.${medal.level}",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 11.sp
+                        color = AppSurfaceTokens.onSurfaceVariantSummary(),
+                        style = MaterialTheme.typography.labelSmall
                     )
                 }
             }
         }
-        Text(
+        AppText(
             text = item.score.takeIf { it > 0 }?.toString() ?: "-",
-            color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 13.sp,
+            color = AppSurfaceTokens.onSurface(),
+            style = MaterialTheme.typography.bodySmall,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(start = 8.dp)
+            modifier = Modifier.padding(start = AppSpacingTokens.Small)
         )
     }
 }

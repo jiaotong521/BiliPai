@@ -1,4 +1,10 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
 package com.android.purebilibili.feature.settings.share
+
+import androidx.compose.foundation.clickable
+
+import com.android.purebilibili.core.ui.AppContentColors
 
 import android.content.Intent
 import android.widget.Toast
@@ -14,21 +20,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.UploadFile
-import androidx.compose.material3.CircularProgressIndicator
+import com.android.purebilibili.core.ui.components.AppLazyColumn as LazyColumn
+import com.android.purebilibili.core.ui.AdaptiveLoadingIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import com.android.purebilibili.core.ui.components.AppIconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-
+import com.android.purebilibili.core.ui.components.AppText
+import com.android.purebilibili.core.ui.components.AppTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -45,19 +44,20 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.android.purebilibili.BuildConfig
 import com.android.purebilibili.R
-import com.android.purebilibili.core.theme.iOSBlue
-import com.android.purebilibili.core.theme.iOSGreen
-import com.android.purebilibili.core.theme.iOSOrange
-import com.android.purebilibili.core.theme.iOSPink
-import com.android.purebilibili.core.theme.iOSPurple
+import com.android.purebilibili.feature.settings.rememberThemeAwareSettingsIcon
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.Report
+import top.yukonga.miuix.kmp.icon.extended.Tasks
 import com.android.purebilibili.feature.settings.SettingsPageScrollHost
 import com.android.purebilibili.feature.settings.ui.SettingsPageScaffold
-import com.android.purebilibili.core.ui.IOSAlertDialog
-import com.android.purebilibili.core.ui.IOSDialogAction
-import com.android.purebilibili.core.ui.components.IOSClickableItem
-import com.android.purebilibili.core.ui.components.IOSDivider
-import com.android.purebilibili.core.ui.components.IOSGroup
-import com.android.purebilibili.core.ui.components.IOSSectionTitle
+import com.android.purebilibili.feature.settings.ui.settingsScrollContentPadding
+import com.android.purebilibili.core.ui.AppAlertDialog
+import com.android.purebilibili.core.ui.AppDialogAction
+import com.android.purebilibili.core.ui.components.AppPreference
+import com.android.purebilibili.core.ui.components.AppPreferenceDivider
+import com.android.purebilibili.core.ui.components.AppPreferenceGroup
+import com.android.purebilibili.core.ui.components.AppPreferenceSectionTitle
+import com.android.purebilibili.core.ui.components.AppSwitchPreference
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -74,6 +74,12 @@ fun SettingsShareScreen(
     val viewSkippedLabel = stringResource(R.string.settings_share_view_skipped)
     val cancelLabel = stringResource(R.string.common_cancel)
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    var showSaveProfileDialog by remember { mutableStateOf(false) }
+    var profileName by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        viewModel.loadSavedProfiles()
+    }
 
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
@@ -121,52 +127,91 @@ fun SettingsShareScreen(
         Box(modifier = Modifier.fillMaxSize()) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 24.dp),
+                contentPadding = settingsScrollContentPadding(extraBottom = 24.dp),
             ) {
             item {
-                IOSSectionTitle("执行状态")
-                IOSGroup {
-                    IOSClickableItem(
-                        icon = if (uiState.isBusy) Icons.Filled.Info else Icons.Filled.CheckCircle,
+                AppPreferenceSectionTitle("当前状态")
+                AppPreferenceGroup {
+                    // 状态放 subtitle，避免右侧 value 窄列把长文案拆成「操作」单独一行。
+                    AppPreference(
+                        icon = if (uiState.isBusy) com.android.purebilibili.feature.settings.rememberMaterialSymbol(com.android.purebilibili.R.drawable.ms_pending_fill_24) else com.android.purebilibili.feature.settings.rememberMaterialSymbol(com.android.purebilibili.R.drawable.ms_history_fill_24),
                         title = if (uiState.isBusy) "正在处理" else "最近状态",
-                        value = uiState.statusMessage ?: "尚未执行导入导出操作",
+                        subtitle = uiState.statusMessage ?: "尚未执行导入导出操作",
                         onClick = if (uiState.statusMessage != null) ({ viewModel.clearStatus() }) else null,
-                        iconTint = if (uiState.isBusy) iOSOrange else iOSGreen,
+                        iconTint = if (uiState.isBusy) AppContentColors.warning() else AppContentColors.success(),
                         showChevron = false
                     )
                 }
             }
 
             item {
-                IOSSectionTitle("说明")
-                IOSGroup {
-                    IOSClickableItem(
-                        icon = Icons.Filled.CheckCircle,
-                        title = "会一起分享的内容",
-                        subtitle = "外观、播放、手势、弹幕、导航等可交流设置",
+                AppPreferenceSectionTitle("说明")
+                AppPreferenceGroup {
+                    AppPreference(
+                        icon = rememberThemeAwareSettingsIcon(
+                            materialSymbolResource = R.drawable.ms_task_alt_24,
+                            miuixIcon = MiuixIcons.Tasks,
+                        ),
+                        title = "包含的设置",
+                        subtitle = "外观、播放、手势、弹幕和导航等不含隐私的设置",
                         onClick = null,
-                        iconTint = iOSGreen,
+                        iconTint = AppContentColors.secondaryText(),
                         showChevron = false
                     )
-                    IOSDivider(startIndent = 66.dp)
-                    IOSClickableItem(
-                        icon = Icons.Filled.Lock,
-                        title = "会自动跳过的内容",
-                        subtitle = "账号、下载路径、WebDAV、隐私与设备相关配置",
+                    AppPreferenceDivider(startIndent = 66.dp)
+                    AppPreference(
+                        icon = com.android.purebilibili.feature.settings.rememberMaterialSymbol(com.android.purebilibili.R.drawable.ms_lock_fill_24),
+                        title = "不包含的设置",
+                        subtitle = "账号、保存路径、云备份账号、隐私和设备专属配置",
                         onClick = null,
-                        iconTint = iOSPurple,
+                        iconTint = AppContentColors.secondaryText(),
                         showChevron = false
                     )
                 }
             }
 
             item {
-                IOSSectionTitle("操作")
-                IOSGroup {
-                    IOSClickableItem(
-                        icon = Icons.Filled.Download,
+                AppPreferenceSectionTitle("导出选项")
+                AppPreferenceGroup {
+                    AppSwitchPreference(
+                        title = "附带设备信息",
+                        subtitle = "附带安卓版本、界面风格和屏幕信息，便于排查问题；导入时不会应用",
+                        checked = uiState.includeDeviceDebug,
+                        onCheckedChange = viewModel::setIncludeDeviceDebug,
+                        icon = rememberThemeAwareSettingsIcon(
+                            materialSymbolResource = R.drawable.ms_report_24,
+                            miuixIcon = MiuixIcons.Report,
+                        ),
+                        iconTint = AppContentColors.secondaryText(),
+                    )
+                }
+            }
+
+            item {
+                AppPreferenceSectionTitle("操作")
+                if (com.android.purebilibili.core.theme.LocalAppUiStyle.current == com.android.purebilibili.core.theme.AppUiStyle.MATERIAL3) {
+                    MaterialSettingsTransferActions(
+                        enabled = !uiState.isBusy,
+                        onExport = {
+                            exportLauncher.launch(buildSettingsShareFileName(
+                                appVersion = BuildConfig.VERSION_NAME,
+                                epochMs = System.currentTimeMillis(),
+                            ))
+                        },
+                        onShare = { viewModel.prepareShare() },
+                        onImport = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
+                        onSave = { profileName = ""; showSaveProfileDialog = true },
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
+                } else                 AppPreferenceGroup {
+                    AppPreference(
+                        icon = com.android.purebilibili.feature.settings.rememberMaterialSymbol(com.android.purebilibili.R.drawable.ms_download_fill_24),
                         title = "导出到文件",
-                        subtitle = "生成可分享的设置文件（JSON）",
+                        subtitle = if (uiState.includeDeviceDebug) {
+                            "保存设置文件，并附带设备排查信息"
+                        } else {
+                            "把可分享设置保存为文件"
+                        },
                         onClick = {
                             exportLauncher.launch(
                                 buildSettingsShareFileName(
@@ -175,37 +220,86 @@ fun SettingsShareScreen(
                                 )
                             )
                         },
-                        iconTint = iOSBlue
+                        iconTint = AppContentColors.secondaryText()
                     )
-                    IOSDivider(startIndent = 66.dp)
-                    IOSClickableItem(
-                        icon = Icons.Filled.Share,
+                    AppPreferenceDivider(startIndent = 66.dp)
+                    AppPreference(
+                        icon = com.android.purebilibili.feature.settings.rememberMaterialSymbol(com.android.purebilibili.R.drawable.ms_share_fill_24),
                         title = "分享导出文件",
-                        subtitle = "导出后直接调起系统分享",
+                        subtitle = "生成设置文件后打开系统分享面板",
                         onClick = { viewModel.prepareShare() },
-                        iconTint = iOSGreen
+                        iconTint = AppContentColors.secondaryText()
                     )
-                    IOSDivider(startIndent = 66.dp)
-                    IOSClickableItem(
-                        icon = Icons.Filled.UploadFile,
+                    AppPreferenceDivider(startIndent = 66.dp)
+                    AppPreference(
+                        icon = com.android.purebilibili.feature.settings.rememberMaterialSymbol(com.android.purebilibili.R.drawable.ms_upload_file_fill_24),
                         title = "从文件导入",
-                        subtitle = "预览可导入内容后再一键应用",
+                        subtitle = "先查看会修改哪些内容，确认后再应用",
                         onClick = { importLauncher.launch(arrayOf("application/json", "text/plain")) },
-                        iconTint = iOSPink
+                        iconTint = AppContentColors.secondaryText()
                     )
                 }
             }
 
             item {
-                IOSSectionTitle("文件格式")
-                IOSGroup {
-                    IOSClickableItem(
-                        icon = Icons.Filled.Info,
+                AppPreferenceSectionTitle("本机保存的设置")
+                AppPreferenceGroup {
+                    if (com.android.purebilibili.core.theme.LocalAppUiStyle.current != com.android.purebilibili.core.theme.AppUiStyle.MATERIAL3) {
+                        AppPreference(
+                            icon = com.android.purebilibili.feature.settings.rememberMaterialSymbol(
+                                com.android.purebilibili.R.drawable.ms_download_fill_24,
+                            ),
+                            title = "保存当前配置",
+                            subtitle = "自定义名称，保存后可一键恢复",
+                            onClick = {
+                                profileName = ""
+                                showSaveProfileDialog = true
+                            },
+                            iconTint = AppContentColors.secondaryText(),
+                        )
+                    }
+                    if (com.android.purebilibili.core.theme.LocalAppUiStyle.current == com.android.purebilibili.core.theme.AppUiStyle.MATERIAL3) {
+                        if (uiState.savedProfiles.isEmpty()) {
+                            com.android.purebilibili.core.ui.components.AppText(
+                                "暂无保存的配置，可使用上方按钮保存。",
+                                modifier = Modifier.padding(16.dp),
+                            )
+                        }
+                        uiState.savedProfiles.forEach { profile ->
+                            androidx.compose.material3.ListItem(
+                                headlineContent = { com.android.purebilibili.core.ui.components.AppText(profile.name) },
+                                supportingContent = { com.android.purebilibili.core.ui.components.AppText("点击恢复此配置") },
+                                modifier = Modifier
+                                    .clickable(enabled = !uiState.isBusy) { viewModel.restoreSavedProfile(profile) },
+                            )
+                        }
+                    } else {
+                        uiState.savedProfiles.forEach { profile ->
+                            AppPreferenceDivider(startIndent = 66.dp)
+                            AppPreference(
+                                icon = com.android.purebilibili.feature.settings.rememberMaterialSymbol(
+                                    com.android.purebilibili.R.drawable.ms_restore_24,
+                                ),
+                                title = profile.name,
+                                subtitle = "点击立即恢复此配置",
+                                onClick = { viewModel.restoreSavedProfile(profile) },
+                                iconTint = AppContentColors.secondaryText(),
+                            )
+                        }
+                    }
+                }
+            }
+
+            item {
+                AppPreferenceSectionTitle("文件格式")
+                AppPreferenceGroup {
+                    AppPreference(
+                        icon = com.android.purebilibili.feature.settings.rememberMaterialSymbol(com.android.purebilibili.R.drawable.ms_data_object_fill_24),
                         title = "设置包（JSON）",
-                        subtitle = "支持用户查看，也支持应用内一键导入",
+                        subtitle = "通用文本格式，可直接查看，也可在 BiliPai 中导入",
                         value = "格式版本 v$SETTINGS_SHARE_SCHEMA_VERSION",
                         onClick = null,
-                        iconTint = iOSOrange,
+                        iconTint = AppContentColors.secondaryText(),
                         showChevron = false
                     )
                 }
@@ -217,45 +311,73 @@ fun SettingsShareScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
                 ) {
-                    CircularProgressIndicator()
+                    AdaptiveLoadingIndicator()
                 }
             }
         }
     }
 
     val pendingImportSession = uiState.pendingImportSession
+    if (showSaveProfileDialog) {
+        AppAlertDialog(
+            onDismissRequest = { showSaveProfileDialog = false },
+            title = { AppText("保存配置") },
+            text = {
+                AppTextField(
+                    value = profileName,
+                    onValueChange = { profileName = it },
+                    label = "配置名称",
+                    placeholder = "例如：我的清爽布局",
+                    singleLine = true,
+                )
+            },
+            confirmButton = {
+                AppDialogAction(
+                    onClick = {
+                        viewModel.saveCurrentProfile(profileName)
+                        showSaveProfileDialog = false
+                    },
+                ) { AppText("保存") }
+            },
+            dismissButton = {
+                AppDialogAction(onClick = { showSaveProfileDialog = false }) {
+                    AppText(cancelLabel)
+                }
+            },
+        )
+    }
     if (pendingImportSession != null) {
         var showRawKeys by remember(pendingImportSession) { mutableStateOf(false) }
-        IOSAlertDialog(
+        AppAlertDialog(
             onDismissRequest = { viewModel.dismissImportPreview() },
             title = {
-                Text(
+                AppText(
                     text = "导入设置",
                     fontWeight = FontWeight.Bold
                 )
             },
             text = {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
+                    AppText(
                         text = buildImportPreviewSummary(pendingImportSession),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = AppContentColors.secondaryText()
                     )
                     if (showRawKeys && pendingImportSession.preview.skippedKeys.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(12.dp))
-                        Text(
+                        AppText(
                             text = pendingImportSession.preview.skippedKeys.joinToString(separator = "\n"),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = AppContentColors.secondaryText()
                         )
                     }
                 }
             },
             confirmButton = {
-                IOSDialogAction(onClick = { viewModel.confirmImport() }) {
-                    Text(importConfirmLabel)
+                AppDialogAction(onClick = { viewModel.confirmImport() }) {
+                    AppText(importConfirmLabel)
                 }
             },
             dismissButton = {
-                IOSDialogAction(
+                AppDialogAction(
                     onClick = {
                         if (pendingImportSession.preview.skippedKeys.isNotEmpty() && !showRawKeys) {
                             showRawKeys = true
@@ -264,7 +386,7 @@ fun SettingsShareScreen(
                         }
                     }
                 ) {
-                    Text(
+                    AppText(
                         if (pendingImportSession.preview.skippedKeys.isNotEmpty() && !showRawKeys) {
                             viewSkippedLabel
                         } else {

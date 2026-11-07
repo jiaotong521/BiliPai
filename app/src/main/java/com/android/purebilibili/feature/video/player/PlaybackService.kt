@@ -1,18 +1,20 @@
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package com.android.purebilibili.feature.video.player
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Notification
-import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
-import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.android.purebilibili.core.store.SettingsManager
 import com.android.purebilibili.core.util.Logger
+import androidx.media3.session.MediaSession
+import androidx.media3.session.MediaSessionService
 
 internal fun shouldStartForegroundWithFallback(primaryNotification: Any?): Boolean {
     return primaryNotification == null
@@ -22,7 +24,8 @@ internal fun shouldRefreshPlaybackServiceForeground(
     action: String?,
     isForegroundStarted: Boolean
 ): Boolean {
-    return action == PlaybackService.ACTION_START_FOREGROUND
+    return action == PlaybackService.ACTION_START_FOREGROUND ||
+        action == PlaybackService.ACTION_MEDIA_CONTROL
 }
 
 internal fun shouldStopPlaybackServiceForStartId(
@@ -36,24 +39,57 @@ internal fun resolvePlaybackServiceFallbackIconRes(iconKey: String): Int {
     return resolveNotificationSmallIconRes(iconKey)
 }
 
-/**
- * 这是一个 Foreground Service，用于将 MiniPlayerManager 构建的通知提升为前台通知。
- * 这样可以确保在后台播放时，系统媒体控制中心（下拉通知栏）能够正常显示。
- */
-class PlaybackService : Service() {
+/** 媒体服务负责会话通知的状态、动作和前台生命周期，启动阶段保留准备通知。 */
+class PlaybackService : MediaSessionService() {
 
     companion object {
         private const val TAG = "PlaybackService"
         private const val CHANNEL_ID = "mini_player_channel"
         const val ACTION_START_FOREGROUND = "com.android.purebilibili.action.START_FOREGROUND"
         const val ACTION_STOP_FOREGROUND = "com.android.purebilibili.action.STOP_FOREGROUND"
+        const val ACTION_MEDIA_CONTROL = "com.android.purebilibili.action.MEDIA_CONTROL"
         const val NOTIFICATION_ID = 1002 // 必须与 MiniPlayerManager 中的 ID 一致
         @Volatile private var isForegroundStarted = false
         @Volatile private var latestHandledStartId = 0
     }
 
-    override fun onBind(intent: Intent?): IBinder? {
-        return null
+    private var notificationOwner: MiniPlayerManager? = null
+    private val refreshNotification: () -> Unit = {
+        bindCurrentSession()
+        triggerNotificationUpdate()
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        ensureNotificationChannel()
+        bindNotificationOwner(MiniPlayerManager.getInstance(applicationContext))
+    }
+
+    private fun bindNotificationOwner(owner: MiniPlayerManager?) {
+        if (notificationOwner === owner) return
+        notificationOwner?.let { previous ->
+            if (previous.onNotificationRefreshRequested === refreshNotification) {
+                previous.onNotificationRefreshRequested = null
+            }
+        }
+        notificationOwner = owner
+        if (owner != null) {
+            owner.onNotificationRefreshRequested = refreshNotification
+            setMediaNotificationProvider(PlaybackMediaNotificationProvider(this, owner::decoratePlaybackNotification))
+        }
+    }
+
+    private fun bindCurrentSession() {
+        // 播放器管理器释放后可重新创建，存活的服务不能继续绑定旧实例。
+        bindNotificationOwner(MiniPlayerManager.getInstanceOrNull())
+        val current = notificationOwner?.mediaSession
+        sessions.filter { it !== current }.forEach(::removeSession)
+        if (current != null && !isSessionAdded(current)) addSession(current)
+    }
+
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
+        bindCurrentSession()
+        return notificationOwner?.mediaSession
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -62,10 +98,10 @@ class PlaybackService : Service() {
         Logger.d(TAG, "onStartCommand: action=$action")
 
         when (action) {
-            ACTION_START_FOREGROUND -> {
+            ACTION_START_FOREGROUND, ACTION_MEDIA_CONTROL -> {
                 if (shouldRefreshPlaybackServiceForeground(action, isForegroundStarted)) {
                     try {
-                        // 获取 MiniPlayerManager 中构建好的通知
+                        // 启动时复用最近的媒体通知；尚未生成时使用准备通知。
                         val primaryNotification = MiniPlayerManager.getInstance(applicationContext).currentNotification
                         val notification = if (shouldStartForegroundWithFallback(primaryNotification)) {
                             Logger.w(TAG, "Primary notification missing, starting foreground with fallback notification")
@@ -75,6 +111,16 @@ class PlaybackService : Service() {
                         }
                         startAsForeground(notification)
                         isForegroundStarted = true
+                        bindCurrentSession()
+                        triggerNotificationUpdate()
+                        // A notification action must promote the service before resuming audio.
+                        if (action == ACTION_MEDIA_CONTROL) {
+                            resolveMediaControlType(
+                                intent?.getIntExtra(MiniPlayerManager.EXTRA_CONTROL_TYPE, 0) ?: 0
+                            )?.let { control ->
+                                MiniPlayerManager.getInstance(applicationContext).performMediaControl(control)
+                            }
+                        }
                     } catch (e: Exception) {
                         isForegroundStarted = false
                         Logger.e(TAG, "Failed to start foreground service", e)
@@ -94,10 +140,19 @@ class PlaybackService : Service() {
             }
         }
 
-        return START_NOT_STICKY
+        return super.onStartCommand(intent, flags, startId)
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // 切后台继续播放；只有从最近任务移除时才关闭当前播放会话。
+        MiniPlayerManager.getInstanceOrNull()?.dismissForTaskRemoval()
+        isForegroundStarted = false
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     override fun onDestroy() {
+        bindNotificationOwner(null)
         super.onDestroy()
         isForegroundStarted = false
         latestHandledStartId = 0
@@ -120,12 +175,7 @@ class PlaybackService : Service() {
     private fun buildFallbackNotification(): Notification {
         ensureNotificationChannel()
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(
-                resolveNotificationIconResByPriority(
-                    launcherIconRes = resolveLaunchActivityIconRes(this),
-                    fallbackIconKey = SettingsManager.getAppIconSync(this)
-                )
-            )
+            .setSmallIcon(resolveNotificationIconRes(SettingsManager.getAppIconSync(this)))
             .setContentTitle("BiliPai")
             .setContentText("正在准备播放控件")
             .setOnlyAlertOnce(true)

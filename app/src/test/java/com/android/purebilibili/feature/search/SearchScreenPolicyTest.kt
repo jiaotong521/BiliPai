@@ -3,13 +3,13 @@ package com.android.purebilibili.feature.search
 import com.android.purebilibili.data.model.response.SearchType
 import com.android.purebilibili.data.repository.SearchUpOrder
 import com.android.purebilibili.data.repository.SearchUserType
-import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SearchScreenPolicyTest {
+
 
     @Test
     fun resetSearchScroll_onlyWhenShowingNonBlankResults() {
@@ -32,6 +32,18 @@ class SearchScreenPolicyTest {
                 searchSessionId = 2L,
                 showResults = false,
                 lastResetSessionId = 1L
+            )
+        )
+    }
+
+    @Test
+    fun resetSearchScroll_preservesPositionWhenReturningFromVideoDetail() {
+        assertFalse(
+            shouldResetSearchResultScroll(
+                searchSessionId = 2L,
+                showResults = true,
+                lastResetSessionId = 0L,
+                isReturningFromVideoDetail = true,
             )
         )
     }
@@ -83,13 +95,6 @@ class SearchScreenPolicyTest {
         )
     }
 
-    @Test
-    fun `searchDefaultPlaceholder covers all visible tabs`() {
-        assertEquals(
-            "搜索视频、番剧、影视、直播、UP主、专栏...",
-            resolveSearchDefaultPlaceholder()
-        )
-    }
 
     @Test
     fun `searchUpUserTypeFilterLabel avoids repeating tab name`() {
@@ -97,31 +102,27 @@ class SearchScreenPolicyTest {
         assertEquals("仅UP主", resolveSearchUpUserTypeFilterLabel(SearchUserType.UP))
     }
 
+
     @Test
-    fun searchFilterTabs_followPiliPlusPrimaryOrder() {
-        assertEquals(
-            listOf(
-                SearchType.VIDEO,
-                SearchType.BANGUMI,
-                SearchType.MEDIA_FT,
-                SearchType.LIVE,
-                SearchType.UP,
-                SearchType.ARTICLE
-            ),
-            resolveSearchFilterTabs()
+    fun searchFilterTabs_preserveExplicitUserOrder() {
+        val reordered = resolveSearchFilterTabs(
+            listOf(SearchType.UP.value, SearchType.ALL.value, SearchType.LIVE.value)
         )
+
+        assertEquals(listOf(SearchType.UP, SearchType.ALL, SearchType.LIVE), reordered.take(3))
+        assertEquals(reordered.size, reordered.distinct().size)
     }
 
     @Test
-    fun searchFilterTabs_hideExtraTypesWithoutRemovingModelSupport() {
-        val visibleTabs = resolveSearchFilterTabs()
+    fun searchFilterTabs_migrateSavedTabsWithoutLosingUserSearch() {
+        val reordered = resolveSearchFilterTabs(
+            listOf("unknown", SearchType.UP.value, SearchType.UP.value, SearchType.VIDEO.value)
+        )
 
-        assertFalse(SearchType.LIVE_USER in visibleTabs)
-        assertFalse(SearchType.TOPIC in visibleTabs)
-        assertFalse(SearchType.PHOTO in visibleTabs)
-        assertTrue(SearchType.entries.contains(SearchType.LIVE_USER))
-        assertTrue(SearchType.entries.contains(SearchType.TOPIC))
-        assertTrue(SearchType.entries.contains(SearchType.PHOTO))
+        assertEquals(SearchType.ALL, reordered.first())
+        assertEquals(1, reordered.count { it == SearchType.UP })
+        assertEquals(SearchType.UP, reordered[1])
+        assertFalse(SearchType.VIDEO in reordered)
     }
 
     @Test
@@ -156,24 +157,28 @@ class SearchScreenPolicyTest {
             )
         )
         assertEquals(
-            emptyList(),
+            listOf(
+                SearchFilterControl.PHOTO_ORDER,
+                SearchFilterControl.PHOTO_CATEGORY
+            ),
             resolveSearchFilterControls(
                 currentType = SearchType.PHOTO,
                 currentUpOrder = SearchUpOrder.DEFAULT
             )
         )
+        assertEquals(
+            listOf(
+                SearchFilterControl.ARTICLE_ORDER,
+                SearchFilterControl.ARTICLE_CATEGORY
+            ),
+            resolveSearchFilterControls(
+                currentType = SearchType.ARTICLE,
+                currentUpOrder = SearchUpOrder.DEFAULT
+            )
+        )
     }
 
-    @Test
-    fun videoResultCardsReceiveReturnStateForSharedElementBack() {
-        val source = File("src/main/java/com/android/purebilibili/feature/search/SearchScreen.kt")
-            .readText()
 
-        assertTrue(source.contains("isReturningFromVideoDetail: Boolean = false"))
-        assertTrue(source.contains("isQuickReturningFromVideoDetail: Boolean = false"))
-        assertTrue(source.contains("isReturningFromVideoDetail = isReturningFromVideoDetail"))
-        assertTrue(source.contains("isQuickReturningFromVideoDetail = isQuickReturningFromVideoDetail"))
-    }
 
     @Test
     fun searchResultLazyItemKey_prefersStableBusinessKeys() {
@@ -341,53 +346,8 @@ class SearchScreenPolicyTest {
         )
     }
 
-    @Test
-    fun searchResultTransition_usesPagerAndKeepsFilterBarOutsidePager() {
-        val searchSource = loadSource("app/src/main/java/com/android/purebilibili/feature/search/SearchScreen.kt")
-        val resultPagerStart = searchSource.indexOf("HorizontalPager(")
-        val filterBarBeforePager = searchSource.lastIndexOf("SearchFilterBar(", resultPagerStart)
-        val filterBarDeclaration = searchSource.indexOf("fun SearchFilterBar(")
-        val resultPagerBody = searchSource.substring(resultPagerStart, filterBarDeclaration)
 
-        assertTrue(resultPagerStart > 0)
-        assertTrue(filterBarBeforePager > 0)
-        assertFalse(resultPagerBody.contains("SearchFilterBar("))
-        assertFalse(searchSource.contains("detectHorizontalDragGestures"))
-        assertTrue(searchSource.contains("TabRowDefaults.SecondaryIndicator"))
-        assertTrue(searchSource.contains("OutlinedTextField("))
-        assertTrue(searchSource.contains("material3.FilterChip("))
-        assertTrue(searchSource.contains("material3.InputChip("))
-        assertFalse(searchSource.contains("SearchPagerTabIndicator("))
-        assertFalse(searchSource.contains("val showStableFilterBar = !searchPagerState.isScrollInProgress"))
-    }
 
-    @Test
-    fun bottomBarSearchEntry_usesDedicatedTopBarContinuityMotion() {
-        val navigationSource = loadSource("app/src/main/java/com/android/purebilibili/navigation/AppNavigation.kt")
-        val searchSource = loadSource("app/src/main/java/com/android/purebilibili/feature/search/SearchScreen.kt")
-
-        assertTrue(navigationSource.contains("fun navigateToSearchFromBottomBar()"))
-        assertTrue(navigationSource.contains("fun requestSearchFromBottomBar()"))
-        assertTrue(navigationSource.contains("bottomBarSearchLaunchKey += 1"))
-        assertTrue(navigationSource.contains("navigateToSearchFromBottomBar()"))
-        assertTrue(navigationSource.contains("pushNavigation3Key(BiliPaiNavKey.Search)"))
-        assertTrue(navigationSource.contains("onSearchClick = { requestSearchFromBottomBar() }"))
-        assertTrue(navigationSource.contains("searchLaunchKey = bottomBarSearchLaunchKey"))
-        assertFalse(navigationSource.contains("pendingBottomBarSearchLaunchKey"))
-        assertFalse(navigationSource.contains("if (pendingBottomBarSearchLaunchKey == completedKey)"))
-        assertTrue(navigationSource.contains("searchEntryMotionSource = SearchEntryMotionSource.BOTTOM_BAR"))
-        assertTrue(navigationSource.contains("searchEntryMotionKey += 1"))
-        assertTrue(navigationSource.contains("entryMotionSource = searchEntryMotionSource"))
-        assertTrue(navigationSource.contains("entryMotionKey = searchEntryMotionKey"))
-
-        assertTrue(searchSource.contains("entryMotionSource: SearchEntryMotionSource = SearchEntryMotionSource.NONE"))
-        assertTrue(searchSource.contains("entryMotionSpec = resolveSearchEntryMotionSpec("))
-        assertTrue(searchSource.contains("entryMotionKey = entryMotionKey"))
-        assertTrue(searchSource.contains("graphicsLayer"))
-        assertTrue(searchSource.contains("TransformOrigin("))
-        assertTrue(searchSource.contains("spec.transformOriginPivotX"))
-        assertTrue(searchSource.contains("spec.transformOriginPivotY"))
-    }
 
     @Test
     fun searchEntryMotion_onlyRunsForBottomBarSourceAndRespectsReducedBudget() {
@@ -424,13 +384,24 @@ class SearchScreenPolicyTest {
         assertEquals(0f, reducedSpec.initialTranslationYDp)
     }
 
-    private fun loadSource(path: String): String {
-        val normalizedPath = path.removePrefix("app/")
-        val sourceFile = listOf(
-            File(path),
-            File(normalizedPath)
-        ).firstOrNull { it.exists() }
-        require(sourceFile != null) { "Cannot locate $path from ${File(".").absolutePath}" }
-        return sourceFile.readText()
+    @Test
+    fun searchExitMotion_returnsControlTowardBottomSearchSlot() {
+        val entry = resolveSearchEntryMotionSpec(
+            source = SearchEntryMotionSource.BOTTOM_BAR,
+            reducedMotionBudget = false,
+        )
+
+        val exit = requireNotNull(
+            resolveSearchExitMotionSpec(
+                entrySpec = entry,
+                screenHeightDp = 900,
+            )
+        )
+
+        assertEquals(300, exit.durationMillis)
+        assertEquals(764f, exit.initialTranslationYDp)
+        assertEquals(0.74f, exit.initialScale)
+        assertEquals(0.88f, exit.transformOriginPivotX)
     }
+
 }

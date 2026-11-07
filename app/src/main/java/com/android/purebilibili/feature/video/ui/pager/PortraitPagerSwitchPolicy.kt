@@ -5,10 +5,17 @@ import com.android.purebilibili.data.model.response.Page
 import com.android.purebilibili.data.model.response.RelatedVideo
 import com.android.purebilibili.data.model.response.VideoItem
 import com.android.purebilibili.data.model.response.ViewInfo
+import com.android.purebilibili.data.repository.VideoRepository
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlin.random.Random
 import kotlin.math.abs
 
 private const val PORTRAIT_RECOMMENDATION_PREFETCH_THRESHOLD = 1
+private const val PORTRAIT_VERTICAL_RECOMMENDATION_PREFETCH_THRESHOLD = 4
+private const val PORTRAIT_VERTICAL_FILTER_CONCURRENCY = 8
+private const val PORTRAIT_VERTICAL_RECOMMENDATION_FETCH_ATTEMPTS = 3
 private const val PORTRAIT_RECENT_DIVERSITY_WINDOW_SIZE = 12
 private const val PORTRAIT_MAX_RECENT_ITEMS_PER_OWNER = 2
 private val PORTRAIT_RECOMMENDATION_STOP_WORDS = setOf(
@@ -48,11 +55,27 @@ internal fun shouldApplyLoadResult(
 internal fun shouldSkipPortraitReloadForCurrentMedia(
     currentPlayingBvid: String?,
     targetBvid: String,
-    currentPlayerMediaId: String?
+    currentPlayerMediaId: String?,
+    targetCid: Long = 0L,
+    currentPlayingCid: Long = 0L
 ): Boolean {
     val normalizedMediaId = currentPlayerMediaId?.trim().orEmpty()
     if (normalizedMediaId.isBlank()) return false
-    return currentPlayingBvid == targetBvid && normalizedMediaId == targetBvid
+    if (currentPlayingBvid != targetBvid) return false
+    // Multi-P shares bvid; media id encodes cid so part switches still reload.
+    val expectedMediaId = resolvePortraitMediaId(targetBvid, targetCid)
+    if (normalizedMediaId == expectedMediaId) return true
+    // Legacy media ids were plain bvid (cid-less). Only skip when cid is also unchanged.
+    if (normalizedMediaId == targetBvid) {
+        return (targetCid > 0L && targetCid == currentPlayingCid) ||
+            (targetCid <= 0L && currentPlayingCid <= 0L)
+    }
+    return false
+}
+
+internal fun resolvePortraitMediaId(bvid: String, cid: Long = 0L): String {
+    val normalized = bvid.trim()
+    return if (cid > 0L) "$normalized#$cid" else normalized
 }
 
 internal fun shouldShowPortraitCover(
@@ -61,11 +84,10 @@ internal fun shouldShowPortraitCover(
     isPlayerReadyForThisVideo: Boolean,
     hasRenderedFirstFrame: Boolean
 ): Boolean {
-    if (isLoading) return true
     if (!isCurrentPage) return true
-    if (!isPlayerReadyForThisVideo) return true
-    if (!hasRenderedFirstFrame) return true
-    return false
+    // 首帧出现后不因缓冲重新盖回封面，避免播放中画面跳变。
+    if (isLoading && !hasRenderedFirstFrame) return true
+    return !isPlayerReadyForThisVideo || !hasRenderedFirstFrame
 }
 
 internal fun shouldUseViewportBoundPortraitCover(
@@ -79,7 +101,8 @@ internal fun shouldUseViewportBoundPortraitCover(
     return false
 }
 
-internal fun resolvePortraitCoverContentScale(): ContentScale = ContentScale.Fit
+internal fun resolvePortraitCoverContentScale(isVerticalVideo: Boolean = false): ContentScale =
+    if (isVerticalVideo) ContentScale.Crop else ContentScale.Fit
 
 internal fun resolvePortraitCoverViewportAspect(
     currentVideoAspect: Float,
@@ -113,9 +136,12 @@ internal fun shouldHandlePortraitTapGesture(scale: Float): Boolean {
 
 internal fun shouldEnablePortraitPagerUserScroll(
     scale: Float,
-    commentOverlayActive: Boolean
+    commentOverlayActive: Boolean,
+    upPreviewActive: Boolean
 ): Boolean {
-    return shouldHandlePortraitTapGesture(scale = scale) && !commentOverlayActive
+    return shouldHandlePortraitTapGesture(scale = scale) &&
+        !commentOverlayActive &&
+        !upPreviewActive
 }
 
 internal fun shouldBlockPortraitPagerScrollForCommentOverlay(
@@ -160,6 +186,22 @@ internal fun shouldLoadMorePortraitRecommendations(
     return committedPage >= lastTriggerIndex
 }
 
+internal fun resolvePortraitRecommendationPrefetchThreshold(
+    onlyVerticalRecommendations: Boolean,
+): Int = if (onlyVerticalRecommendations) {
+    PORTRAIT_VERTICAL_RECOMMENDATION_PREFETCH_THRESHOLD
+} else {
+    PORTRAIT_RECOMMENDATION_PREFETCH_THRESHOLD
+}
+
+internal fun resolvePortraitRecommendationFetchAttemptLimit(
+    onlyVerticalRecommendations: Boolean,
+): Int = if (onlyVerticalRecommendations) {
+    PORTRAIT_VERTICAL_RECOMMENDATION_FETCH_ATTEMPTS
+} else {
+    1
+}
+
 internal fun mergePortraitRecommendationAppendItems(
     currentBvid: String,
     existingBvids: Set<String>,
@@ -170,12 +212,24 @@ internal fun mergePortraitRecommendationAppendItems(
         .filter { it.bvid.isNotBlank() }
         .toMutableList()
 
+    val signatureCache = HashMap<String, PortraitRecommendationSignature>()
+    fun signatureOf(video: RelatedVideo): PortraitRecommendationSignature {
+        return signatureCache.getOrPut(video.bvid) { buildPortraitRecommendationSignature(video) }
+    }
+    fun isSimilar(left: RelatedVideo, right: RelatedVideo): Boolean {
+        if (left.bvid == right.bvid) return true
+        return arePortraitRecommendationSignaturesSimilar(
+            firstSignature = signatureOf(left),
+            secondSignature = signatureOf(right),
+        )
+    }
+
     return fetchedRecommendations.fold(mutableListOf<RelatedVideo>()) { appended, candidate ->
         val canAppend = candidate.bvid.isNotBlank() &&
             candidate.bvid != currentBvid &&
             candidate.bvid !in existingBvids &&
             appended.none { it.bvid == candidate.bvid } &&
-            accepted.none { existing -> arePortraitRecommendationsContentSimilar(existing, candidate) } &&
+            accepted.none { existing -> isSimilar(existing, candidate) } &&
             !violatesPortraitRecentOwnerDiversity(
                 acceptedRecommendations = accepted,
                 candidate = candidate
@@ -187,6 +241,26 @@ internal fun mergePortraitRecommendationAppendItems(
         }
         appended
     }
+}
+
+/**
+ * Append parent-owned recommendation updates (e.g. Story feed load-more) without reshuffling
+ * or recreating the pager list. Preserves the user's current page.
+ */
+internal fun resolvePortraitExternalRecommendationAppendItems(
+    currentInitialBvid: String,
+    existingBvids: Set<String>,
+    externalRecommendations: List<RelatedVideo>
+): List<RelatedVideo> {
+    val seen = existingBvids.toMutableSet()
+    val append = mutableListOf<RelatedVideo>()
+    externalRecommendations.forEach { candidate ->
+        val bvid = candidate.bvid.trim()
+        if (bvid.isEmpty() || bvid == currentInitialBvid || bvid in seen) return@forEach
+        append += candidate
+        seen += bvid
+    }
+    return append
 }
 
 internal fun resolvePortraitRecommendationShuffleSeed(
@@ -208,16 +282,30 @@ internal fun resolvePortraitRecommendationAppendSeed(
 
 internal fun shufflePortraitRecommendations(
     seed: Int,
-    recommendations: List<RelatedVideo>
+    recommendations: List<RelatedVideo>,
+    precedingOwnerMid: Long = 0L
 ): List<RelatedVideo> {
     val shuffled = recommendations
         .filter { it.bvid.isNotBlank() }
         .distinctBy { it.bvid }
         .shuffled(Random(seed))
 
+    // Pairwise title matching is quadratic; build each signature once per list pass.
+    val signatureCache = HashMap<String, PortraitRecommendationSignature>(shuffled.size)
+    fun signatureOf(video: RelatedVideo): PortraitRecommendationSignature {
+        return signatureCache.getOrPut(video.bvid) { buildPortraitRecommendationSignature(video) }
+    }
+    fun isSimilar(left: RelatedVideo, right: RelatedVideo): Boolean {
+        if (left.bvid == right.bvid) return true
+        return arePortraitRecommendationSignaturesSimilar(
+            firstSignature = signatureOf(left),
+            secondSignature = signatureOf(right),
+        )
+    }
+
     val deduplicated = mutableListOf<RelatedVideo>()
     shuffled.forEach { candidate ->
-        if (deduplicated.none { existing -> arePortraitRecommendationsContentSimilar(existing, candidate) }) {
+        if (deduplicated.none { existing -> isSimilar(existing, candidate) }) {
             deduplicated += candidate
         }
     }
@@ -227,20 +315,50 @@ internal fun shufflePortraitRecommendations(
     val arranged = mutableListOf<RelatedVideo>()
     while (remaining.isNotEmpty()) {
         val last = arranged.lastOrNull()
+        val previousOwnerMid = last?.owner?.mid?.takeIf { it > 0L }
+            ?: precedingOwnerMid.takeIf { arranged.isEmpty() && it > 0L }
         val candidateIndex = remaining.indexOfFirst { candidate ->
-            last == null || (
-                !arePortraitRecommendationsContentSimilar(last, candidate) &&
-                    (last.owner.mid <= 0L || candidate.owner.mid <= 0L || last.owner.mid != candidate.owner.mid)
-                )
+            val candidateOwnerMid = candidate.owner.mid
+            (last == null || !isSimilar(last, candidate)) &&
+                (previousOwnerMid == null || candidateOwnerMid <= 0L || candidateOwnerMid != previousOwnerMid)
         }.takeIf { it >= 0 }
             ?: remaining.indexOfFirst { candidate ->
-                last == null || !arePortraitRecommendationsContentSimilar(last, candidate)
+                last == null || !isSimilar(last, candidate)
             }.takeIf { it >= 0 }
             ?: 0
 
         arranged += remaining.removeAt(candidateIndex)
     }
     return arranged
+}
+
+/** Filters a portrait feed to videos whose actual media dimensions are portrait. */
+internal suspend fun filterPortraitOnlyVerticalRecommendations(
+    recommendations: List<RelatedVideo>,
+    enabled: Boolean,
+): List<RelatedVideo> {
+    if (!enabled || recommendations.isEmpty()) return recommendations
+    // Detail lookup is required because lightweight recommendation cards do not consistently
+    // carry dimensions. Bound concurrency so filtering finishes before insertion without
+    // turning a feed page into an unbounded request burst.
+    return recommendations.chunked(PORTRAIT_VERTICAL_FILTER_CONCURRENCY).flatMap { batch ->
+        coroutineScope {
+            batch.map { candidate ->
+                async {
+                    when (candidate.isVertical) {
+                        true -> candidate
+                        false -> null
+                        null -> candidate.takeIf {
+                            VideoRepository.isVerticalVideo(
+                                bvid = candidate.bvid,
+                                aid = candidate.aid,
+                            )
+                        }
+                    }
+                }
+            }.awaitAll().filterNotNull()
+        }
+    }
 }
 
 private fun violatesPortraitRecentOwnerDiversity(
@@ -268,7 +386,11 @@ internal fun toRelatedVideoForPortraitRecommendation(item: VideoItem): RelatedVi
         pic = item.pic,
         owner = item.owner,
         stat = item.stat,
-        duration = item.duration
+        duration = item.duration,
+        pubdate = item.pubdate,
+        // false can also mean the lightweight feed omitted dimensions, so only propagate a
+        // positive fact; unknown candidates still receive the detail lookup below.
+        isVertical = true.takeIf { item.isVertical },
     )
 }
 
@@ -279,8 +401,16 @@ internal fun arePortraitRecommendationsContentSimilar(
     if (first.bvid.isBlank() || second.bvid.isBlank()) return false
     if (first.bvid == second.bvid) return true
 
-    val firstSignature = buildPortraitRecommendationSignature(first)
-    val secondSignature = buildPortraitRecommendationSignature(second)
+    return arePortraitRecommendationSignaturesSimilar(
+        firstSignature = buildPortraitRecommendationSignature(first),
+        secondSignature = buildPortraitRecommendationSignature(second),
+    )
+}
+
+private fun arePortraitRecommendationSignaturesSimilar(
+    firstSignature: PortraitRecommendationSignature,
+    secondSignature: PortraitRecommendationSignature
+): Boolean {
 
     if (
         firstSignature.normalizedTitle.isNotBlank() &&
@@ -326,11 +456,19 @@ private fun buildPortraitRecommendationSignature(
     )
 }
 
+// Title similarity is O(n^2) during portrait shuffle. Compile regex once so the
+// main thread does not rebuild Matcher/ICU state for every pair comparison.
+private val PORTRAIT_TITLE_BRACKET_PATTERN = Regex("[\\[{（(【].*?[\\]})）)】]")
+private val PORTRAIT_TITLE_NON_WORD_PATTERN = Regex("[^\\u4e00-\\u9fa5a-z0-9]+")
+private val PORTRAIT_TITLE_WHITESPACE_PATTERN = Regex("\\s+")
+private val PORTRAIT_TITLE_ZH_TOKEN_PATTERN = Regex("[\\u4e00-\\u9fa5]{2,6}")
+private val PORTRAIT_TITLE_EN_TOKEN_PATTERN = Regex("[a-z0-9]{3,}")
+
 private fun normalizePortraitRecommendationTitle(title: String): String {
     return title.lowercase()
-        .replace(Regex("[\\[{（(【].*?[\\]})）)】]"), " ")
-        .replace(Regex("[^\\u4e00-\\u9fa5a-z0-9]+"), " ")
-        .replace(Regex("\\s+"), " ")
+        .replace(PORTRAIT_TITLE_BRACKET_PATTERN, " ")
+        .replace(PORTRAIT_TITLE_NON_WORD_PATTERN, " ")
+        .replace(PORTRAIT_TITLE_WHITESPACE_PATTERN, " ")
         .trim()
 }
 
@@ -345,14 +483,14 @@ private fun extractPortraitRecommendationKeywords(title: String): Set<String> {
     val normalized = normalizePortraitRecommendationTitle(title)
     if (normalized.isBlank()) return emptySet()
 
-    val zhTokens = Regex("[\\u4e00-\\u9fa5]{2,6}")
+    val zhTokens = PORTRAIT_TITLE_ZH_TOKEN_PATTERN
         .findAll(normalized)
         .map { it.value }
         .filter { it !in PORTRAIT_RECOMMENDATION_STOP_WORDS }
         .take(6)
         .toList()
 
-    val enTokens = Regex("[a-z0-9]{3,}")
+    val enTokens = PORTRAIT_TITLE_EN_TOKEN_PATTERN
         .findAll(normalized)
         .map { it.value }
         .take(4)
@@ -390,6 +528,7 @@ internal fun toViewInfoForPortraitDetail(related: RelatedVideo): ViewInfo {
         pic = related.pic,
         owner = related.owner,
         stat = related.stat,
+        pubdate = related.pubdate,
         pages = listOf(
             Page(duration = related.duration.toLong())
         )

@@ -10,11 +10,11 @@ class DynamicTabPolicyTest {
     @Test
     fun `visible dynamic tabs follow fixed app order and ignore unknown ids`() {
         val result = resolveDynamicVisibleTabs(
-            setOf("article", "all", "unknown", "up")
+            setOf("article", "all", "unknown")
         )
 
         assertEquals(
-            listOf("all", "article", "up"),
+            listOf("all", "article"),
             result.map { it.id }
         )
     }
@@ -33,14 +33,14 @@ class DynamicTabPolicyTest {
         assertEquals(
             0,
             resolveDynamicSelectedTabWithinVisibleTabs(
-                selectedTab = 4,
+                selectedTab = 2,
                 visibleTabs = visibleTabs
             )
         )
         assertEquals(
             0,
             resolveDynamicSelectedVisibleTabIndex(
-                selectedTab = 4,
+                selectedTab = 2,
                 visibleTabs = visibleTabs
             )
         )
@@ -81,8 +81,26 @@ class DynamicTabPolicyTest {
     }
 
     @Test
-    fun `up tab visibility follows the current visible tab list`() {
-        assertTrue(isDynamicUserTabVisible(resolveDynamicVisibleTabs(defaultDynamicTabVisibleIds)))
-        assertFalse(isDynamicUserTabVisible(resolveDynamicVisibleTabs(setOf("all", "video", "pgc", "article"))))
+    fun `reselecting the current dynamic tab scrolls to top instead of switching`() {
+        assertEquals(
+            DynamicTabReselectAction.SCROLL_TO_TOP,
+            resolveDynamicTabReselectAction(currentVisibleIndex = 2, tappedVisibleIndex = 2)
+        )
+        assertEquals(
+            DynamicTabReselectAction.SWITCH_TAB,
+            resolveDynamicTabReselectAction(currentVisibleIndex = 1, tappedVisibleIndex = 3)
+        )
+    }
+
+    @Test
+    fun `pager key and content tolerate a stale page after tabs are hidden`() {
+        val visibleTabs = resolveDynamicVisibleTabs(setOf("all", "video", "article"))
+
+        assertEquals(3, resolveDynamicPagerTabKey(visibleTabs, page = 2))
+        assertEquals(
+            DynamicPagerInvalidPageKey(page = 3),
+            resolveDynamicPagerTabKey(visibleTabs, page = 3)
+        )
+        assertEquals(null, visibleTabs.getOrNull(3))
     }
 }

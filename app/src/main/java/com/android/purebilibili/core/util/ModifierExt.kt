@@ -3,58 +3,28 @@ package com.android.purebilibili.core.util
 import android.os.Build
 import android.view.HapticFeedbackConstants
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
-import androidx.compose.ui.draw.clip
+import com.android.purebilibili.core.ui.skeleton.skeletonBackground
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.unit.dp
-import com.android.purebilibili.core.theme.LocalUiPreset
-import com.android.purebilibili.core.theme.UiPreset
+import com.android.purebilibili.core.theme.AppUiStyle
+import com.android.purebilibili.core.theme.LocalAppUiStyle
 
 /**
- * 骨架屏闪光特效 Modifier
+ * 骨架屏闪光特效 Modifier（深浅色主题自适应）。
  */
 fun Modifier.shimmerEffect(): Modifier = composed {
-    var size by remember { mutableStateOf(IntSize.Zero) }
-    val transition = rememberInfiniteTransition(label = "shimmer")
-    val startOffsetX by transition.animateFloat(
-        initialValue = -2 * size.width.toFloat(),
-        targetValue = 2 * size.width.toFloat(),
-        animationSpec = infiniteRepeatable(
-            animation = tween(1000)
-        ),
-        label = "shimmer_offset"
+    val color = com.android.purebilibili.core.ui.skeleton.rememberContentSkeletonBlockColor(
+        com.android.purebilibili.core.ui.skeleton.rememberContentSkeletonPulseState(),
     )
-
-    background(
-        brush = Brush.linearGradient(
-            colors = listOf(
-                Color(0xFFE0E0E0), // 浅灰
-                Color(0xFFF5F5F5), // 亮灰 (高光)
-                Color(0xFFE0E0E0), // 浅灰
-            ),
-            start = Offset(startOffsetX, 0f),
-            end = Offset(startOffsetX + size.width.toFloat(), size.height.toFloat())
-        )
-    ).onGloballyPositioned {
-        size = it.size
-    }
+    this.skeletonBackground(color)
 }
 
 // =============================================================================
@@ -134,41 +104,17 @@ fun <T> rememberDebounceCallback(
 }
 
 /**
- * 一个假的视频卡片组件 (用于 Loading 时占位)
+ * 视频网格骨架（历史列表等）。
+ * 使用与首页一致的绘制阶段扫光，保留封面尺寸。
  */
 @Composable
 fun VideoGridItemSkeleton(coverAspectRatio: Float = 4f / 3f) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(bottom = 12.dp)
-    ) {
-        // 封面占位
-        Box(
-            modifier = Modifier
-                .aspectRatio(coverAspectRatio)
-                .clip(RoundedCornerShape(8.dp))
-                .shimmerEffect() // ✨ 加上闪光特效
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        // 标题占位 (两行)
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(0.9f)
-                .height(16.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .shimmerEffect()
-        )
-        Spacer(modifier = Modifier.height(6.dp))
-        // 作者占位
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(0.5f)
-                .height(12.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .shimmerEffect()
-        )
-    }
+    val pulse = com.android.purebilibili.core.ui.skeleton.rememberContentSkeletonPulseState()
+    val blockColor = com.android.purebilibili.core.ui.skeleton.rememberContentSkeletonBlockColor(pulse)
+    com.android.purebilibili.core.ui.skeleton.ContentVideoGridItemSkeleton(
+        coverAspectRatio = coverAspectRatio,
+        blockColorProvider = blockColor,
+    )
 }
 
 // =============================================================================
@@ -182,6 +128,7 @@ enum class HapticType {
     LIGHT,      // 轻触 (选择/切换)
     MEDIUM,     // 中等 (确认)
     HEAVY,      // 重击 (警告/删除)
+    GESTURE_STEP, // 亮度/音量等离散调节刻度
     SELECTION   // 选择变化
 }
 
@@ -192,9 +139,12 @@ enum class HapticType {
  * - 旧版本: 使用 LONG_PRESS/KEYBOARD_TAP 等
  */
 @Composable
-fun rememberHapticFeedback(): (HapticType) -> Unit {
+fun rememberHapticFeedback(
+    scene: com.android.purebilibili.core.ui.AppHapticScene = com.android.purebilibili.core.ui.AppHapticScene.CONTROLS,
+): (HapticType) -> Unit {
     val view = LocalView.current
-    return remember(view) {
+    val config by rememberUpdatedState(com.android.purebilibili.core.ui.LocalAppThemeConfig.current)
+    return remember(view, scene) {
         { type: HapticType ->
             val feedbackConstant = when (type) {
                 HapticType.LIGHT -> {
@@ -212,6 +162,13 @@ fun rememberHapticFeedback(): (HapticType) -> Unit {
                         HapticFeedbackConstants.LONG_PRESS
                     }
                 }
+                HapticType.GESTURE_STEP -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                        HapticFeedbackConstants.SEGMENT_TICK
+                    } else {
+                        HapticFeedbackConstants.CLOCK_TICK
+                    }
+                }
                 HapticType.SELECTION -> {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                         HapticFeedbackConstants.SEGMENT_FREQUENT_TICK
@@ -221,8 +178,12 @@ fun rememberHapticFeedback(): (HapticType) -> Unit {
                 }
             }
             // [新增] 全局触感反馈开关检查
-            if (com.android.purebilibili.core.store.SettingsManager.isHapticFeedbackEnabledSync(view.context)) {
-                view.performHapticFeedback(feedbackConstant)
+            if (config.hapticFeedbackEnabled && config.hapticSettings.isEnabled(scene)) {
+                com.android.purebilibili.core.ui.AppActionHaptics.dispatch {
+                    view.performHapticFeedback(feedbackConstant)
+                }
+            } else {
+                com.android.purebilibili.core.ui.AppActionHaptics.suppressCurrentActionFeedback()
             }
         }
     }
@@ -264,8 +225,10 @@ fun Modifier.bouncyClickable(
             indication = null,
             enabled = enabled
         ) {
-            haptic(hapticType)
-            onClick()
+            com.android.purebilibili.core.ui.AppActionHaptics.runAction {
+                onClick()
+                haptic(hapticType)
+            }
         }
 }
 
@@ -280,8 +243,10 @@ fun Modifier.hapticClickable(
     val haptic = rememberHapticFeedback()
     
     this.clickable(enabled = enabled) {
-        haptic(hapticType)
-        onClick()
+        com.android.purebilibili.core.ui.AppActionHaptics.runAction {
+            onClick()
+            haptic(hapticType)
+        }
     }
 }
 
@@ -302,12 +267,12 @@ fun Modifier.iOSTapEffect(
     hapticEnabled: Boolean = true,
     onClick: () -> Unit
 ): Modifier = composed {
-    val uiPreset = LocalUiPreset.current
+    val uiStyle = LocalAppUiStyle.current
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val haptic = rememberHapticFeedback()
     val targetScale = if (isPressed) {
-        if (uiPreset == UiPreset.MD3) 0.985f else scale
+        if (uiStyle == AppUiStyle.MATERIAL3) 0.985f else scale
     } else {
         1f
     }
@@ -315,8 +280,8 @@ fun Modifier.iOSTapEffect(
     val animatedScale by animateFloatAsState(
         targetValue = targetScale,
         animationSpec = spring(
-            dampingRatio = if (uiPreset == UiPreset.MD3) 0.9f else 0.6f,
-            stiffness = if (uiPreset == UiPreset.MD3) 650f else 400f
+            dampingRatio = if (uiStyle == AppUiStyle.MATERIAL3) 0.9f else 0.6f,
+            stiffness = if (uiStyle == AppUiStyle.MATERIAL3) 650f else 400f
         ),
         label = "ios_tap_scale"
     )
@@ -330,10 +295,12 @@ fun Modifier.iOSTapEffect(
             interactionSource = interactionSource,
             indication = null
         ) {
-            if (hapticEnabled) {
-                haptic(HapticType.LIGHT)
+            com.android.purebilibili.core.ui.AppActionHaptics.runAction {
+                onClick()
+                if (hapticEnabled) {
+                    haptic(HapticType.LIGHT)
+                }
             }
-            onClick()
         }
 }
 
@@ -345,19 +312,19 @@ fun Modifier.iOSTapEffect(
 fun Modifier.iOSTapScale(
     scale: Float = 0.96f
 ): Modifier = composed {
-    val uiPreset = LocalUiPreset.current
+    val uiStyle = LocalAppUiStyle.current
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     
     val animatedScale by animateFloatAsState(
         targetValue = if (isPressed) {
-            if (uiPreset == UiPreset.MD3) 0.985f else scale
+            if (uiStyle == AppUiStyle.MATERIAL3) 0.985f else scale
         } else {
             1f
         },
         animationSpec = spring(
-            dampingRatio = if (uiPreset == UiPreset.MD3) 0.9f else 0.6f,
-            stiffness = if (uiPreset == UiPreset.MD3) 650f else 400f
+            dampingRatio = if (uiStyle == AppUiStyle.MATERIAL3) 0.9f else 0.6f,
+            stiffness = if (uiStyle == AppUiStyle.MATERIAL3) 650f else 400f
         ),
         label = "ios_tap_scale_only"
     )
@@ -387,17 +354,17 @@ fun Modifier.iOSCardTapEffect(
     hapticEnabled: Boolean = true,
     onClick: () -> Unit
 ): Modifier = composed {
-    val uiPreset = LocalUiPreset.current
+    val uiStyle = LocalAppUiStyle.current
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val haptic = rememberHapticFeedback()
     val targetScale = if (isPressed) {
-        if (uiPreset == UiPreset.MD3) 0.985f else pressScale
+        if (uiStyle == AppUiStyle.MATERIAL3) 0.985f else pressScale
     } else {
         1f
     }
     val targetTranslation = if (isPressed) {
-        if (uiPreset == UiPreset.MD3) 2f else pressTranslationY
+        if (uiStyle == AppUiStyle.MATERIAL3) 2f else pressTranslationY
     } else {
         0f
     }
@@ -405,8 +372,8 @@ fun Modifier.iOSCardTapEffect(
     val animatedScale by animateFloatAsState(
         targetValue = targetScale,
         animationSpec = spring(
-            dampingRatio = if (uiPreset == UiPreset.MD3) 0.92f else if (isPressed) 0.75f else 0.55f,
-            stiffness = if (uiPreset == UiPreset.MD3) 700f else if (isPressed) 600f else 300f
+            dampingRatio = if (uiStyle == AppUiStyle.MATERIAL3) 0.92f else if (isPressed) 0.75f else 0.55f,
+            stiffness = if (uiStyle == AppUiStyle.MATERIAL3) 700f else if (isPressed) 600f else 300f
         ),
         label = "card_tap_scale"
     )
@@ -414,8 +381,8 @@ fun Modifier.iOSCardTapEffect(
     val animatedTranslationY by animateFloatAsState(
         targetValue = targetTranslation,
         animationSpec = spring(
-            dampingRatio = if (uiPreset == UiPreset.MD3) 0.95f else if (isPressed) 0.85f else 0.5f,
-            stiffness = if (uiPreset == UiPreset.MD3) 850f else if (isPressed) 800f else 250f
+            dampingRatio = if (uiStyle == AppUiStyle.MATERIAL3) 0.95f else if (isPressed) 0.85f else 0.5f,
+            stiffness = if (uiStyle == AppUiStyle.MATERIAL3) 850f else if (isPressed) 800f else 250f
         ),
         label = "card_tap_translationY"
     )
@@ -430,9 +397,11 @@ fun Modifier.iOSCardTapEffect(
             interactionSource = interactionSource,
             indication = null
         ) {
-            if (hapticEnabled) {
-                haptic(HapticType.LIGHT)
+            com.android.purebilibili.core.ui.AppActionHaptics.runAction {
+                onClick()
+                if (hapticEnabled) {
+                    haptic(HapticType.LIGHT)
+                }
             }
-            onClick()
         }
 }

@@ -1,8 +1,26 @@
 package com.android.purebilibili.navigation
 
 import com.android.purebilibili.core.store.HomeSettings
-import com.android.purebilibili.core.theme.AndroidNativeVariant
-import com.android.purebilibili.core.theme.UiPreset
+import com.android.purebilibili.core.store.SettingsManager
+
+internal fun resolveBottomBarVisibleForMode(
+    mode: SettingsManager.BottomBarVisibilityMode,
+    scrollVisible: Boolean,
+): Boolean = when (mode) {
+    SettingsManager.BottomBarVisibilityMode.ALWAYS_HIDDEN -> false
+    SettingsManager.BottomBarVisibilityMode.ALWAYS_VISIBLE -> true
+    SettingsManager.BottomBarVisibilityMode.SCROLL_HIDE -> scrollVisible
+}
+
+/** 整栏下滑隐藏优先于 Dock 收缩；只调整渲染参数，不改写用户保存值。 */
+internal fun resolveBottomBarScrollSettings(
+    homeSettings: HomeSettings,
+    mode: SettingsManager.BottomBarVisibilityMode,
+): HomeSettings = if (mode == SettingsManager.BottomBarVisibilityMode.SCROLL_HIDE) {
+    homeSettings.copy(bottomBarScrollCompactEnabled = false, linkedDockMergeOnScrollEnabled = false)
+} else {
+    homeSettings
+}
 
 internal data class AppNavigationAppearance(
     val cardTransitionEnabled: Boolean,
@@ -13,21 +31,15 @@ internal data class AppNavigationAppearance(
 
 internal fun resolveEffectiveNavigationBottomBarBlur(
     homeSettings: HomeSettings,
-    uiPreset: UiPreset,
-    androidNativeVariant: AndroidNativeVariant
 ): Boolean = homeSettings.isBottomBarBlurEnabled
 
 internal fun resolveAppNavigationAppearance(
     homeSettings: HomeSettings,
-    uiPreset: UiPreset = UiPreset.IOS,
-    androidNativeVariant: AndroidNativeVariant = AndroidNativeVariant.MATERIAL3
 ): AppNavigationAppearance {
     return AppNavigationAppearance(
         cardTransitionEnabled = homeSettings.cardTransitionEnabled,
         bottomBarBlurEnabled = resolveEffectiveNavigationBottomBarBlur(
             homeSettings = homeSettings,
-            uiPreset = uiPreset,
-            androidNativeVariant = androidNativeVariant
         ),
         bottomBarLabelMode = homeSettings.bottomBarLabelMode,
         bottomBarFloating = homeSettings.isBottomBarFloating

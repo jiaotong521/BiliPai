@@ -1,0 +1,832 @@
+[
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_frameless_tilt_light_legacy.png",
+    "sha256": "803645ad199f49a0d18d7af8edd8907d07e5a7d61bfd37c905902475e8e98e41"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid_light.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_frameless_tilt_light_legacy.png",
+    "sha256": "803645ad199f49a0d18d7af8edd8907d07e5a7d61bfd37c905902475e8e98e41"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid_light_round.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_frameless_tilt_light_round.png",
+    "sha256": "d8514a8472de8feaddee2022b6c745e30044b377dd2c7d10e26b25771155ae81"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid_round.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_frameless_tilt_light_round.png",
+    "sha256": "d8514a8472de8feaddee2022b6c745e30044b377dd2c7d10e26b25771155ae81"
+  },
+  {
+    "original": "app/src/main/res/mipmap-mdpi/ic_launcher_blue_snow_maid_announcement_dark.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_shared_06cea4238b0bff83.png",
+    "sha256": "06cea4238b0bff8384c102c5f9784657303725e9d63dbdd9b300b9b9c09de68a"
+  },
+  {
+    "original": "app/src/main/res/mipmap-mdpi/ic_launcher_blue_snow_maid_announcement_dark_round.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_shared_06cea4238b0bff83.png",
+    "sha256": "06cea4238b0bff8384c102c5f9784657303725e9d63dbdd9b300b9b9c09de68a"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-mdpi/ic_launcher_blue_snow_maid_announcement.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_shared_06cea4238b0bff83.png",
+    "sha256": "06cea4238b0bff8384c102c5f9784657303725e9d63dbdd9b300b9b9c09de68a"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-mdpi/ic_launcher_blue_snow_maid_announcement_round.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_shared_06cea4238b0bff83.png",
+    "sha256": "06cea4238b0bff8384c102c5f9784657303725e9d63dbdd9b300b9b9c09de68a"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xhdpi/ic_launcher_blue_snow_maid_announcement.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_shared_084de1e2c5bb6792.png",
+    "sha256": "084de1e2c5bb6792e7bf176cce1d4b204db5ab855fe6e6d985f9013150f13874"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xhdpi/ic_launcher_blue_snow_maid_announcement_light.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_shared_084de1e2c5bb6792.png",
+    "sha256": "084de1e2c5bb6792e7bf176cce1d4b204db5ab855fe6e6d985f9013150f13874"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xhdpi/ic_launcher_blue_snow_maid_announcement_light_round.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_shared_084de1e2c5bb6792.png",
+    "sha256": "084de1e2c5bb6792e7bf176cce1d4b204db5ab855fe6e6d985f9013150f13874"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xhdpi/ic_launcher_blue_snow_maid_announcement_round.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_shared_084de1e2c5bb6792.png",
+    "sha256": "084de1e2c5bb6792e7bf176cce1d4b204db5ab855fe6e6d985f9013150f13874"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_retro.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_shared_0ab378dbfc46fd91.png",
+    "sha256": "0ab378dbfc46fd915c2a8a2c4d46cda008b578b0babc7a6dc7649da210931b3a"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_retro_round.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_shared_0ab378dbfc46fd91.png",
+    "sha256": "0ab378dbfc46fd915c2a8a2c4d46cda008b578b0babc7a6dc7649da210931b3a"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_bilipai_pink.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_shared_0c52db4a0b1a7981.png",
+    "sha256": "0c52db4a0b1a7981b56434db0a1c8d909af98111cec7a631fab095b877ce69c6"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_bilipai_pink_round.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_shared_0c52db4a0b1a7981.png",
+    "sha256": "0c52db4a0b1a7981b56434db0a1c8d909af98111cec7a631fab095b877ce69c6"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-xxxhdpi/ic_launcher_blue_snow_maid.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_frameless_tilt_dark_legacy.png",
+    "sha256": "5cd3c90a3b8a0a2a1b16ac03d00f2e69a112ec9f07c0acaa9adb6f4f3fff731a"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-xxxhdpi/ic_launcher_blue_snow_maid_round.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_frameless_tilt_dark_round.png",
+    "sha256": "20e8c9f4a5e627b0024a5ab3fad5c68f2866e872faf8d2171dae112709bfa75d"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid_dark.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_frameless_tilt_dark_legacy.png",
+    "sha256": "5cd3c90a3b8a0a2a1b16ac03d00f2e69a112ec9f07c0acaa9adb6f4f3fff731a"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid_dark_round.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_frameless_tilt_dark_round.png",
+    "sha256": "20e8c9f4a5e627b0024a5ab3fad5c68f2866e872faf8d2171dae112709bfa75d"
+  },
+  {
+    "original": "app/src/main/res/mipmap-hdpi/ic_launcher_retro.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_shared_1830beed3c69e8df.png",
+    "sha256": "1830beed3c69e8df2141978a0ee3b45821597ee5686dd999b48a6803475a316a"
+  },
+  {
+    "original": "app/src/main/res/mipmap-hdpi/ic_launcher_retro_round.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_shared_1830beed3c69e8df.png",
+    "sha256": "1830beed3c69e8df2141978a0ee3b45821597ee5686dd999b48a6803475a316a"
+  },
+  {
+    "original": "app/src/main/res/mipmap-hdpi/ic_launcher_3d.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_play_window_legacy.png",
+    "sha256": "dd768ad0496e045df4b7bc4a6718f11e881e2861566dce04d592eebc98f6de14"
+  },
+  {
+    "original": "app/src/main/res/mipmap-hdpi/ic_launcher_3d_round.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_play_window_round_legacy.png",
+    "sha256": "0f7b8ae54eba1c7c96bbeef5153207651b42dc3c2a2851e3cf29e7c876c39f87"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xhdpi/ic_launcher_bilipai_pink.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_shared_1abf6a0d42fc5e0d.png",
+    "sha256": "1abf6a0d42fc5e0d759ef88dee156b3171d1657834210177dff13ff380b27bc9"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xhdpi/ic_launcher_bilipai_pink_round.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_shared_1abf6a0d42fc5e0d.png",
+    "sha256": "1abf6a0d42fc5e0d759ef88dee156b3171d1657834210177dff13ff380b27bc9"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xhdpi/ic_launcher_blue_snow_maid_front.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_frameless_front_light_legacy.png",
+    "sha256": "ffb8e0cf1a762530375b3468699326462b416ebd23bb9e6df78c1da127f4f148"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xhdpi/ic_launcher_blue_snow_maid_front_round.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_frameless_front_light_round.png",
+    "sha256": "92f7d6b7bf3ffee0997e8e2da6f8761789d0798e161cc14760b2e01119e3ece2"
+  },
+  {
+    "original": "app/src/main/res/mipmap-mdpi/ic_launcher_blue_snow_maid_announcement_foreground.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_shared_1c9fbf399b8f419c.png",
+    "sha256": "1c9fbf399b8f419ce89e309c2e23d40624f2f16014299d9acccf07744cad6024"
+  },
+  {
+    "original": "app/src/main/res/mipmap-mdpi/ic_launcher_blue_snow_maid_announcement_light_foreground.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_shared_1c9fbf399b8f419c.png",
+    "sha256": "1c9fbf399b8f419ce89e309c2e23d40624f2f16014299d9acccf07744cad6024"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-xxhdpi/ic_launcher_blue_snow_maid.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_frameless_tilt_dark_legacy.png",
+    "sha256": "16056544997af2d40085109fe03d972798670ee83a969ad60d9be9d6e330c8e5"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-xxhdpi/ic_launcher_blue_snow_maid_round.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_frameless_tilt_dark_round.png",
+    "sha256": "7ebef77068ba4e499a5a4f2bdb7b8d9ffec3791f084addbec6b0f3a0b6f5adb2"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-xhdpi/ic_launcher_blue_snow_maid_announcement.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_shared_2072d85e373e95cf.png",
+    "sha256": "2072d85e373e95cf70127cf17e0e1fd8996ad564259cc37532ce1b1b0cb92b9b"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-xhdpi/ic_launcher_blue_snow_maid_announcement_round.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_shared_2072d85e373e95cf.png",
+    "sha256": "2072d85e373e95cf70127cf17e0e1fd8996ad564259cc37532ce1b1b0cb92b9b"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xhdpi/ic_launcher_blue_snow_maid_announcement_dark.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_shared_2072d85e373e95cf.png",
+    "sha256": "2072d85e373e95cf70127cf17e0e1fd8996ad564259cc37532ce1b1b0cb92b9b"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xhdpi/ic_launcher_blue_snow_maid_announcement_dark_round.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_shared_2072d85e373e95cf.png",
+    "sha256": "2072d85e373e95cf70127cf17e0e1fd8996ad564259cc37532ce1b1b0cb92b9b"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxhdpi/ic_launcher_3d.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_play_window_legacy.png",
+    "sha256": "f91fc23d1ea94d61b3d9f431db7c3f1d2709b51fa8fd2f1b0e202a2a1df17743"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxhdpi/ic_launcher_3d_round.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_play_window_round_legacy.png",
+    "sha256": "f3c2108142d120fbc80cb9865676b3aa930e7d4886af8e0fad2ae791c09d4089"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xhdpi/ic_launcher_foreground.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_shared_28f0a3f5aa784c94.png",
+    "sha256": "28f0a3f5aa784c942833b8d8579aa32fbdd9ecfcfd3b3f57f76ef0eb41c9fcf1"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xhdpi/ic_launcher_yuki_foreground.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_shared_28f0a3f5aa784c94.png",
+    "sha256": "28f0a3f5aa784c942833b8d8579aa32fbdd9ecfcfd3b3f57f76ef0eb41c9fcf1"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid_dark_foreground.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_frameless_tilt_foreground.png",
+    "sha256": "3487e0e91fdf6a8c8a082522c7f2bfdbbf1048bb4b1205b8b525b0829d70ca28"
+  },
+  {
+    "original": "brand-motion/src/main/res/mipmap-night-xxxhdpi/ic_launcher_blue_snow_maid_foreground.png",
+    "target": "brand-motion/src/main/res/mipmap-xxxhdpi/ic_launcher_frameless_tilt_foreground.png",
+    "sha256": "3487e0e91fdf6a8c8a082522c7f2bfdbbf1048bb4b1205b8b525b0829d70ca28"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-hdpi/ic_launcher_blue_snow_maid.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_frameless_tilt_dark_legacy.png",
+    "sha256": "e87c4f3fcc9f5e067332fb6ce1d43ae59fcd43200025095b5067b59e04e69266"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-hdpi/ic_launcher_blue_snow_maid_round.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_frameless_tilt_dark_round.png",
+    "sha256": "67205f55980f95e99ce32aaa65cf138c6061615f56f2c6a5c2dcc5c8769e006b"
+  },
+  {
+    "original": "app/src/main/res/mipmap-mdpi/ic_launcher_bilipai_pink.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_shared_334900a82240eea2.png",
+    "sha256": "334900a82240eea25a372adda52147abce72256b6463bf999ec5ea32b948cef8"
+  },
+  {
+    "original": "app/src/main/res/mipmap-mdpi/ic_launcher_bilipai_pink_round.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_shared_334900a82240eea2.png",
+    "sha256": "334900a82240eea25a372adda52147abce72256b6463bf999ec5ea32b948cef8"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_bilipai.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_shared_37707b402856b9d3.png",
+    "sha256": "37707b402856b9d36ef3a1c84982f42fff8783fe8ce35ca13a5fb0475d90aa86"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_bilipai_round.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_shared_37707b402856b9d3.png",
+    "sha256": "37707b402856b9d36ef3a1c84982f42fff8783fe8ce35ca13a5fb0475d90aa86"
+  },
+  {
+    "original": "app/src/main/res/mipmap-hdpi/ic_launcher_blue_snow_maid_announcement_dark.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_shared_3d1c4e5d8857e6da.png",
+    "sha256": "3d1c4e5d8857e6da10979f0ba6d84bdfa33df4925c40648ab33021f1d81e6b6e"
+  },
+  {
+    "original": "app/src/main/res/mipmap-hdpi/ic_launcher_blue_snow_maid_announcement_dark_round.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_shared_3d1c4e5d8857e6da.png",
+    "sha256": "3d1c4e5d8857e6da10979f0ba6d84bdfa33df4925c40648ab33021f1d81e6b6e"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-hdpi/ic_launcher_blue_snow_maid_announcement.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_shared_3d1c4e5d8857e6da.png",
+    "sha256": "3d1c4e5d8857e6da10979f0ba6d84bdfa33df4925c40648ab33021f1d81e6b6e"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-hdpi/ic_launcher_blue_snow_maid_announcement_round.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_shared_3d1c4e5d8857e6da.png",
+    "sha256": "3d1c4e5d8857e6da10979f0ba6d84bdfa33df4925c40648ab33021f1d81e6b6e"
+  },
+  {
+    "original": "app/src/main/res/mipmap-hdpi/ic_launcher_blue_snow_maid_front.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_frameless_front_light_legacy.png",
+    "sha256": "6a7b9bfe01644ec4ef8c1472eb0253ff35f4c961b16e43cc1fe228b907101065"
+  },
+  {
+    "original": "app/src/main/res/mipmap-hdpi/ic_launcher_blue_snow_maid_front_round.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_frameless_front_light_round.png",
+    "sha256": "6e259559851802a648e3c49b8bdc89088139829913030a60cb07fdf5cd88fad5"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxhdpi/ic_launcher_blue_snow_maid_front.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_frameless_front_light_legacy.png",
+    "sha256": "636dde535e4078659c9ccae08f8c8c26f4f15aee583dc5f95f6661a1dcb10d00"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxhdpi/ic_launcher_blue_snow_maid_front_round.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_frameless_front_light_round.png",
+    "sha256": "ec58858d637e077f4c92be225c5af1fd11232f62ed1f72c89c6271a1fd1faf90"
+  },
+  {
+    "original": "app/src/main/res/mipmap-hdpi/ic_launcher_bilipai_pink.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_shared_51dd5500e7c5cd58.png",
+    "sha256": "51dd5500e7c5cd58f01ea6e25c6d32258c86e3a042b2f28de533b86c3abae649"
+  },
+  {
+    "original": "app/src/main/res/mipmap-hdpi/ic_launcher_bilipai_pink_round.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_shared_51dd5500e7c5cd58.png",
+    "sha256": "51dd5500e7c5cd58f01ea6e25c6d32258c86e3a042b2f28de533b86c3abae649"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xhdpi/ic_launcher_retro.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_shared_59e6fa00f28aa1d3.png",
+    "sha256": "59e6fa00f28aa1d3a7456f9a1da552d5c612e329bb05663a41777bd4147414dd"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xhdpi/ic_launcher_retro_round.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_shared_59e6fa00f28aa1d3.png",
+    "sha256": "59e6fa00f28aa1d3a7456f9a1da552d5c612e329bb05663a41777bd4147414dd"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-xxhdpi/ic_launcher_blue_snow_maid_announcement_foreground.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_shared_5dbf5cd10e128fd6.png",
+    "sha256": "5dbf5cd10e128fd6e26c534b4f4c884f207587635f55c7c3cf7d77273324514f"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxhdpi/ic_launcher_blue_snow_maid_announcement_dark_foreground.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_shared_5dbf5cd10e128fd6.png",
+    "sha256": "5dbf5cd10e128fd6e26c534b4f4c884f207587635f55c7c3cf7d77273324514f"
+  },
+  {
+    "original": "app/src/main/res/mipmap-hdpi/ic_launcher_blue_snow_maid_announcement_dark_foreground.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_shared_5e0cf3bed814ed0e.png",
+    "sha256": "5e0cf3bed814ed0e786ba86b12ea7050a5d644db4649591b0f9495c446240ba0"
+  },
+  {
+    "original": "app/src/main/res/mipmap-hdpi/ic_launcher_blue_snow_maid_announcement_foreground.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_shared_5e0cf3bed814ed0e.png",
+    "sha256": "5e0cf3bed814ed0e786ba86b12ea7050a5d644db4649591b0f9495c446240ba0"
+  },
+  {
+    "original": "app/src/main/res/mipmap-hdpi/ic_launcher_blue_snow_maid_announcement_light_foreground.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_shared_5e0cf3bed814ed0e.png",
+    "sha256": "5e0cf3bed814ed0e786ba86b12ea7050a5d644db4649591b0f9495c446240ba0"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-hdpi/ic_launcher_blue_snow_maid_announcement_foreground.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_shared_5e0cf3bed814ed0e.png",
+    "sha256": "5e0cf3bed814ed0e786ba86b12ea7050a5d644db4649591b0f9495c446240ba0"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxhdpi/ic_launcher_blue_snow_maid_announcement_foreground.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_shared_621bc8dfdc99c76b.png",
+    "sha256": "621bc8dfdc99c76bb576911937e56b1fe62ea9cb79937b1c6010ae10eed94773"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxhdpi/ic_launcher_blue_snow_maid_announcement_light_foreground.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_shared_621bc8dfdc99c76b.png",
+    "sha256": "621bc8dfdc99c76bb576911937e56b1fe62ea9cb79937b1c6010ae10eed94773"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-mdpi/ic_launcher_blue_snow_maid_front.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_frameless_front_dark_legacy.png",
+    "sha256": "7b3f1fe3142b151d70c3f7f445687198a0c84551cc538fb497690cad3074a386"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-mdpi/ic_launcher_blue_snow_maid_front_round.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_frameless_front_dark_round.png",
+    "sha256": "97e3285653fc1460ec27fb7c6ca3514e0e17fcc201531fce93a92facb02b3e6c"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxhdpi/ic_launcher_bilipai.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_shared_66c5a4f4b8ba057d.png",
+    "sha256": "66c5a4f4b8ba057dce19d5332daa912aceb00f0d03fa8a45ce9f761629edc0b3"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxhdpi/ic_launcher_bilipai_round.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_shared_66c5a4f4b8ba057d.png",
+    "sha256": "66c5a4f4b8ba057dce19d5332daa912aceb00f0d03fa8a45ce9f761629edc0b3"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid_announcement.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_shared_69d27b5e166666cf.png",
+    "sha256": "69d27b5e166666cf2c17894ab994d3994605ef26ea1aab2857a4775002ba5464"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid_announcement_light.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_shared_69d27b5e166666cf.png",
+    "sha256": "69d27b5e166666cf2c17894ab994d3994605ef26ea1aab2857a4775002ba5464"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid_announcement_light_round.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_shared_69d27b5e166666cf.png",
+    "sha256": "69d27b5e166666cf2c17894ab994d3994605ef26ea1aab2857a4775002ba5464"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid_announcement_round.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_shared_69d27b5e166666cf.png",
+    "sha256": "69d27b5e166666cf2c17894ab994d3994605ef26ea1aab2857a4775002ba5464"
+  },
+  {
+    "original": "app/src/main/res/mipmap-mdpi/ic_launcher_blue_snow_maid_announcement.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_shared_6d071c129849764a.png",
+    "sha256": "6d071c129849764a34493ad52d03700fdda082f0a3652bfe9edcc71fa93ce13e"
+  },
+  {
+    "original": "app/src/main/res/mipmap-mdpi/ic_launcher_blue_snow_maid_announcement_light.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_shared_6d071c129849764a.png",
+    "sha256": "6d071c129849764a34493ad52d03700fdda082f0a3652bfe9edcc71fa93ce13e"
+  },
+  {
+    "original": "app/src/main/res/mipmap-mdpi/ic_launcher_blue_snow_maid_announcement_light_round.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_shared_6d071c129849764a.png",
+    "sha256": "6d071c129849764a34493ad52d03700fdda082f0a3652bfe9edcc71fa93ce13e"
+  },
+  {
+    "original": "app/src/main/res/mipmap-mdpi/ic_launcher_blue_snow_maid_announcement_round.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_shared_6d071c129849764a.png",
+    "sha256": "6d071c129849764a34493ad52d03700fdda082f0a3652bfe9edcc71fa93ce13e"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxhdpi/ic_launcher_bilipai_pink.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_shared_709a9c33ef2165b2.png",
+    "sha256": "709a9c33ef2165b239bcfe763a3f3695981d9886a8e3b17a48e50d877caf486a"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxhdpi/ic_launcher_bilipai_pink_round.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_shared_709a9c33ef2165b2.png",
+    "sha256": "709a9c33ef2165b239bcfe763a3f3695981d9886a8e3b17a48e50d877caf486a"
+  },
+  {
+    "original": "app/src/main/res/mipmap-mdpi/ic_launcher_blue_snow_maid_front.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_frameless_front_light_legacy.png",
+    "sha256": "1689ea6e5bfbfc7d3ae0c7a3a054ebf149772abfb7d9dc84beba1b7319830b29"
+  },
+  {
+    "original": "app/src/main/res/mipmap-mdpi/ic_launcher_blue_snow_maid_front_round.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_frameless_front_light_round.png",
+    "sha256": "5572a9ec520b7cfe0d876e88c1064b3a100e95ac36d340a50c2eb1945aeb3c00"
+  },
+  {
+    "original": "app/src/main/res/mipmap-mdpi/ic_launcher_blue_snow_maid.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_frameless_tilt_light_legacy.png",
+    "sha256": "579cf98fbdd1bc6723a32e445c4a5b234b4205839590aef89423f28064c3e296"
+  },
+  {
+    "original": "app/src/main/res/mipmap-mdpi/ic_launcher_blue_snow_maid_round.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_frameless_tilt_light_round.png",
+    "sha256": "8b3c3edfeff7824c1e7a15060e73213715485f31c4c1058285c9fe6483f8df63"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_shared_7fbe65544fa52253.png",
+    "sha256": "7fbe65544fa52253c06cd887ec01a3f91fe0ae947cdb993d0295b9f6ed9aa407"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_yuki_foreground.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_shared_7fbe65544fa52253.png",
+    "sha256": "7fbe65544fa52253c06cd887ec01a3f91fe0ae947cdb993d0295b9f6ed9aa407"
+  },
+  {
+    "original": "app/src/main/res/mipmap-mdpi/ic_launcher_bilipai.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_shared_8e3c20393d70f2fc.png",
+    "sha256": "8e3c20393d70f2fc5c1fb82658e816fcddb6da8315895b2ed67887ad5e3a03c2"
+  },
+  {
+    "original": "app/src/main/res/mipmap-mdpi/ic_launcher_bilipai_round.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_shared_8e3c20393d70f2fc.png",
+    "sha256": "8e3c20393d70f2fc5c1fb82658e816fcddb6da8315895b2ed67887ad5e3a03c2"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-xhdpi/ic_launcher_blue_snow_maid.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_frameless_tilt_dark_legacy.png",
+    "sha256": "7337759cfe23260e1aba58439a660a3917997d63c609bb675ef6068d9e9c7447"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-xhdpi/ic_launcher_blue_snow_maid_round.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_frameless_tilt_dark_round.png",
+    "sha256": "0b98312e3edc4a27ba72e1fac87e173c0233380d9f406da0021b7fed7212be1c"
+  },
+  {
+    "original": "app/src/main/res/mipmap-hdpi/ic_launcher_blue_snow_maid.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_frameless_tilt_light_legacy.png",
+    "sha256": "7dff1ebed2c411befd61db34951785691de6d47a73fc36c486c4a853450c3c78"
+  },
+  {
+    "original": "app/src/main/res/mipmap-hdpi/ic_launcher_blue_snow_maid_round.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_frameless_tilt_light_round.png",
+    "sha256": "1603a3ddc80a9514c9910b8dfcda74c88521ca803d41087b34674e30db072164"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxhdpi/ic_launcher_foreground.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_shared_9225a95317069a6c.png",
+    "sha256": "9225a95317069a6c81de8a8ec57edfa9765364a507ab69c636ca672be3b58a5a"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxhdpi/ic_launcher_yuki_foreground.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_shared_9225a95317069a6c.png",
+    "sha256": "9225a95317069a6c81de8a8ec57edfa9765364a507ab69c636ca672be3b58a5a"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-xxhdpi/ic_launcher_blue_snow_maid_announcement.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_shared_9231b4d7dff408a1.png",
+    "sha256": "9231b4d7dff408a1ee2c594cff5c55deec72a0644fc78e099a9335b31da3bce2"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-xxhdpi/ic_launcher_blue_snow_maid_announcement_round.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_shared_9231b4d7dff408a1.png",
+    "sha256": "9231b4d7dff408a1ee2c594cff5c55deec72a0644fc78e099a9335b31da3bce2"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxhdpi/ic_launcher_blue_snow_maid_announcement_dark.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_shared_9231b4d7dff408a1.png",
+    "sha256": "9231b4d7dff408a1ee2c594cff5c55deec72a0644fc78e099a9335b31da3bce2"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxhdpi/ic_launcher_blue_snow_maid_announcement_dark_round.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_shared_9231b4d7dff408a1.png",
+    "sha256": "9231b4d7dff408a1ee2c594cff5c55deec72a0644fc78e099a9335b31da3bce2"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-xhdpi/ic_launcher_blue_snow_maid_announcement_foreground.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_shared_94c02c95f6e41f8a.png",
+    "sha256": "94c02c95f6e41f8af16913be2c3d73386b83f2d5c493e2a23a16db3996d206cb"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xhdpi/ic_launcher_blue_snow_maid_announcement_dark_foreground.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_shared_94c02c95f6e41f8a.png",
+    "sha256": "94c02c95f6e41f8af16913be2c3d73386b83f2d5c493e2a23a16db3996d206cb"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xhdpi/ic_launcher_blue_snow_maid_announcement_foreground.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_shared_94c02c95f6e41f8a.png",
+    "sha256": "94c02c95f6e41f8af16913be2c3d73386b83f2d5c493e2a23a16db3996d206cb"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xhdpi/ic_launcher_blue_snow_maid_announcement_light_foreground.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_shared_94c02c95f6e41f8a.png",
+    "sha256": "94c02c95f6e41f8af16913be2c3d73386b83f2d5c493e2a23a16db3996d206cb"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-mdpi/ic_launcher_blue_snow_maid.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_frameless_tilt_dark_legacy.png",
+    "sha256": "d0564ad88226c1985110daf7d25affbdd2f65c5bd9b66bbff9c39aac4bb53283"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-mdpi/ic_launcher_blue_snow_maid_round.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_frameless_tilt_dark_round.png",
+    "sha256": "fa7d4f5f920c2f2502d5bbfc4c3def6dd3eaf5af2ad92982744227f293d746b4"
+  },
+  {
+    "original": "app/src/main/res/mipmap-hdpi/ic_launcher_blue_snow_maid_announcement.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_shared_976797da7712241f.png",
+    "sha256": "976797da7712241f9d8ad66fc11931a9312a0e7394c78a1b733b02efbaf3130b"
+  },
+  {
+    "original": "app/src/main/res/mipmap-hdpi/ic_launcher_blue_snow_maid_announcement_light.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_shared_976797da7712241f.png",
+    "sha256": "976797da7712241f9d8ad66fc11931a9312a0e7394c78a1b733b02efbaf3130b"
+  },
+  {
+    "original": "app/src/main/res/mipmap-hdpi/ic_launcher_blue_snow_maid_announcement_light_round.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_shared_976797da7712241f.png",
+    "sha256": "976797da7712241f9d8ad66fc11931a9312a0e7394c78a1b733b02efbaf3130b"
+  },
+  {
+    "original": "app/src/main/res/mipmap-hdpi/ic_launcher_blue_snow_maid_announcement_round.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_shared_976797da7712241f.png",
+    "sha256": "976797da7712241f9d8ad66fc11931a9312a0e7394c78a1b733b02efbaf3130b"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxhdpi/ic_launcher_retro.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_shared_9c2a5147efa89455.png",
+    "sha256": "9c2a5147efa894558819a1154d15c2d320dff064e62b23681ac64e517556135f"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxhdpi/ic_launcher_retro_round.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_shared_9c2a5147efa89455.png",
+    "sha256": "9c2a5147efa894558819a1154d15c2d320dff064e62b23681ac64e517556135f"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xhdpi/ic_launcher_blue_snow_maid.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_frameless_tilt_light_legacy.png",
+    "sha256": "6ce038ea132070c0cef142a5ac7c2d6df9b2e26676482ed65966af7843483a97"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xhdpi/ic_launcher_blue_snow_maid_round.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_frameless_tilt_light_round.png",
+    "sha256": "7920bcf88aab75e71b427b8192d607ba415c57dc4905717d79ac556c5d22a5c8"
+  },
+  {
+    "original": "app/src/main/res/mipmap-hdpi/ic_launcher_foreground.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_shared_9fdecb42f756e2fd.png",
+    "sha256": "9fdecb42f756e2fd6f0f553a8c3483907039d07d888645d548b85d1142b98592"
+  },
+  {
+    "original": "app/src/main/res/mipmap-hdpi/ic_launcher_yuki_foreground.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_shared_9fdecb42f756e2fd.png",
+    "sha256": "9fdecb42f756e2fd6f0f553a8c3483907039d07d888645d548b85d1142b98592"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid_front.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_frameless_front_light_legacy.png",
+    "sha256": "33861328b90ed6f25f14fb8df8dcae53840fa4dd1944e9057d16c21707e45e33"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid_front_light.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_frameless_front_light_legacy.png",
+    "sha256": "33861328b90ed6f25f14fb8df8dcae53840fa4dd1944e9057d16c21707e45e33"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid_front_light_round.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_frameless_front_light_round.png",
+    "sha256": "f1368cd63565c0f4d40a2a088b7d2024b6e61e73edd61fe761303e6501991d39"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid_front_round.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_frameless_front_light_round.png",
+    "sha256": "f1368cd63565c0f4d40a2a088b7d2024b6e61e73edd61fe761303e6501991d39"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxhdpi/ic_launcher_blue_snow_maid_announcement.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_shared_a86c201c3c84cff1.png",
+    "sha256": "a86c201c3c84cff105f7b5c12dfe369545b921f25907a5c15fff3f1e96f204ef"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxhdpi/ic_launcher_blue_snow_maid_announcement_light.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_shared_a86c201c3c84cff1.png",
+    "sha256": "a86c201c3c84cff105f7b5c12dfe369545b921f25907a5c15fff3f1e96f204ef"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxhdpi/ic_launcher_blue_snow_maid_announcement_light_round.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_shared_a86c201c3c84cff1.png",
+    "sha256": "a86c201c3c84cff105f7b5c12dfe369545b921f25907a5c15fff3f1e96f204ef"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxhdpi/ic_launcher_blue_snow_maid_announcement_round.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_shared_a86c201c3c84cff1.png",
+    "sha256": "a86c201c3c84cff105f7b5c12dfe369545b921f25907a5c15fff3f1e96f204ef"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xhdpi/ic_launcher_bilipai.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_shared_b3892df5702abee9.png",
+    "sha256": "b3892df5702abee9abab570648f79091a9791c4b0a8bbeac345d1bdbdc12d175"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xhdpi/ic_launcher_bilipai_round.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_shared_b3892df5702abee9.png",
+    "sha256": "b3892df5702abee9abab570648f79091a9791c4b0a8bbeac345d1bdbdc12d175"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-hdpi/ic_launcher_blue_snow_maid_front.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_frameless_front_dark_legacy.png",
+    "sha256": "656ce989350d4359daf12d74cc3b2b425c2128b9dedfd96920f249a1f60294e5"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-hdpi/ic_launcher_blue_snow_maid_front_round.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_frameless_front_dark_round.png",
+    "sha256": "3c3301be86e7ed6a4c664611b1e821028c9ab4dd76acbb2ab2141c235ed43c6c"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-xxhdpi/ic_launcher_blue_snow_maid_front.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_frameless_front_dark_legacy.png",
+    "sha256": "0ead2160bc691a05d2a0bac6a0f3d639e39df29cdfe69bc72ffcdb27e3249745"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-xxhdpi/ic_launcher_blue_snow_maid_front_round.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_frameless_front_dark_round.png",
+    "sha256": "2b0d856145834a5dbc74dc38b3f67e2bc52a9d51f509f5540bd2a1c5760022c0"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-xxxhdpi/ic_launcher_blue_snow_maid_front_foreground.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_frameless_front_foreground.png",
+    "sha256": "b4c1d80f48dba9f5ee3e412ccfb4bf2f83e58b7b1eff1ae0a563cac0f8e702ec"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid_front_dark_foreground.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_frameless_front_foreground.png",
+    "sha256": "b4c1d80f48dba9f5ee3e412ccfb4bf2f83e58b7b1eff1ae0a563cac0f8e702ec"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xhdpi/ic_launcher_3d.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_play_window_legacy.png",
+    "sha256": "0d6149bd05030957a629b8547415355170a6fe1ad158290b1efd606e402ba993"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xhdpi/ic_launcher_3d_round.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_play_window_round_legacy.png",
+    "sha256": "25cccdf55f408ab70db8d8e5ecaef4ceb5026fe459a5096b53113807963584c5"
+  },
+  {
+    "original": "app/src/main/res/mipmap-mdpi/ic_launcher_retro.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_shared_c8039288a25659d5.png",
+    "sha256": "c8039288a25659d591313f8d7ba0984b649683758a2331881d2b581d61116457"
+  },
+  {
+    "original": "app/src/main/res/mipmap-mdpi/ic_launcher_retro_round.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_shared_c8039288a25659d5.png",
+    "sha256": "c8039288a25659d591313f8d7ba0984b649683758a2331881d2b581d61116457"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid_light_foreground.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_frameless_tilt_foreground.png",
+    "sha256": "3487e0e91fdf6a8c8a082522c7f2bfdbbf1048bb4b1205b8b525b0829d70ca28"
+  },
+  {
+    "original": "brand-motion/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid_foreground.png",
+    "target": "brand-motion/src/main/res/mipmap-xxxhdpi/ic_launcher_frameless_tilt_foreground.png",
+    "sha256": "3487e0e91fdf6a8c8a082522c7f2bfdbbf1048bb4b1205b8b525b0829d70ca28"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid_front_foreground.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_frameless_front_foreground.png",
+    "sha256": "b4c1d80f48dba9f5ee3e412ccfb4bf2f83e58b7b1eff1ae0a563cac0f8e702ec"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid_front_light_foreground.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_frameless_front_foreground.png",
+    "sha256": "b4c1d80f48dba9f5ee3e412ccfb4bf2f83e58b7b1eff1ae0a563cac0f8e702ec"
+  },
+  {
+    "original": "app/src/main/res/mipmap-mdpi/ic_launcher_3d.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_play_window_legacy.png",
+    "sha256": "27692a3ddab3abe72f4db75f744ac5ac70177037eabca7fad1d0c580e4084c68"
+  },
+  {
+    "original": "app/src/main/res/mipmap-mdpi/ic_launcher_3d_round.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_play_window_round_legacy.png",
+    "sha256": "70cb4017381be92c7041845ac9d5f6313abf7b2ea0c7042b77d39009c066ad8b"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-xxxhdpi/ic_launcher_blue_snow_maid_announcement.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_shared_df4459e107ac7557.png",
+    "sha256": "df4459e107ac755705de197dea856fd35574dd58f5aae95bca24d045ab2fb672"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-xxxhdpi/ic_launcher_blue_snow_maid_announcement_round.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_shared_df4459e107ac7557.png",
+    "sha256": "df4459e107ac755705de197dea856fd35574dd58f5aae95bca24d045ab2fb672"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid_announcement_dark.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_shared_df4459e107ac7557.png",
+    "sha256": "df4459e107ac755705de197dea856fd35574dd58f5aae95bca24d045ab2fb672"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid_announcement_dark_round.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_shared_df4459e107ac7557.png",
+    "sha256": "df4459e107ac755705de197dea856fd35574dd58f5aae95bca24d045ab2fb672"
+  },
+  {
+    "original": "app/src/main/res/mipmap-mdpi/ic_launcher_blue_snow_maid_announcement_dark_foreground.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_shared_e2eca53821ac3133.png",
+    "sha256": "e2eca53821ac31331171c025d3b83a143a54a82d228a1a2ab413e75d9eb45313"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-mdpi/ic_launcher_blue_snow_maid_announcement_foreground.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_shared_e2eca53821ac3133.png",
+    "sha256": "e2eca53821ac31331171c025d3b83a143a54a82d228a1a2ab413e75d9eb45313"
+  },
+  {
+    "original": "app/src/main/res/mipmap-hdpi/ic_launcher_bilipai.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_shared_e594b422e5db07f6.png",
+    "sha256": "e594b422e5db07f6ff79177a305c46e53ffeed563a11b14944d1e4c067549725"
+  },
+  {
+    "original": "app/src/main/res/mipmap-hdpi/ic_launcher_bilipai_round.png",
+    "target": "app/src/main/res/mipmap-hdpi/ic_launcher_shared_e594b422e5db07f6.png",
+    "sha256": "e594b422e5db07f6ff79177a305c46e53ffeed563a11b14944d1e4c067549725"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-xxxhdpi/ic_launcher_blue_snow_maid_announcement_foreground.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_shared_ec2cb38cd907ff92.png",
+    "sha256": "ec2cb38cd907ff92881f70c40c21bdacca4b770eaf2a0c30041c505c7f111516"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid_announcement_dark_foreground.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_shared_ec2cb38cd907ff92.png",
+    "sha256": "ec2cb38cd907ff92881f70c40c21bdacca4b770eaf2a0c30041c505c7f111516"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid_announcement_foreground.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_shared_ec2cb38cd907ff92.png",
+    "sha256": "ec2cb38cd907ff92881f70c40c21bdacca4b770eaf2a0c30041c505c7f111516"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid_announcement_light_foreground.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_shared_ec2cb38cd907ff92.png",
+    "sha256": "ec2cb38cd907ff92881f70c40c21bdacca4b770eaf2a0c30041c505c7f111516"
+  },
+  {
+    "original": "app/src/main/res/mipmap-mdpi/ic_launcher_foreground.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_shared_f005f2e0dcb7cfa0.png",
+    "sha256": "f005f2e0dcb7cfa07e03771ce017c6e7a896a73b9feb202bbf9643426f850c78"
+  },
+  {
+    "original": "app/src/main/res/mipmap-mdpi/ic_launcher_yuki_foreground.png",
+    "target": "app/src/main/res/mipmap-mdpi/ic_launcher_shared_f005f2e0dcb7cfa0.png",
+    "sha256": "f005f2e0dcb7cfa07e03771ce017c6e7a896a73b9feb202bbf9643426f850c78"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-xhdpi/ic_launcher_blue_snow_maid_front.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_frameless_front_dark_legacy.png",
+    "sha256": "33a8e9ce1dcbeea547cc82186ed47ecd4c3a5f220b321ff2fd7d1c725e172af5"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-xhdpi/ic_launcher_blue_snow_maid_front_round.png",
+    "target": "app/src/main/res/mipmap-xhdpi/ic_launcher_frameless_front_dark_round.png",
+    "sha256": "cf985dba96f96aed975e115a02263b203353283902092f85d07c40d6c2ada3bf"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxhdpi/ic_launcher_blue_snow_maid.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_frameless_tilt_light_legacy.png",
+    "sha256": "623614e5c754b29764246eb3cd50e3622aefc396e2b4bd7ddf83ca72c32490bf"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxhdpi/ic_launcher_blue_snow_maid_round.png",
+    "target": "app/src/main/res/mipmap-xxhdpi/ic_launcher_frameless_tilt_light_round.png",
+    "sha256": "fd719c8c861719b7c86f629eb63e480f179802294e554da4c83dfe9b93893a1f"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_3d.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_play_window_legacy.png",
+    "sha256": "651735aa3ad4d2cf9dccac5b9f004fdc3d5002730b140a64fe6c99b558741d13"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_3d_round.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_play_window_round_legacy.png",
+    "sha256": "5492a2daa2b90218809694c94ec8189b0aafc3202ce9eaaa3a511082401d2409"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-xxxhdpi/ic_launcher_blue_snow_maid_front.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_frameless_front_dark_legacy.png",
+    "sha256": "ad06ae6d4d51f79bb7884f1adf304a07d0c9eed00208254cecf95d83e40907f2"
+  },
+  {
+    "original": "app/src/main/res/mipmap-night-xxxhdpi/ic_launcher_blue_snow_maid_front_round.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_frameless_front_dark_round.png",
+    "sha256": "408ac6cdc80478cf23a5e82cc03ff3afd5b0cce6064c5830e4bd8378d9e53d88"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid_front_dark.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_frameless_front_dark_legacy.png",
+    "sha256": "ad06ae6d4d51f79bb7884f1adf304a07d0c9eed00208254cecf95d83e40907f2"
+  },
+  {
+    "original": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_blue_snow_maid_front_dark_round.png",
+    "target": "app/src/main/res/mipmap-xxxhdpi/ic_launcher_frameless_front_dark_round.png",
+    "sha256": "408ac6cdc80478cf23a5e82cc03ff3afd5b0cce6064c5830e4bd8378d9e53d88"
+  }
+]

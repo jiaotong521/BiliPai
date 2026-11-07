@@ -8,7 +8,9 @@ enum class SpaceMainTab {
     CONTRIBUTION,
     FAVORITE,
     BANGUMI,
-    COLLECTIONS
+    COLLECTIONS,
+    CHEESE,
+    SHOP
 }
 
 data class SpaceMainTabItem(
@@ -22,7 +24,8 @@ data class SpaceContributionTab(
     val subTab: SpaceSubTab,
     val param: String,
     val seasonId: Long = 0,
-    val seriesId: Long = 0
+    val seriesId: Long = 0,
+    val filters: List<SpaceOpusFilter> = emptyList(),
 )
 
 data class SpaceTabContentState(
@@ -62,26 +65,115 @@ fun buildDefaultSpaceMainTabs(): List<SpaceMainTabItem> {
         SpaceMainTabItem(SpaceMainTab.HOME, "主页"),
         SpaceMainTabItem(SpaceMainTab.DYNAMIC, "动态"),
         SpaceMainTabItem(SpaceMainTab.CONTRIBUTION, "投稿"),
-        SpaceMainTabItem(SpaceMainTab.COLLECTIONS, "合集和系列")
     )
 }
 
+internal fun resolveSpacePrimaryTab(selectedTab: SpaceMainTab): SpaceMainTab {
+    return when (selectedTab) {
+        SpaceMainTab.FAVORITE,
+        SpaceMainTab.BANGUMI,
+        SpaceMainTab.COLLECTIONS -> SpaceMainTab.CONTRIBUTION
+        else -> selectedTab
+    }
+}
+
+internal fun shouldShowSpaceSecondarySwitch(selectedTab: SpaceMainTab): Boolean {
+    return selectedTab == SpaceMainTab.CONTRIBUTION ||
+        selectedTab == SpaceMainTab.FAVORITE ||
+        selectedTab == SpaceMainTab.BANGUMI ||
+        selectedTab == SpaceMainTab.COLLECTIONS
+}
+
+data class SpaceSecondarySwitchItem(
+    val id: String,
+    val title: String,
+    val targetTab: SpaceMainTab,
+    val contributionTabId: String? = null,
+)
+
+internal const val SPACE_SECONDARY_COLLECTIONS_ID = "library_collections"
+internal const val SPACE_SECONDARY_FAVORITE_ID = "library_favorite"
+internal const val SPACE_SECONDARY_BANGUMI_ID = "library_bangumi"
+internal const val SPACE_SECONDARY_CHEESE_ID = "library_cheese"
+
+internal fun resolveSpaceSecondarySwitchItems(
+    contributionTabs: List<SpaceContributionTab>,
+    hasCheese: Boolean = false,
+    cheeseTitle: String = "课堂",
+): List<SpaceSecondarySwitchItem> {
+    val items = contributionTabs.map { tab ->
+        SpaceSecondarySwitchItem(
+            id = tab.id,
+            title = tab.title,
+            targetTab = SpaceMainTab.CONTRIBUTION,
+            contributionTabId = tab.id,
+        )
+    }.toMutableList()
+    if (items.none { it.targetTab == SpaceMainTab.COLLECTIONS }) {
+        items += SpaceSecondarySwitchItem(
+            id = SPACE_SECONDARY_COLLECTIONS_ID,
+            title = "合集",
+            targetTab = SpaceMainTab.COLLECTIONS,
+        )
+    }
+    items += SpaceSecondarySwitchItem(
+        id = SPACE_SECONDARY_FAVORITE_ID,
+        title = "收藏",
+        targetTab = SpaceMainTab.FAVORITE,
+    )
+    items += SpaceSecondarySwitchItem(
+        id = SPACE_SECONDARY_BANGUMI_ID,
+        title = "追番",
+        targetTab = SpaceMainTab.BANGUMI,
+    )
+    if (hasCheese) {
+        items += SpaceSecondarySwitchItem(
+            id = SPACE_SECONDARY_CHEESE_ID,
+            title = cheeseTitle.ifBlank { "课堂" },
+            targetTab = SpaceMainTab.CHEESE,
+        )
+    }
+    return items
+}
+
+internal fun resolveSelectedSpaceSecondarySwitchId(
+    selectedTab: SpaceMainTab,
+    selectedContributionTabId: String,
+): String {
+    return when (selectedTab) {
+        SpaceMainTab.FAVORITE -> SPACE_SECONDARY_FAVORITE_ID
+        SpaceMainTab.BANGUMI -> SPACE_SECONDARY_BANGUMI_ID
+        SpaceMainTab.COLLECTIONS -> SPACE_SECONDARY_COLLECTIONS_ID
+        SpaceMainTab.CHEESE -> SPACE_SECONDARY_CHEESE_ID
+        else -> selectedContributionTabId
+    }
+}
+
+/**
+ * PiliPlus 一级栏保留 主页 / 动态 / 投稿，以及课堂 (若存在)。
+ * 收藏、追番、合集进入投稿下的二级开关。
+ */
 internal fun resolveSpaceDisplayedMainTabs(
     tabs: List<SpaceMainTabItem>,
-    selectedTab: SpaceMainTab
+    selectedTab: SpaceMainTab,
+    hasCheese: Boolean = false,
+    cheeseTitle: String = "课堂",
 ): List<SpaceMainTabItem> {
-    if (tabs.isEmpty()) return buildDefaultSpaceMainTabs().take(3)
-    val primary = listOf(
-        SpaceMainTab.HOME,
-        SpaceMainTab.DYNAMIC,
-        SpaceMainTab.CONTRIBUTION
-    ).mapNotNull { target -> tabs.firstOrNull { it.tab == target } }
-    if (primary.isEmpty()) return tabs
-    return if (selectedTab in setOf(SpaceMainTab.HOME, SpaceMainTab.DYNAMIC, SpaceMainTab.CONTRIBUTION)) {
-        primary
-    } else {
-        primary + tabs.filter { it.tab == selectedTab }
+    val defaults = buildDefaultSpaceMainTabs()
+    val base = if (tabs.isEmpty()) defaults else {
+        defaults.map { default ->
+            tabs.firstOrNull { it.tab == default.tab } ?: default
+        }
     }
+    val result = base.toMutableList()
+    val cheeseTab = tabs.firstOrNull { it.tab == SpaceMainTab.CHEESE }
+    if (cheeseTab != null) {
+        result.add(cheeseTab)
+    } else if (hasCheese || selectedTab == SpaceMainTab.CHEESE) {
+        result.add(SpaceMainTabItem(SpaceMainTab.CHEESE, cheeseTitle.ifBlank { "课堂" }))
+    }
+    tabs.firstOrNull { it.tab == SpaceMainTab.SHOP }?.let { result.add(it) }
+    return result
 }
 
 fun buildDefaultSpaceContributionTabs(): List<SpaceContributionTab> {
@@ -123,6 +215,8 @@ fun tabIndexToMainTab(index: Int): SpaceMainTab {
         3 -> SpaceMainTab.FAVORITE
         4 -> SpaceMainTab.BANGUMI
         5 -> SpaceMainTab.COLLECTIONS
+        6 -> SpaceMainTab.CHEESE
+        7 -> SpaceMainTab.SHOP
         else -> SpaceMainTab.HOME
     }
 }
@@ -135,6 +229,8 @@ fun mainTabToTabIndex(tab: SpaceMainTab): Int {
         SpaceMainTab.FAVORITE -> 3
         SpaceMainTab.BANGUMI -> 4
         SpaceMainTab.COLLECTIONS -> 5
+        SpaceMainTab.CHEESE -> 6
+        SpaceMainTab.SHOP -> 7
     }
 }
 
@@ -159,7 +255,8 @@ fun buildHeaderState(
 }
 
 internal fun resolveSpaceMainTabs(tab2: List<SpaceAggregateTab>): List<SpaceMainTabItem> {
-    if (tab2.isEmpty()) return buildDefaultSpaceMainTabs()
+    val defaults = buildDefaultSpaceMainTabs()
+    if (tab2.isEmpty()) return defaults
 
     val resolved = tab2.mapNotNull { item ->
         when (item.param.lowercase()) {
@@ -168,11 +265,26 @@ internal fun resolveSpaceMainTabs(tab2: List<SpaceAggregateTab>): List<SpaceMain
             "contribute" -> SpaceMainTabItem(SpaceMainTab.CONTRIBUTION, item.title.ifBlank { "投稿" })
             "favorite" -> SpaceMainTabItem(SpaceMainTab.FAVORITE, item.title.ifBlank { "收藏" })
             "bangumi" -> SpaceMainTabItem(SpaceMainTab.BANGUMI, item.title.ifBlank { "追番" })
+            "channel", "collection", "collections", "series" ->
+                SpaceMainTabItem(SpaceMainTab.COLLECTIONS, item.title.ifBlank { "合集" })
+            "shop" -> SpaceMainTabItem(SpaceMainTab.SHOP, item.title.ifBlank { "小店" })
+            "cheese" -> SpaceMainTabItem(SpaceMainTab.CHEESE, item.title.ifBlank { "课堂" })
             else -> null
         }
     }.distinctBy { it.tab }
 
-    return resolved.ifEmpty { buildDefaultSpaceMainTabs() }
+    if (resolved.isEmpty()) return defaults
+
+    val result = defaults.map { default ->
+        resolved.firstOrNull { it.tab == default.tab } ?: default
+    }.toMutableList()
+
+    resolved.firstOrNull { it.tab == SpaceMainTab.CHEESE }?.let {
+        result.add(it)
+    }
+    resolved.firstOrNull { it.tab == SpaceMainTab.SHOP }?.let { result.add(it) }
+
+    return result
 }
 
 internal fun resolveSpaceContributionTabs(tab2: List<SpaceAggregateTab>): List<SpaceContributionTab> {
@@ -192,7 +304,8 @@ internal fun resolveSpaceContributionTabs(tab2: List<SpaceAggregateTab>): List<S
                     subTab = it,
                     param = item.param,
                     seasonId = item.seasonId,
-                    seriesId = item.seriesId
+                    seriesId = item.seriesId,
+                    filters = item.filter,
                 )
             }
         }
@@ -226,7 +339,7 @@ internal fun mergeSpaceContributionTabsWithCollections(
     }
 
     baseTabs.firstOrNull { it.subTab == SpaceSubTab.VIDEO }?.let(::add)
-    baseTabs.firstOrNull { it.subTab == SpaceSubTab.ARTICLE || it.subTab == SpaceSubTab.OPUS }?.let(::add)
+    baseTabs.filter { it.subTab == SpaceSubTab.ARTICLE || it.subTab == SpaceSubTab.OPUS }.forEach(::add)
 
     seasons.forEach { season ->
         val seasonId = season.meta.season_id

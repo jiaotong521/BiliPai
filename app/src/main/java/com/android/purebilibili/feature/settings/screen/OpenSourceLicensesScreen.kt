@@ -1,13 +1,13 @@
 package com.android.purebilibili.feature.settings
 
+import com.android.purebilibili.core.ui.AppContentColors
+import com.android.purebilibili.core.ui.components.AppIcon
+import com.android.purebilibili.core.ui.components.AppText
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
+import com.android.purebilibili.core.ui.components.AppLazyColumn as LazyColumn
 import androidx.compose.foundation.lazy.items
-//  Cupertino Icons - iOS SF Symbols 风格图标
-import io.github.alexzhirkevich.cupertino.icons.CupertinoIcons
-import io.github.alexzhirkevich.cupertino.icons.outlined.*
-import io.github.alexzhirkevich.cupertino.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,7 +23,9 @@ import com.android.purebilibili.R
 import com.android.purebilibili.feature.settings.ui.SettingsPageScaffold
 import com.android.purebilibili.core.ui.AppShapes
 import com.android.purebilibili.core.ui.AppSurfaceTokens
+import com.android.purebilibili.core.ui.components.AppSurface
 import com.android.purebilibili.core.ui.ContainerLevel
+import com.android.purebilibili.core.ui.AppSpacingTokens
 
 /**
  *  开源许可证数据类
@@ -39,6 +41,24 @@ data class OpenSourceLibrary(
  *  当前整理的开源库与实现参考列表。
  */
 val openSourceLibraries = listOf(
+    OpenSourceLibrary(
+        name = "FlClash Liquid Indicator",
+        license = "GPL-3.0",
+        url = "https://github.com/chen08209/FlClash/blob/8d4f9744948751f1273fe871e1d05276fac09b0e/lib/ui/navigation_dock.dart",
+        description = "液态玻璃指示器的独立形变弹簧参考；保留现有拖动效果，仅在停止后追加甩尾回弹",
+    ),
+    OpenSourceLibrary(
+        name = "Telegram / Nagram Chat Avatar Placement",
+        license = "GPL-2.0-or-later（按 GPLv3 分发）",
+        url = "https://github.com/NextAlone/Nagram/blob/fb56ea9801e5de68c60f0152b444bbe2a0fda520/TMessagesProj/src/main/java/org/telegram/ui/ChatActivity.java",
+        description = "聊天头像底部吸附与消息边界约束代码移植，原作者 Nikolai Kudashov；适配评论、回复和搜索结果"
+    ),
+    OpenSourceLibrary(
+        name = "Flex Seed Scheme",
+        license = "BSD-3-Clause",
+        url = "https://github.com/rydmike/flex_seed_scheme",
+        description = "扩展调色板的色调表与配色规则（原生移植自 5.0.1）"
+    ),
     OpenSourceLibrary(
         name = "Kotlin",
         license = "Apache 2.0",
@@ -64,6 +84,12 @@ val openSourceLibraries = listOf(
         description = "Material Design 组件与主题系统"
     ),
     OpenSourceLibrary(
+        name = "Material Symbols",
+        license = "Apache 2.0",
+        url = "https://github.com/google/material-design-icons",
+        description = "设置语义图标使用的 Outlined 矢量字形"
+    ),
+    OpenSourceLibrary(
         name = "Miuix",
         license = "Apache 2.0",
         url = "https://github.com/compose-miuix-ui/miuix",
@@ -74,6 +100,18 @@ val openSourceLibraries = listOf(
         license = "Apache 2.0",
         url = "https://github.com/androidx/media",
         description = "音视频播放器、HLS/DASH、会话与数据源"
+    ),
+    OpenSourceLibrary(
+        name = "AndroidX Paging",
+        license = "Apache 2.0",
+        url = "https://github.com/androidx/androidx",
+        description = "列表分页、加载状态与失败重试"
+    ),
+    OpenSourceLibrary(
+        name = "Protocol Buffers Lite",
+        license = "BSD-3-Clause",
+        url = "https://github.com/protocolbuffers/protobuf",
+        description = "网络消息字段编解码"
     ),
     OpenSourceLibrary(
         name = "AndroidX Room",
@@ -155,7 +193,7 @@ val openSourceLibraries = listOf(
     ),
     OpenSourceLibrary(
         name = "Material Kolor",
-        license = "Apache 2.0",
+        license = "MIT / Apache 2.0",
         url = "https://github.com/jordond/materialkolor",
         description = "Material You 动态配色生成"
     ),
@@ -183,23 +221,13 @@ val openSourceLibraries = listOf(
         url = "https://github.com/chrisbanes/haze",
         description = "毛玻璃效果"
     ),
-    OpenSourceLibrary(
-        name = "Compose Shimmer",
-        license = "Apache 2.0",
-        url = "https://github.com/valentinilk/compose-shimmer",
-        description = "Shimmer 加载动画"
-    ),
+    // Compose Shimmer 已随依赖一并移除：骨架屏改用自研实现，APK 里不再包含该库。
+    // 致谢列表应当反映实际分发的内容，列一个没有随包发出的库是不准确的。
     OpenSourceLibrary(
         name = "Cupertino",
         license = "Apache 2.0",
         url = "https://github.com/alexzhirkevich/compose-cupertino",
         description = "Compose Cupertino 组件与图标"
-    ),
-    OpenSourceLibrary(
-        name = "Backdrop",
-        license = "Apache 2.0",
-        url = "https://github.com/Kyant0/AndroidLiquidGlass",
-        description = "液态玻璃/背景折射效果依赖"
     ),
     OpenSourceLibrary(
         name = "BBPlayer",
@@ -226,10 +254,10 @@ val openSourceLibraries = listOf(
         description = "二维码解析与生成"
     ),
     OpenSourceLibrary(
-        name = "pinyin4j",
-        license = "GPL-2.0",
-        url = "https://github.com/belerweb/pinyin4j",
-        description = "中文拼音转换"
+        name = "TinyPinyin",
+        license = "Apache-2.0",
+        url = "https://github.com/biezhi/TinyPinyin",
+        description = "中文拼音转换（替代含损坏 jar 的 com.belerweb:pinyin4j）"
     ),
     OpenSourceLibrary(
         name = "Google Cast SDK",
@@ -327,15 +355,15 @@ fun OpenSourceLicensesScreen(
                     ),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Text(
+                    AppText(
                         text = "本应用使用了以下开源组件，感谢所有开源贡献者！",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = AppContentColors.secondaryText(),
                     )
-                    Text(
+                    AppText(
                         text = "说明：该列表按当前工程依赖、投屏/测试模块以及明确参考实现整理，可能不包含全部传递依赖或完整法律清单。",
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = AppContentColors.link(),
                         modifier = Modifier.padding(bottom = 8.dp),
                     )
                 }
@@ -365,7 +393,7 @@ fun LicenseCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Surface(
+    AppSurface(
         modifier = modifier
             .fillMaxWidth()
             .padding(bottom = 8.dp)
@@ -381,17 +409,17 @@ fun LicenseCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(
+                AppText(
                     text = library.name,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface
+                    color = AppContentColors.primaryText()
                 )
                 if (library.description.isNotEmpty()) {
-                    Text(
+                    AppText(
                         text = library.description,
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = AppContentColors.secondaryText(),
                         modifier = Modifier.padding(top = 2.dp)
                     )
                 }
@@ -400,38 +428,38 @@ fun LicenseCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Surface(
+                    AppSurface(
                         color = MaterialTheme.colorScheme.primaryContainer,
                         shape = AppShapes.container(ContainerLevel.Tag)
                     ) {
-                        Text(
+                        AppText(
                             text = library.license,
-                            fontSize = 11.sp,
+                            style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                            modifier = Modifier.padding(horizontal = AppSpacingTokens.Small, vertical = 2.dp)
                         )
                     }
-                    Text(
+                    AppText(
                         text = "GitHub/链接",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = AppContentColors.link(),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                Text(
+                AppText(
                     text = library.url,
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = AppContentColors.link(),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(top = 4.dp)
                 )
             }
-            Icon(
-                CupertinoIcons.Default.ChevronForward,
+            AppIcon(
+                com.android.purebilibili.feature.settings.rememberMaterialSymbol(com.android.purebilibili.R.drawable.ms_keyboard_arrow_right_24),
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                tint = AppContentColors.secondaryText().copy(alpha = 0.5f),
                 modifier = Modifier.size(20.dp)
             )
         }

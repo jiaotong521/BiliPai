@@ -9,6 +9,41 @@ import org.junit.Test
 class SsdpCastClientTest {
 
     @Test
+    fun `device URLBase resolves relative control paths`() {
+        val xml = """
+            <root xmlns="urn:schemas-upnp-org:device-1-0">
+              <URLBase>http://192.168.1.9:8080/services/</URLBase>
+              <device><serviceList><service>
+                <serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType>
+                <controlURL>avtransport</controlURL>
+              </service></serviceList></device>
+            </root>
+        """.trimIndent()
+        assertEquals(
+            "http://192.168.1.9:8080/services/avtransport",
+            SsdpCastClient.parseAvTransportEndpoint(xml, "http://192.168.1.9:80/description.xml")?.controlUrl,
+        )
+    }
+
+    @Test
+    fun `metadata reports the actual media type and escapes media information`() {
+        val metadata = SsdpCastClient.buildDidlMetadata(
+            "http://192.168.1.2/manifest?a=1&b=2", "A & B", "作者", "application/dash+xml",
+        )
+        assertTrue(metadata.contains("protocolInfo=\"http-get:*:application/dash+xml:*\""))
+        assertTrue(metadata.contains("A &amp; B"))
+        assertTrue(metadata.contains("a=1&amp;b=2"))
+        assertTrue(SsdpCastClient.buildDidlMetadata("x", "x", "x", "bad:type")
+            .contains("protocolInfo=\"http-get:*:video/mp4:*\""))
+    }
+
+    @Test
+    fun `cast poll interval drops to background cadence only while backgrounded`() {
+        assertEquals(1_000L, resolveCastPlaybackPollIntervalMs(isInBackground = false))
+        assertEquals(5_000L, resolveCastPlaybackPollIntervalMs(isInBackground = true))
+    }
+
+    @Test
     fun `parseAvTransportEndpoint resolves relative control URL`() {
         val descriptionXml = """
             <?xml version="1.0"?>
@@ -35,6 +70,46 @@ class SsdpCastClientTest {
             endpoint?.controlUrl
         )
         assertEquals("urn:schemas-upnp-org:service:AVTransport:1", endpoint?.serviceType)
+    }
+
+    @Test
+    fun `parseDeviceProfile prefers embedded MediaRenderer over root device`() {
+        val descriptionXml = """
+            <?xml version="1.0"?>
+            <root xmlns="urn:schemas-upnp-org:device-1-0">
+              <device>
+                <deviceType>urn:schemas-upnp-org:device:Basic:1</deviceType>
+                <friendlyName>Root Hub</friendlyName>
+                <modelName>Hub</modelName>
+                <deviceList>
+                  <device>
+                    <deviceType>urn:schemas-upnp-org:device:MediaRenderer:1</deviceType>
+                    <friendlyName>CastFlow TV</friendlyName>
+                    <modelName>ATV</modelName>
+                    <serviceList>
+                      <service>
+                        <serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType>
+                        <controlURL>/avt/control</controlURL>
+                      </service>
+                    </serviceList>
+                  </device>
+                </deviceList>
+              </device>
+            </root>
+        """.trimIndent()
+
+        val profile = SsdpCastClient.parseDeviceProfile(
+            descriptionXml = descriptionXml,
+            descriptionLocation = "http://192.168.1.20:8008/desc.xml"
+        )
+
+        assertNotNull(profile)
+        assertEquals("CastFlow TV", profile?.friendlyName)
+        assertEquals("ATV", profile?.modelName)
+        assertEquals(
+            "http://192.168.1.20:8008/avt/control",
+            profile?.avTransportEndpoint?.controlUrl
+        )
     }
 
     @Test
@@ -71,6 +146,24 @@ class SsdpCastClientTest {
 
         assertTrue(body.contains("&amp;"))
         assertTrue(body.contains("&lt;tag attr=&quot;1&quot;&gt;value&lt;/tag&gt;"))
+    }
+
+    @Test
+    fun `buildSeekActionBody formats a DLNA relative time target`() {
+        val body = SsdpCastClient.buildSeekActionBody(
+            serviceType = "urn:schemas-upnp-org:service:AVTransport:1",
+            positionMs = 3_726_500L
+        )
+
+        assertTrue(body.contains("<Unit>REL_TIME</Unit>"))
+        assertTrue(body.contains("<Target>01:02:06</Target>"))
+    }
+
+    @Test
+    fun `parseDlnaTimeMs parses valid duration and rejects malformed values`() {
+        assertEquals(3_726_500L, SsdpCastClient.parseDlnaTimeMs("01:02:06.500"))
+        assertEquals(0L, SsdpCastClient.parseDlnaTimeMs("NOT_IMPLEMENTED"))
+        assertEquals(0L, SsdpCastClient.parseDlnaTimeMs("01:60:00"))
     }
 
     @Test

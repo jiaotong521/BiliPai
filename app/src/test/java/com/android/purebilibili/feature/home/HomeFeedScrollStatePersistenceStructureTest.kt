@@ -8,21 +8,67 @@ import kotlin.test.assertTrue
 class HomeFeedScrollStatePersistenceStructureTest {
 
     @Test
-    fun `home category grid states are saveable per category`() {
+    fun `bottom bar reselect scrolls the latest visible home category`() {
         val source = loadSource("app/src/main/java/com/android/purebilibili/feature/home/HomeScreen.kt")
+        val scrollCollectorSource = source
+            .substringAfter("// [新增] 监听全局回顶事件")
+            .substringBefore("val homeTopTabSettings")
 
-        assertTrue(source.contains("rememberSaveable("))
-        assertTrue(source.contains("category.name"))
-        assertTrue(source.contains("saver = LazyGridState.Saver"))
-        assertTrue(source.contains("LazyGridState()"))
-        assertFalse(source.contains("gridStates[category] = rememberLazyGridState()"))
+        assertTrue(
+            scrollCollectorSource.contains(
+                "latestHomeScrollCategory by rememberUpdatedState(currentCategory)"
+            )
+        )
+        assertTrue(
+            scrollCollectorSource.contains(
+                "latestHomeScrollPopularSubCategory by rememberUpdatedState(popularSubCategory)"
+            )
+        )
+        assertTrue(scrollCollectorSource.contains("val activeCategory = latestHomeScrollCategory"))
+        assertTrue(scrollCollectorSource.contains("gridStates[activeCategory]"))
+    }
+
+    @Test
+    fun `home double tap is coalesced before scroll to top starts`() {
+        val source = loadSource("app/src/main/java/com/android/purebilibili/feature/home/HomeScreen.kt")
+        val scrollCollectorSource = source
+            .substringAfter("LaunchedEffect(scrollChannel)")
+            .substringBefore("TrackJankStateFlag(")
+
+        assertTrue(scrollCollectorSource.contains("for (initialRequest in channel)"))
+        assertTrue(scrollCollectorSource.contains("withTimeoutOrNull(HOME_RESELECT_DOUBLE_TAP_WINDOW_MS)"))
+        assertTrue(scrollCollectorSource.contains("mergeHomeScrollRequests(initialRequest, followUp)"))
+        assertFalse(scrollCollectorSource.contains("collectLatest"))
+    }
+
+    @Test
+    fun `avatar preference does not change card bounds during predictive return`() {
+        val screenSource = loadSource("app/src/main/java/com/android/purebilibili/feature/home/HomeScreen.kt")
+        val pageSource = loadSource("app/src/main/java/com/android/purebilibili/feature/home/HomeCategoryPage.kt")
+        val storySource = loadSource(
+            "app/src/main/java/com/android/purebilibili/feature/home/components/cards/StoryVideoCard.kt"
+        )
+        val standardCardSource = loadSource(
+            "app/src/main/java/com/android/purebilibili/feature/home/components/cards/VideoCard.kt"
+        )
+
+        assertTrue(screenSource.contains("var settledShowHomeUpAvatars by rememberSaveable"))
+        assertTrue(screenSource.contains("isReturnGestureInProgressProvider()"))
+        assertTrue(screenSource.contains("!videoCardReturnGestureInProgress && !isReturningFromVideoDetail"))
+        assertTrue(screenSource.contains("showUpAvatars = settledShowHomeUpAvatars"))
+
+        // 关闭后不创建头像节点，也不创建兜底头像节点；Row 的 spacedBy 只作用于实际子项。
+        assertTrue(pageSource.contains("if (showUpAvatars && video.owner.face.isNotBlank())"))
+        assertTrue(pageSource.contains("} else if (showUpAvatars) {"))
+        assertTrue(storySource.contains("leadingContent = if (showUpAvatar && video.owner.face.isNotEmpty())"))
+        assertTrue(standardCardSource.contains("leadingContent = if (showUpAvatar && video.owner.face.isNotEmpty())"))
     }
 
     @Test
     fun `home skin atmosphere is fixed in header instead of pager backdrop`() {
         val source = loadSource("app/src/main/java/com/android/purebilibili/feature/home/HomeScreen.kt")
         val headerCallSource = source
-            .substringAfter("iOSHomeHeader(")
+            .substringAfter("HomeHeader(")
             .substringBefore("AnimatedVisibility(")
 
         assertTrue(source.contains("val uiSkinState by rememberUiSkinState(context)"))
@@ -33,7 +79,7 @@ class HomeFeedScrollStatePersistenceStructureTest {
     }
 
     @Test
-    fun `home skin feed atmosphere is drawn once behind grid container`() {
+    fun `home feed does not misuse drawer or profile skin backgrounds`() {
         val screenSource = loadSource("app/src/main/java/com/android/purebilibili/feature/home/HomeScreen.kt")
         val pageSource = loadSource("app/src/main/java/com/android/purebilibili/feature/home/HomeCategoryPage.kt")
         val pageCallSource = screenSource
@@ -42,19 +88,11 @@ class HomeFeedScrollStatePersistenceStructureTest {
         val pageFunctionSource = pageSource
             .substringAfter("internal fun HomeCategoryPageContent(")
             .substringBefore("@Composable\nprivate fun PopularSubCategorySegmentedControl")
-        val gridContainerSource = pageFunctionSource
-            .substringAfter("val feedAtmosphereImagePath = resolveHomeFeedSkinAtmosphereImagePath(uiSkinDecoration)")
-            .substringBefore("LazyVerticalGrid(")
-        val videoItemSource = pageFunctionSource
-            .substringAfter("categoryState.videos.forEachIndexed")
-
-        assertTrue(pageCallSource.contains("uiSkinDecoration = homeUiSkinDecoration"))
-        assertTrue(pageFunctionSource.contains("uiSkinDecoration: HomeUiSkinDecoration? = null"))
-        assertTrue(pageFunctionSource.contains("val feedAtmosphereImagePath = resolveHomeFeedSkinAtmosphereImagePath(uiSkinDecoration)"))
-        assertTrue(gridContainerSource.contains("AsyncImage("))
-        assertTrue(gridContainerSource.contains("model = File(feedAtmosphereImagePath)"))
-        assertFalse(videoItemSource.contains("resolveHomeFeedSkinAtmosphereImagePath(uiSkinDecoration)"))
-        assertFalse(videoItemSource.contains("model = File(feedAtmosphereImagePath)"))
+        assertFalse(pageCallSource.contains("uiSkinDecoration = homeUiSkinDecoration"))
+        assertFalse(pageFunctionSource.contains("uiSkinDecoration: HomeUiSkinDecoration? = null"))
+        assertFalse(pageSource.contains("resolveHomeFeedSkinAtmosphereImagePath"))
+        assertFalse(pageSource.contains("sideBackgroundImagePath"))
+        assertFalse(pageSource.contains("profileBackgroundImagePath"))
     }
 
     @Test
@@ -63,72 +101,39 @@ class HomeFeedScrollStatePersistenceStructureTest {
         val pagerPageSource = source
             .substringAfter("HorizontalPager(")
             .substringBefore("// Close HorizontalPager lambda")
+        val onRefreshSource = pagerPageSource
+            .substringAfter("onRefresh = {")
+            .substringBefore("},")
 
-        assertTrue(pagerPageSource.contains("if (category == HomeCategory.FOLLOW)"))
-        assertTrue(pagerPageSource.contains("viewModel.refresh(category)"))
-        assertTrue(pagerPageSource.contains("viewModel.refresh()"))
+        assertTrue(onRefreshSource.contains("viewModel.refresh(category)"))
+        assertFalse(onRefreshSource.contains("viewModel.refresh()"))
+        assertFalse(onRefreshSource.contains("if (category == HomeCategory.FOLLOW)"))
     }
 
     @Test
-    fun `home feed enables scroll lite mode only from grid scroll state`() {
+    fun `home feed samples scroll state without observing every scroll transition`() {
         val source = loadSource("app/src/main/java/com/android/purebilibili/feature/home/HomeCategoryPage.kt")
         val pageFunctionSource = source
             .substringAfter("internal fun HomeCategoryPageContent(")
-            .substringBefore("val context = LocalContext.current")
+            .substringBefore("@Composable\nprivate fun PopularSubCategorySegmentedControl")
 
-        assertTrue(pageFunctionSource.contains("val scrollLiteModeEnabled by remember(gridState)"))
-        assertTrue(pageFunctionSource.contains("derivedStateOf { gridState.isScrollInProgress }"))
-        assertFalse(pageFunctionSource.contains("val scrollLiteModeEnabled = false"))
+        assertTrue(pageFunctionSource.contains("Snapshot.withoutReadObservation"))
+        assertTrue(pageFunctionSource.contains("gridState.isScrollInProgress"))
+        assertFalse(pageFunctionSource.contains("derivedStateOf { gridState.isScrollInProgress }"))
     }
 
     @Test
-    fun `home follow refresh preserves dynamic update baseline for incremental content`() {
-        val source = loadSource("app/src/main/java/com/android/purebilibili/feature/home/HomeViewModel.kt")
-        val followFeedSource = source
-            .substringAfter("private suspend fun fetchFollowFeed")
-            .substringBefore("private fun videoItemKey")
+    fun `home pager frame state is read inside isolated motion layer`() {
+        val source = loadSource("app/src/main/java/com/android/purebilibili/feature/home/components/TopBar.kt")
+        val tabsSource = source
+            .substringAfter("private fun LightweightHomeTopTabs(")
+            .substringBefore("internal enum class TopTabLiquidColorMode")
+        val motionSource = tabsSource.substringAfter("HomeTopTabMotionLayer {")
 
-        assertFalse(followFeedSource.contains("DynamicRepository.resetPagination"))
-    }
-
-    @Test
-    fun `home follow feed requests video dynamics instead of filtering all dynamics after baseline`() {
-        val source = loadSource("app/src/main/java/com/android/purebilibili/feature/home/HomeViewModel.kt")
-        val followFeedSource = source
-            .substringAfter("private suspend fun fetchFollowFeed")
-            .substringBefore("private fun videoItemKey")
-
-        assertTrue(followFeedSource.contains("type = \"video\""))
-    }
-
-    @Test
-    fun `home follow manual refresh reports actual inserted video count`() {
-        val source = loadSource("app/src/main/java/com/android/purebilibili/feature/home/HomeViewModel.kt")
-        val fetchDataSource = source
-            .substringAfter("if (currentCategory == HomeCategory.FOLLOW)")
-            .substringBefore("val currentCategoryState")
-        val followFeedSource = source
-            .substringAfter("private suspend fun fetchFollowFeed")
-            .substringBefore("private fun videoItemKey")
-
-        assertTrue(fetchDataSource.contains("return fetchFollowFeed("))
-        assertTrue(followFeedSource.contains("var addedCount = 0"))
-        assertTrue(followFeedSource.contains("return addedCount"))
-    }
-
-    @Test
-    fun `home feed refilters existing content after ad filter configuration is ready`() {
-        val source = loadSource("app/src/main/java/com/android/purebilibili/feature/home/HomeViewModel.kt")
-        val initSource = source
-            .substringAfter("syncTodayWatchFeedbackFromStore()")
-            .substringBefore("PluginManager.pluginsFlow.collect")
-        val refilterSource = source
-            .substringAfter("private fun reFilterAllContent()")
-            .substringBefore("private fun resolveTodayWatchRuntimeConfig")
-
-        assertTrue(initSource.contains("PluginManager.awaitPluginReady(ADFILTER_PLUGIN_ID)"))
-        assertTrue(initSource.contains("reFilterAllContent()"))
-        assertTrue(refilterSource.contains("PluginManager.filterFeedItems("))
+        assertTrue(tabsSource.contains("val currentPositionProvider = remember(pagerState, selectedIndex)"))
+        assertTrue(tabsSource.contains("val pagerScrollingProvider = remember(pagerState)"))
+        assertTrue(motionSource.contains("val currentPosition = currentPositionProvider()"))
+        assertTrue(motionSource.contains("val pagerIsScrolling = pagerScrollingProvider()"))
     }
 
     private fun loadSource(path: String): String {

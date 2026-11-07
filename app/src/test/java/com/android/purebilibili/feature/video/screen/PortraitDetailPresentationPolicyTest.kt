@@ -7,6 +7,48 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class PortraitDetailPresentationPolicyTest {
+    @Test
+    fun collapsedPlayToolbarJoinsTheScrollTransitionBeforeTheViewportReachesItsEndpoint() {
+        // 横、竖视频都收向工具栏时，途中就必须绘制渐显层，不能等收起到位才突然出现。
+        listOf(0.25f, 0.7f, 1f).forEach { progress ->
+            assertTrue(shouldShowCollapsedPlayerPlayToolbar(true, progress, 56f, false))
+        }
+        assertFalse(shouldShowCollapsedPlayerPlayToolbar(true, 0f, 56f, false))
+    }
+
+    @Test
+    fun collapsedPlayToolbarDoesNotReplacePlayingOrCompactPortraitMedia() {
+        assertFalse(shouldShowCollapsedPlayerPlayToolbar(false, 1f, 56f, false))
+        assertFalse(shouldShowCollapsedPlayerPlayToolbar(false, 1f, 231.75f, false))
+        assertFalse(shouldShowCollapsedPlayerPlayToolbar(true, 1f, 231.75f, false))
+        assertFalse(shouldShowCollapsedPlayerPlayToolbar(true, 1f, 56f, true))
+    }
+
+    @Test
+    fun fadingToolbarOnlyTakesInputAtTheCollapsedEndpoint() {
+        assertFalse(canInteractWithCollapsedPlayerPlayToolbar(0f))
+        assertFalse(canInteractWithCollapsedPlayerPlayToolbar(0.7f))
+        assertTrue(canInteractWithCollapsedPlayerPlayToolbar(1f))
+    }
+
+
+    @Test
+    fun switchingToCommentsNeverForcesCompactPlayerForAnyModeOrPauseState() {
+        PortraitPlayerCollapseMode.entries.forEach { mode ->
+            listOf(false, true).forEach { paused ->
+                assertFalse(
+                    shouldUseCompactInlinePortraitPlayerForCommentTab(
+                        useOfficialInlinePortraitDetailExperience = true,
+                        selectedTabIndex = 1,
+                        isPortraitFullscreen = false,
+                        collapseMode = mode,
+                        isVerticalVideo = true,
+                        isPlaybackPaused = paused,
+                    )
+                )
+            }
+        }
+    }
 
     @Test
     fun portraitFullscreenPlayback_reusesSharedPlayerForSeamlessSurfaceHandoff() {
@@ -25,12 +67,88 @@ class PortraitDetailPresentationPolicyTest {
     }
 
     @Test
+    fun officialInlinePortraitMode_disabledForDirectPortraitEntry() {
+        assertFalse(
+            shouldUseOfficialInlinePortraitDetailExperience(
+                useTabletLayout = false,
+                isVerticalVideo = true,
+                portraitExperienceEnabled = true,
+                directPortraitEntry = true
+            )
+        )
+    }
+
+    @Test
     fun officialInlinePortraitMode_disabledForTabletLayout() {
         assertFalse(
             shouldUseOfficialInlinePortraitDetailExperience(
                 useTabletLayout = true,
                 isVerticalVideo = true,
                 portraitExperienceEnabled = true
+            )
+        )
+    }
+
+    @Test
+    fun standalonePortraitPager_alwaysEntersDirectlyWithoutCenteredCrossfade() {
+        assertFalse(
+            shouldAnimateStandalonePortraitPager(
+                useSharedPlayer = true,
+                directPortraitEntry = true
+            )
+        )
+        assertFalse(
+            shouldAnimateStandalonePortraitPager(
+                useSharedPlayer = true,
+                directPortraitEntry = false
+            )
+        )
+    }
+
+    @Test
+    fun directPortraitEntry_suppressesPhoneDetailBodyWhileFullscreen() {
+        assertTrue(
+            shouldSuppressPhoneDetailBodyForDirectPortraitEntry(
+                directPortraitEntry = true,
+                isPortraitFullscreen = true
+            )
+        )
+        assertFalse(
+            shouldSuppressPhoneDetailBodyForDirectPortraitEntry(
+                directPortraitEntry = true,
+                isPortraitFullscreen = false
+            )
+        )
+    }
+
+    @Test
+    fun standalonePortraitPager_suppressesPhoneDetailBodyToAvoidDualPlayerHosts() {
+        assertTrue(
+            shouldSuppressPhoneDetailBodyUnderStandalonePortraitPager(
+                portraitExperienceEnabled = true,
+                isPortraitFullscreen = true,
+                hasPlayableState = true,
+            )
+        )
+        assertFalse(
+            shouldSuppressPhoneDetailBodyUnderStandalonePortraitPager(
+                portraitExperienceEnabled = true,
+                isPortraitFullscreen = false,
+                hasPlayableState = true,
+            )
+        )
+        assertFalse(
+            shouldSuppressPhoneDetailBodyUnderStandalonePortraitPager(
+                portraitExperienceEnabled = false,
+                isPortraitFullscreen = true,
+                hasPlayableState = true,
+            )
+        )
+        assertFalse(
+            shouldSuppressPhoneDetailBodyUnderStandalonePortraitPager(
+                portraitExperienceEnabled = true,
+                isPortraitFullscreen = true,
+                hasPlayableState = false,
             )
         )
     }
@@ -89,6 +207,34 @@ class PortraitDetailPresentationPolicyTest {
     }
 
     @Test
+    fun inlinePortraitPlayerLayout_capsCompactFoldableCoverForScrollableComments() {
+        val expanded = resolvePortraitInlinePlayerLayoutSpec(
+            screenWidthDp = 672f,
+            screenHeightDp = 460f,
+            isCollapsed = false,
+            isFoldableCoverWindow = true,
+        )
+        val collapsed = resolvePortraitInlinePlayerLayoutSpec(
+            screenWidthDp = 672f,
+            screenHeightDp = 460f,
+            isCollapsed = true,
+            isFoldableCoverWindow = true,
+        )
+
+        assertEquals(230f, expanded.heightDp, absoluteTolerance = 0.01f)
+        assertEquals(230f, collapsed.heightDp, absoluteTolerance = 0.01f)
+        assertTrue(expanded.heightDp < 460f)
+
+        val portraitWindowExpanded = resolvePortraitInlinePlayerLayoutSpec(
+            screenWidthDp = 412f,
+            screenHeightDp = 915f,
+            isCollapsed = false,
+            isFoldableCoverWindow = true,
+        )
+        assertEquals(594.75f, portraitWindowExpanded.heightDp, absoluteTolerance = 0.01f)
+    }
+
+    @Test
     fun inlinePortraitPlayerLayout_collapsesToFullWidth16By9Header() {
         val expanded = resolvePortraitInlinePlayerLayoutSpec(
             screenWidthDp = 412f,
@@ -104,6 +250,126 @@ class PortraitDetailPresentationPolicyTest {
         assertEquals(412f, collapsed.widthDp)
         assertTrue(collapsed.heightDp < expanded.heightDp)
         assertEquals(231.75f, collapsed.heightDp)
+    }
+
+    @Test
+    fun pausedCommentViewport_hidesMediaWithoutChangingOtherCompactSizes() {
+        assertEquals(56f, resolveInlinePlayerCollapsedViewportHeightDp(
+            standardCollapsedHeightDp = 231.75f,
+            hidePausedPlayerForComments = true,
+            retainPlayToolbar = true,
+        ))
+        for (vertical in listOf(true, false)) {
+            assertTrue(shouldEnableInlinePortraitScrollTransform(
+                collapseMode = PortraitPlayerCollapseMode.OFF,
+                selectedTabIndex = 0,
+                isVerticalVideo = vertical,
+                isPlaybackPaused = true,
+            ))
+        }
+        assertEquals(
+            56f,
+            resolveInlinePlayerCollapsedViewportHeightDp(
+                standardCollapsedHeightDp = 56f,
+                hidePausedPlayerForComments = true,
+                retainPlayToolbar = true,
+            )
+        )
+        assertEquals(
+            0f,
+            resolveInlinePlayerCollapsedViewportHeightDp(
+                standardCollapsedHeightDp = 231.75f,
+                hidePausedPlayerForComments = true,
+            )
+        )
+        assertEquals(
+            0f,
+            resolveInlinePlayerCollapsedViewportHeightDp(
+                standardCollapsedHeightDp = 56f,
+                hidePausedPlayerForComments = true,
+            )
+        )
+        assertEquals(
+            231.75f,
+            resolveInlinePlayerCollapsedViewportHeightDp(
+                standardCollapsedHeightDp = 231.75f,
+                hidePausedPlayerForComments = false,
+            )
+        )
+        assertEquals(
+            56f,
+            resolveInlinePlayerCollapsedViewportHeightDp(
+                standardCollapsedHeightDp = 56f,
+                hidePausedPlayerForComments = false,
+            )
+        )
+    }
+
+    @Test
+    fun pausedComments_allowHideRegardlessOfPlayingCollapseModeOrVideoOrientation() {
+        PortraitPlayerCollapseMode.entries.forEach { mode ->
+            listOf(false, true).forEach { isVerticalVideo ->
+                assertTrue(
+                    shouldEnableInlinePortraitScrollTransform(
+                        collapseMode = mode,
+                        selectedTabIndex = 1,
+                        isVerticalVideo = isVerticalVideo,
+                        isPlaybackPaused = true,
+                    )
+                )
+            }
+        }
+        assertFalse(
+            shouldEnableInlinePortraitScrollTransform(
+                collapseMode = PortraitPlayerCollapseMode.OFF,
+                selectedTabIndex = 1,
+                isPlaybackPaused = false,
+            )
+        )
+        assertTrue(
+            shouldEnableInlinePortraitScrollTransform(
+                collapseMode = PortraitPlayerCollapseMode.OFF,
+                selectedTabIndex = 0,
+                isPlaybackPaused = true,
+            )
+        )
+    }
+
+    @Test
+    fun pausedCommentThread_canHidePlayerFromIntroWithoutHidingIntroItself() {
+        assertTrue(
+            shouldEnableInlinePortraitScrollTransform(
+                collapseMode = PortraitPlayerCollapseMode.OFF,
+                selectedTabIndex = 0,
+                isPlaybackPaused = true,
+                isCommentThreadVisible = true,
+            )
+        )
+        assertTrue(shouldHidePausedInlinePlayerForComments(0, true))
+        assertFalse(shouldHidePausedInlinePlayerForComments(1, false))
+        assertTrue(shouldHidePausedInlinePlayerForComments(1, true))
+        assertTrue(shouldHidePausedInlinePlayerForComments(0, true, isCommentThreadVisible = true))
+    }
+
+    @Test
+    fun switchingToCommentTab_doesNotHidePortraitPlayer() {
+        assertFalse(
+            shouldUseCompactInlinePortraitPlayerForCommentTab(
+                useOfficialInlinePortraitDetailExperience = true,
+                selectedTabIndex = 1,
+                isPortraitFullscreen = false,
+                collapseMode = PortraitPlayerCollapseMode.BOTH,
+                isVerticalVideo = true,
+            )
+        )
+    }
+
+    @Test
+    fun phoneDetailPlayerHeight_keepsLoadingCoverAndPlayback16By9() {
+        // Loading cover and playback share 16:9 at the actual layout width.
+        assertEquals(608, resolvePhoneDetailPlayerContentHeightPx(layoutWidthPx = 1080))
+        assertEquals(684, resolvePhoneDetailPlayerContentHeightPx(layoutWidthPx = 1216))
+        assertEquals(1, resolvePhoneDetailPlayerContentHeightPx(layoutWidthPx = 0))
     }
 
     @Test
@@ -137,8 +403,8 @@ class PortraitDetailPresentationPolicyTest {
     }
 
     @Test
-    fun inlinePortraitPlayer_compactsImmediatelyWhenCommentTabIsSelected() {
-        assertTrue(
+    fun inlinePortraitPlayer_keepsCommentTabPlayerVisible() {
+        assertFalse(
             shouldUseCompactInlinePortraitPlayerForCommentTab(
                 useOfficialInlinePortraitDetailExperience = true,
                 selectedTabIndex = 1,
@@ -146,7 +412,7 @@ class PortraitDetailPresentationPolicyTest {
                 collapseMode = PortraitPlayerCollapseMode.BOTH
             )
         )
-        assertTrue(
+        assertFalse(
             shouldUseCompactInlinePortraitPlayerForCommentTab(
                 useOfficialInlinePortraitDetailExperience = true,
                 selectedTabIndex = 1,
@@ -185,8 +451,8 @@ class PortraitDetailPresentationPolicyTest {
     }
 
     @Test
-    fun inlinePortraitPlayer_compactsWhenCommentThreadDetailIsVisible() {
-        assertTrue(
+    fun inlinePortraitPlayer_keepsPlayerWhenCommentThreadDetailIsVisible() {
+        assertFalse(
             shouldUseCompactInlinePortraitPlayerForCommentTab(
                 useOfficialInlinePortraitDetailExperience = true,
                 selectedTabIndex = 0,
@@ -319,7 +585,7 @@ class PortraitDetailPresentationPolicyTest {
                 isVerticalVideo = true
             )
         )
-        assertTrue(
+        assertFalse(
             shouldUseCompactInlinePortraitPlayerForCommentTab(
                 useOfficialInlinePortraitDetailExperience = true,
                 selectedTabIndex = 1,
@@ -359,7 +625,7 @@ class PortraitDetailPresentationPolicyTest {
                 isVerticalVideo = false
             )
         )
-        assertTrue(
+        assertFalse(
             shouldUseCompactInlinePortraitPlayerForCommentTab(
                 useOfficialInlinePortraitDetailExperience = true,
                 selectedTabIndex = 1,
@@ -371,7 +637,7 @@ class PortraitDetailPresentationPolicyTest {
     }
 
     @Test
-    fun inlinePortraitPlayer_commentTabUsesCollapsedVisualProgressWithoutChangingManualState() {
+    fun inlinePortraitPlayer_compactCommentsAffectLayoutWithoutPausingPlayback() {
         assertEquals(
             1f,
             resolveInlinePortraitPlayerCollapseProgress(
@@ -404,6 +670,18 @@ class PortraitDetailPresentationPolicyTest {
     }
 
     @Test
+    fun inlinePortraitPlayer_pausedCommentsKeepManualHideProgress() {
+        assertEquals(
+            0.2f,
+            resolveInlinePortraitPlayerCollapseProgress(
+                manualCollapseProgress = 0.2f,
+                compactForCommentTabProgress = 1f,
+                hidePausedPlayerForComments = true,
+            )
+        )
+    }
+
+    @Test
     fun inlinePortraitPlayer_commentCollapseMotionUsesTabSwitchDuration() {
         val spec = VideoContentTabSwitchAnimationSpec(durationMs = 360)
 
@@ -414,10 +692,19 @@ class PortraitDetailPresentationPolicyTest {
     }
 
     @Test
+    fun commentPullRefresh_staysDisabledUntilPlayerIsFullyRestored() {
+        val progress = listOf(1f, 0.5f, 0.001f, 0f, 0.1f, 0f)
+        assertEquals(
+            listOf(false, false, false, true, false, true),
+            progress.map(::shouldEnableCommentPullToRefresh),
+        )
+    }
+
+    @Test
     fun standalonePortraitPagerMotionSpec_keepsExitTransitionShortAndTight() {
         val spec = resolveStandalonePortraitPagerMotionSpec()
 
-        assertEquals(220, spec.enterDurationMillis)
+        assertEquals(240, spec.enterDurationMillis)
         assertEquals(220, spec.exitDurationMillis)
         assertEquals(0.96f, spec.exitScaleTarget)
         assertEquals(0.08f, spec.exitTranslateUpFraction)
@@ -426,8 +713,70 @@ class PortraitDetailPresentationPolicyTest {
     }
 
     @Test
-    fun sharedPlayerPortraitExit_keepsPagerAnimationForDetailReturn() {
-        assertTrue(shouldAnimateStandalonePortraitPager(useSharedPlayer = true))
-        assertTrue(shouldAnimateStandalonePortraitPager(useSharedPlayer = false))
+    fun continuousPlayerInlineHeight_prefersLayoutWidthWhenExpandedButHonorsCollapse() {
+        val layoutWidth = 1080
+        val layoutExpanded =
+            resolvePhoneDetailPlayerContentHeightPx(layoutWidthPx = layoutWidth) + 80
+        // screenWidthDp 估高：caller 展开高度大于真布局宽 → 取 layout 消黑边
+        assertEquals(
+            layoutExpanded,
+            resolveContinuousPlayerInlineHeightPx(
+                layoutWidthPx = layoutWidth,
+                preferLayoutWidthInline = true,
+                callerInlineHeightPx = layoutExpanded + 40,
+                inlineTopInsetPx = 80,
+            ),
+        )
+        // 评论上滑折叠：caller 更小 → 必须跟着缩小，不能卡死在展开高度
+        assertEquals(
+            120,
+            resolveContinuousPlayerInlineHeightPx(
+                layoutWidthPx = layoutWidth,
+                preferLayoutWidthInline = true,
+                callerInlineHeightPx = 120,
+                inlineTopInsetPx = 80,
+            ),
+        )
+        // 未启用 layout-width 时原样使用 caller
+        assertEquals(
+            200,
+            resolveContinuousPlayerInlineHeightPx(
+                layoutWidthPx = layoutWidth,
+                preferLayoutWidthInline = false,
+                callerInlineHeightPx = 200,
+                inlineTopInsetPx = 80,
+            ),
+        )
+    }
+
+    @Test
+    fun standalonePortraitEntry_isDirectForSharedAndDedicatedPlayers() {
+        assertFalse(shouldAnimateStandalonePortraitPager(useSharedPlayer = true))
+        assertFalse(shouldAnimateStandalonePortraitPager(useSharedPlayer = false))
+    }
+
+    @Test
+    fun portraitEntryCoverPlaceholder_isSuppressedOnEntry() {
+        assertFalse(
+            shouldShowPortraitEntryCoverPlaceholder(
+                showPortraitFullscreen = true,
+                hasPlayableSuccess = false,
+                entryCoverUrl = "https://example.com/cover.jpg",
+            )
+        )
+        assertFalse(
+            shouldShowPortraitEntryCoverPlaceholder(
+                showPortraitFullscreen = true,
+                hasPlayableSuccess = true,
+                entryCoverUrl = "https://example.com/cover.jpg",
+            )
+        )
+        assertFalse(
+            shouldShowPortraitEntryCoverPlaceholder(
+                showPortraitFullscreen = true,
+                hasPlayableSuccess = false,
+                entryCoverUrl = "",
+            )
+        )
     }
 }

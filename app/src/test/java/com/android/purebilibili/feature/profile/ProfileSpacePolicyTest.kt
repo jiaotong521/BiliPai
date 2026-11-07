@@ -33,7 +33,7 @@ class ProfileSpacePolicyTest {
     @Test
     fun `profile space tabs match self space order`() {
         assertEquals(
-            listOf("主页", "动态", "投稿", "收藏", "追番"),
+            listOf("主页", "动态", "投稿", "收藏", "番剧"),
             defaultProfileSpaceTabs().map { it.title }
         )
         assertEquals(ProfileSpaceMainTab.HOME, defaultProfileSpaceTabs().first().tab)
@@ -74,6 +74,24 @@ class ProfileSpacePolicyTest {
                 likeVideos = emptyList(),
                 contributionVideos = emptyList()
             )
+        )
+    }
+
+    @Test
+    fun `dashboard owned sections are not repeated below personal dashboard`() {
+        assertEquals(
+            listOf(
+                ProfileSpaceHomeSection.BANGUMI,
+                ProfileSpaceHomeSection.CONTRIBUTIONS,
+            ),
+            resolveProfileSpaceHomeSections(
+                favoriteFolders = listOf(FavFolder(id = 1, title = "默认收藏夹")),
+                bangumiItems = listOf(FollowBangumiItem(seasonId = 2, title = "追番")),
+                coinVideos = emptyList(),
+                likeVideos = emptyList(),
+                contributionVideos = listOf(SpaceVideoItem(aid = 5, bvid = "BV1xx", title = "投稿")),
+                includeDashboardOwnedSections = false,
+            ),
         )
     }
 
@@ -211,7 +229,7 @@ class ProfileSpacePolicyTest {
     }
 
     @Test
-    fun `profile contribution hydrates when aggregate only has count`() {
+    fun `profile contribution hydration policy still covers missing aggregate items`() {
         assertTrue(
             shouldHydrateProfileContributionVideos(
                 contributionVideoCount = 5,
@@ -236,6 +254,63 @@ class ProfileSpacePolicyTest {
                 seededVideoCount = 0
             )
         )
+    }
+
+    @Test
+    fun `profile contribution content distinguishes loading empty and failure`() {
+        assertEquals(
+            ProfileContributionContentState.LOADING,
+            resolveProfileContributionContentState(ProfileContributionLoadState.LOADING, hasVideos = false)
+        )
+        assertEquals(
+            ProfileContributionContentState.EMPTY,
+            resolveProfileContributionContentState(ProfileContributionLoadState.LOADED, hasVideos = false)
+        )
+        assertEquals(
+            ProfileContributionContentState.ERROR,
+            resolveProfileContributionContentState(ProfileContributionLoadState.ERROR, hasVideos = false)
+        )
+        assertEquals(
+            ProfileContributionContentState.CONTENT,
+            resolveProfileContributionContentState(ProfileContributionLoadState.ERROR, hasVideos = true)
+        )
+    }
+
+    @Test
+    fun `hydrated contribution result remains authoritative over late aggregate`() {
+        val hydrated = ProfileSpaceUiState(
+            contributionVideos = listOf(SpaceVideoItem(aid = 9, bvid = "BV9", title = "WBI 投稿")),
+            contributionVideoCount = 1,
+            contributionLoadState = ProfileContributionLoadState.LOADED
+        )
+
+        val merged = mergeProfileAggregateState(
+            current = hydrated,
+            aggregate = SpaceAggregateData(
+                archive = com.android.purebilibili.data.model.response.SpaceAggregateArchive(
+                    count = 0,
+                    item = emptyList()
+                )
+            )
+        )
+
+        assertEquals(hydrated.contributionVideos, merged.contributionVideos)
+        assertEquals(1, merged.contributionVideoCount)
+    }
+
+    @Test
+    fun `successful empty contribution response clears aggregate seed`() {
+        val seeded = ProfileSpaceUiState(
+            contributionVideos = listOf(SpaceVideoItem(aid = 3, bvid = "BV3", title = "聚合投稿")),
+            contributionVideoCount = 1,
+            contributionLoadState = ProfileContributionLoadState.LOADING
+        )
+
+        val merged = mergeProfileContributionVideoState(seeded, videos = emptyList(), totalCount = 0)
+
+        assertTrue(merged.contributionVideos.isEmpty())
+        assertEquals(0, merged.contributionVideoCount)
+        assertEquals(ProfileContributionLoadState.LOADED, merged.contributionLoadState)
     }
 
     @Test
@@ -499,11 +574,9 @@ class ProfileSpacePolicyTest {
         assertTrue(spec.selectedTextAlpha >= 0.95f)
         assertTrue(spec.unselectedTextAlpha >= 0.65f)
         assertTrue(spec.selectedIndicatorAlpha in 0.12f..0.22f)
-        assertTrue(spec.rowCornerRadiusDp >= 20)
         assertEquals(2, spec.rowHorizontalInsetDp)
         assertEquals(2, spec.controlHorizontalInsetDp)
         assertEquals(0, spec.rowVerticalInsetDp)
-        assertTrue(panelSpec.topCornerRadiusDp >= 24)
         assertTrue(panelSpec.topOverlapDp >= 20)
     }
 

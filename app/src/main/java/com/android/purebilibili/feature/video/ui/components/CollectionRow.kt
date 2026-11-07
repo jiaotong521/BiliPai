@@ -1,29 +1,25 @@
 // 文件路径: feature/video/ui/components/CollectionRow.kt
 package com.android.purebilibili.feature.video.ui.components
 
-import androidx.compose.foundation.background
+import com.android.purebilibili.core.ui.AppContentColors
+import com.android.purebilibili.core.ui.components.AppIcon
+import com.android.purebilibili.core.ui.components.AppText
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 
-import com.android.purebilibili.core.store.SettingsManager
-import com.android.purebilibili.core.ui.rememberAppShareIcon
+import com.android.purebilibili.core.ui.components.AppSurface
 import com.android.purebilibili.data.model.response.UgcSeason
-import io.github.alexzhirkevich.cupertino.icons.CupertinoIcons
-import io.github.alexzhirkevich.cupertino.icons.outlined.ChevronForward
-import io.github.alexzhirkevich.cupertino.icons.outlined.Folder
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 
 /**
  *  视频合集展示行
@@ -34,11 +30,11 @@ fun CollectionRow(
     ugcSeason: UgcSeason,
     currentBvid: String,
     currentCid: Long = 0L,
+    isPlaying: Boolean = false,
+    immersive: Boolean = false,
     onClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
-    val shareIcon = rememberAppShareIcon()
     val collectionSubscriptionId = remember(ugcSeason) { resolveCollectionSubscriptionId(ugcSeason) }
     val allEpisodes = remember(ugcSeason.sections) { ugcSeason.sections.flatMap { it.episodes } }
     val currentAid = remember(allEpisodes, currentBvid, currentCid) {
@@ -48,11 +44,6 @@ fun CollectionRow(
             currentCid = currentCid
         )
     }
-    val sortMode by SettingsManager
-        .getCollectionSortMode(context, collectionSubscriptionId)
-        .collectAsStateWithLifecycle(initialValue = CollectionSortMode.ASCENDING
-        )
-
     // 计算当前视频在合集中的位置
     val currentIndex = resolveCurrentUgcEpisodeIndex(
         episodes = allEpisodes,
@@ -61,117 +52,101 @@ fun CollectionRow(
     )
     val currentPosition = if (currentIndex >= 0) currentIndex + 1 else 0
     val totalCount = allEpisodes.size.takeIf { it > 0 } ?: ugcSeason.ep_count
-    
-    Surface(
+    val accentColor = if (immersive) Color.White else AppContentColors.accent()
+    val titleColor = if (immersive) Color.White.copy(alpha = 0.94f) else AppContentColors.primaryText()
+    val secondaryColor = if (immersive) Color.White.copy(alpha = 0.78f) else AppContentColors.secondaryText()
+
+    AppSurface(
         modifier = modifier
+            .padding(horizontal = if (immersive) 0.dp else 8.dp)
             .fillMaxWidth(),
-        shape = androidx.compose.ui.graphics.RectangleShape,
-        color = Color.Transparent  // 透明背景，与周围统一
+        shape = if (immersive) {
+            androidx.compose.ui.graphics.RectangleShape
+        } else {
+            androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
+        },
+        // PiliPlus 同款：非沉浸时为圆角单行卡片（略浅于页面背景的容器色）
+        color = if (immersive) {
+            Color.Transparent
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerLow
+        }
     ) {
         Row(
             modifier = Modifier
                 .clickable(onClick = onClick)
-                .padding(horizontal = 12.dp, vertical = 12.dp),
+                .heightIn(min = 48.dp)
+                .padding(
+                    horizontal = if (immersive) 12.dp else 8.dp,
+                    vertical = if (immersive) 10.dp else 0.dp,
+                ),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            //  合集图标
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    CupertinoIcons.Default.Folder,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(18.dp)
+            //  合集信息（PiliPlus 式单行：合集：标题 …… 播放指示 n/total >）
+            Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                AppText(
+                    text = "合集：",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = titleColor,
+                    fontWeight = FontWeight.Medium
+                )
+                AppText(
+                    text = ugcSeason.title,
+                    modifier = Modifier.weight(1f, fill = false),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = titleColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
-            
-            Spacer(modifier = Modifier.width(12.dp))
-            
-            //  合集信息
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "合集",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = ugcSeason.title,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    if (currentPosition > 0 && totalCount > 0) {
-                        Text(
-                            text = "$currentPosition/$totalCount",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-
-                    Text(
-                        text = resolveCollectionSortLabel(sortMode),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.88f)
-                    )
-                }
+            if (currentPosition > 0 && totalCount > 0) {
+                CollectionPlaybackIndicator(
+                    isPlaying = isPlaying,
+                    color = accentColor,
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                AppText(
+                    text = "$currentPosition/$totalCount",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = secondaryColor,
+                    fontWeight = FontWeight.Medium
+                )
             }
+
 
             Spacer(modifier = Modifier.width(6.dp))
 
+            //  订阅按钮（保留行内直达入口）
             CollectionSubscriptionButton(
                 collectionId = collectionSubscriptionId,
                 currentBvid = currentBvid,
                 currentAid = currentAid,
-                fontSize = 12.sp
+                fontSize = MaterialTheme.typography.labelMedium.fontSize,
+                immersive = immersive,
             )
 
-            //  分享按钮
-            IconButton(
-                onClick = {
-                    val shareUrl = "https://space.bilibili.com/${ugcSeason.mid}/lists/${ugcSeason.id}?type=season"
-                    val shareText = "${ugcSeason.title}\n$shareUrl"
-                    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(android.content.Intent.EXTRA_TEXT, shareText)
-                    }
-                    context.startActivity(android.content.Intent.createChooser(intent, "分享合集"))
-                },
-                modifier = Modifier.size(28.dp)
-            ) {
-                Icon(
-                    shareIcon,
-                    contentDescription = "分享合集",
-                    modifier = Modifier.size(16.dp),
-                    tint = MaterialTheme.colorScheme.primary
-                )
-            }
-            
             //  右侧箭头
-            Icon(
-                CupertinoIcons.Default.ChevronForward,
+            AppIcon(
+                Icons.AutoMirrored.Outlined.KeyboardArrowRight,
                 contentDescription = "查看合集",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                modifier = Modifier.size(16.dp)
+                tint = secondaryColor.copy(alpha = if (immersive) 0.8f else 0.5f),
+                modifier = Modifier.size(14.dp)
             )
         }
     }
+}
+
+/** 合集与直播头像共用同一组音柱形态和节奏。 */
+@Composable
+private fun CollectionPlaybackIndicator(
+    isPlaying: Boolean,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    com.android.purebilibili.core.ui.components.PlaybackBarsIndicator(
+        isPlaying = isPlaying,
+        color = color,
+        contentDescription = if (isPlaying) "合集视频正在播放" else "合集视频已暂停",
+        modifier = modifier,
+    )
 }

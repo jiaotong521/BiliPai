@@ -1,35 +1,32 @@
 package com.android.purebilibili.feature.home.components.miuix
 
-import android.annotation.SuppressLint
-import android.graphics.RuntimeShader
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.VisibilityThreshold
-import androidx.compose.animation.core.spring
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ShaderBrush
-import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.util.fastCoerceIn
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import org.intellij.lang.annotations.Language
 
-@SuppressLint("NewApi")
 class InteractiveHighlight(
     val animationScope: CoroutineScope,
-    val position: (size: Size, offset: Offset) -> Offset = { _, offset -> offset }
+    val position: (size: Size, offset: Offset) -> Offset = { _, offset -> offset },
+    /** A dock can use its existing press spring for drag, tap and pager feedback. */
+    val pressProgressProvider: (() -> Float)? = null,
+    /** Optional motion light, combined with the pointer light without replacing its lifetime. */
+    val motionProgressProvider: (() -> Float)? = null,
 ) {
 
-    private val pressProgressAnimationSpec =
-        spring(0.5f, 300f, 0.001f)
-    private val positionAnimationSpec =
-        spring(0.5f, 300f, Offset.VisibilityThreshold)
+    private val pressProgressAnimationSpec = interactiveHighlightPressSpec()
+    private val positionAnimationSpec = interactiveHighlightPositionSpec()
 
     private val pressProgressAnimation =
         Animatable(0f, 0.001f)
@@ -37,76 +34,73 @@ class InteractiveHighlight(
         Animatable(Offset.Zero, Offset.VectorConverter, Offset.VisibilityThreshold)
 
     private var startPosition = Offset.Zero
+    private var requestedPosition = Offset.Zero
+    val currentPosition: Offset get() = requestedPosition
     val offset: Offset get() = positionAnimation.value - startPosition
 
-    @Language("AGSL")
-    private val shader =
-        RuntimeShader(
-            """
-    uniform float2 size;
-    layout(color) uniform half4 color;
-    uniform float radius;
-    uniform float2 position;
+    private var pressJob: Job? = null
+    private var positionJob: Job? = null
 
-    half4 main(float2 coord) {
-        float dist = distance(coord, position);
-        float intensity = smoothstep(radius, radius * 0.5, dist);
-        return color * intensity;
-    }"""
-        )
-
-    val modifier: Modifier =
-        Modifier.drawWithContent {
-            val progress = pressProgressAnimation.value
-            if (progress > 0f) {
-                drawRect(
-                    Color.White.copy(0.06f * progress),
-                    blendMode = BlendMode.Plus
-                )
-                shader.apply {
-                    val position = position(size, positionAnimation.value)
-                    setFloatUniform("size", size.width, size.height)
-                    setColorUniform("color", Color.White.copy(0.12f * progress).toArgb())
-                    setFloatUniform("radius", size.minDimension * 1.2f)
-                    setFloatUniform(
-                        "position",
-                        position.x.fastCoerceIn(0f, size.width),
-                        position.y.fastCoerceIn(0f, size.height)
-                    )
-                }
-                drawRect(
-                    ShaderBrush(shader),
-                    blendMode = BlendMode.Plus
-                )
-            }
-
-            drawContent()
+    fun setPressed(pressed: Boolean) {
+        if (pressProgressProvider != null) return
+        pressJob?.cancel()
+        pressJob = animationScope.launch {
+            pressProgressAnimation.animateTo(
+                if (pressed) 1f else 0f,
+                pressProgressAnimationSpec,
+            )
         }
+    }
 
-    val gestureModifier: Modifier =
-        Modifier.pointerInput(animationScope) {
-            inspectDragGestures(
-                onDragStart = { down ->
-                    startPosition = down.position
-                    animationScope.launch {
-                        launch { pressProgressAnimation.animateTo(1f, pressProgressAnimationSpec) }
-                        launch { positionAnimation.snapTo(startPosition) }
-                    }
-                },
-                onDragEnd = {
-                    animationScope.launch {
-                        launch { pressProgressAnimation.animateTo(0f, pressProgressAnimationSpec) }
-                        launch { positionAnimation.animateTo(startPosition, positionAnimationSpec) }
-                    }
-                },
-                onDragCancel = {
-                    animationScope.launch {
-                        launch { pressProgressAnimation.animateTo(0f, pressProgressAnimationSpec) }
-                        launch { positionAnimation.animateTo(startPosition, positionAnimationSpec) }
-                    }
-                }
-            ) { change, _ ->
-                animationScope.launch { positionAnimation.snapTo(change.position) }
-            }
+    /** Read in draw so non-pointer selection light shares the capsule's current geometry. */
+    var drawPositionProvider: ((Size) -> Offset?)? = null
+
+    private val highlight = com.android.purebilibili.core.ui.components.AppPressHighlight()
+
+    val modifier: Modifier = Modifier.drawWithContent {
+        drawContent()
+        val pill = Path().apply {
+            addRoundRect(RoundRect(0f, 0f, size.width, size.height, CornerRadius(size.minDimension / 2f)))
         }
+        clipPath(pill) {
+            highlight.draw(
+                this,
+                maxOf(
+                    pressProgressProvider?.invoke() ?: pressProgressAnimation.value,
+                    motionProgressProvider?.invoke() ?: 0f,
+                ),
+                drawPositionProvider?.invoke(size) ?: position(size, positionAnimation.value),
+            )
+        }
+    }
+
+    /** Driven by the indicator's existing pointer owner; never installs another recognizer. */
+    fun start(point: Offset) {
+        startPosition = point
+        updatePosition(point)
+        setPressed(true)
+    }
+
+    fun updatePosition(point: Offset) {
+        requestedPosition = point
+        positionJob?.cancel()
+        positionJob = animationScope.launch { positionAnimation.snapTo(point) }
+    }
+
+    fun release() {
+        setPressed(false)
+        positionJob?.cancel()
+        positionJob = animationScope.launch {
+            positionAnimation.animateTo(startPosition, positionAnimationSpec)
+        }
+    }
+    /** Compatibility observer for side rails without an indicator feedback callback. */
+    val gestureModifier: Modifier = Modifier.pointerInput(this) {
+        inspectDragGestures(
+            onDragStart = { start(it.position) },
+            onDragEnd = { release() },
+            onDragCancel = { release() },
+        ) { change, _ -> updatePosition(change.position) }
+    }
+
 }

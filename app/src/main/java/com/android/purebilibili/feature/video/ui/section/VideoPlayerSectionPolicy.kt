@@ -1,39 +1,71 @@
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package com.android.purebilibili.feature.video.ui.section
 
+import android.os.Build
 import android.view.SurfaceView
 import android.view.TextureView
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.dp
+import com.android.purebilibili.core.ui.AppTopTabPresentation
+import com.android.purebilibili.core.ui.transition.VideoSharedTransitionPlaybackIntent
 import com.android.purebilibili.feature.video.ui.components.GesturePercentMotionDefaults
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.ui.PlayerView
+import com.android.purebilibili.core.store.DanmakuSettingsScope
+import com.android.purebilibili.core.store.resolveDanmakuSettingsScope
 import com.android.purebilibili.feature.video.playback.session.PlaybackSeekSessionState
 import com.android.purebilibili.feature.video.playback.session.shouldUsePlaybackSeekSessionPosition
-import io.github.alexzhirkevich.cupertino.icons.CupertinoIcons
-import io.github.alexzhirkevich.cupertino.icons.filled.*
-import io.github.alexzhirkevich.cupertino.icons.outlined.*
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
 internal const val INITIAL_PLAYER_CONTROLS_VISIBLE = false
 internal const val INITIAL_PLAYER_CHROME_AUTO_HIDE_HANDLED = true
 
+internal fun resolvePlayerInteractionIdentity(
+    routeBvid: String,
+    playbackBvid: String?,
+    playbackCid: Long?
+): String {
+    val effectiveBvid = playbackBvid?.takeIf { it.isNotBlank() } ?: routeBvid
+    return "${effectiveBvid}_${playbackCid?.coerceAtLeast(0L) ?: 0L}"
+}
+
 enum class VideoGestureMode { None, Brightness, Volume, Seek, SwipeToFullscreen }
 
-private const val PLAYER_DRAG_GESTURE_BOTTOM_EXCLUSION_BUFFER_DP = 12
 private const val PLAYBACK_STALL_LOG_THRESHOLD_MS = 700L
 private const val VIDEO_PLAYER_COVER_FADE_ENTER_DURATION_MILLIS = 200
-private const val VIDEO_PLAYER_COVER_FADE_EXIT_DURATION_MILLIS = 300
-private const val VIDEO_PLAYER_COVER_REVEAL_HOLD_DELAY_MILLIS = 96
-private const val VIDEO_PLAYER_SURFACE_REVEAL_DURATION_MILLIS = 220
-private const val VIDEO_PLAYER_SURFACE_REVEAL_INITIAL_SCALE = 0.985f
-private const val LONG_PRESS_SPEED_TAP_SUPPRESSION_WINDOW_MS = 450L
+// 封面退出时长不再固定：由 surface 淡入时长派生，保证两者同一条时间轴（见
+// resolveVideoPlayerCoverMotionSpec）。历史上这里是 300ms，比 surface 的 140ms 慢，
+// 中间的「已不透明 surface + 半透明封面」窗口就是进场时视频位置「叠一层黑」的来源。
+private const val VIDEO_PLAYER_SURFACE_REVEAL_DURATION_MILLIS = 140
 private const val LONG_PRESS_SPEED_UNLOCK_HOLD_MS = 1_000L
 
 internal const val LONG_PRESS_SPEED_LOCK_ZONE_HEIGHT_DP = 96
 internal const val FOREGROUND_SURFACE_RECOVERY_DELAY_MS = 80L
 internal const val FOREGROUND_SURFACE_RECOVERY_TIMEOUT_MS = 1200L
+
+/**
+ * Shared card-return 期间，播放器内层封面必须与外层 shared shell 使用同一来源卡圆角。
+ *
+ * 否则外层 overlay 已按来源卡裁切、内层封面仍按播放器圆角裁切，卸层落位时会发生
+ * 一帧的双重形变，看起来像封面轻微抖动。
+ */
+internal fun resolveVideoPlayerCoverCornerDp(
+    sourceCornerDp: Int,
+    playerCornerDp: Int,
+    preserveSourceCardCornerDuringSharedReturn: Boolean,
+): Int {
+    return if (preserveSourceCardCornerDuringSharedReturn) {
+        sourceCornerDp.coerceAtLeast(0)
+    } else {
+        playerCornerDp.coerceAtLeast(0)
+    }
+}
 
 internal data class LongPressSpeedLockSensitivityPolicy(
     val lockZoneHeightDp: Int,
@@ -66,8 +98,31 @@ internal fun resolveLongPressSpeedLockZoneVisualPolicy(): LongPressSpeedLockZone
         edgeGradientHeightDp = 16,
         centerMarkerHeightDp = 4,
         centerMarkerWidthFraction = 0.22f,
-        bottomVisualOffsetDp = 10
+        bottomVisualOffsetDp = 0
     )
+}
+
+internal fun resolveSubtitleBottomOffsetPx(
+    isFullscreen: Boolean,
+    controlsVisible: Boolean,
+    positionLocked: Boolean = false,
+    navigationInsetPx: Int,
+    bottomControlsHeightPx: Int,
+    density: Float,
+    persistentBottomOverlayHeightPx: Int = 0,
+): Int {
+    val safeDensity = density.takeIf { it.isFinite() && it > 0f } ?: 1f
+    fun dp(value: Int): Int = (value * safeDensity).roundToInt()
+    if (!isFullscreen && (!controlsVisible || positionLocked)) return dp(32)
+    val safeInset = if (isFullscreen) navigationInsetPx.coerceAtLeast(0) else 0
+    val baseOffset = if (controlsVisible && !positionLocked) {
+        maxOf(safeInset + bottomControlsHeightPx.coerceAtLeast(0) + dp(8), dp(56))
+    } else {
+        maxOf(safeInset + dp(16), dp(24))
+    }
+    return if (persistentBottomOverlayHeightPx > 0) {
+        maxOf(baseOffset, safeInset + persistentBottomOverlayHeightPx + dp(8))
+    } else baseOffset
 }
 
 internal fun resolveLongPressSpeedLockSensitivityPolicy(
@@ -107,21 +162,6 @@ internal fun shouldKeepVideoPlaybackAwake(
     return isPlaying || playbackState == Player.STATE_BUFFERING || playbackState == Player.STATE_READY
 }
 
-internal fun resolveVideoPlayerBottomGestureExclusionHeightDp(
-    controlBarBottomPaddingDp: Int,
-    progressSpacingDp: Int,
-    progressContainerHeightDp: Int,
-    controlRowHeightDp: Int,
-    extraBufferDp: Int = PLAYER_DRAG_GESTURE_BOTTOM_EXCLUSION_BUFFER_DP
-): Int {
-    return (
-        controlBarBottomPaddingDp +
-            progressSpacingDp +
-            progressContainerHeightDp +
-            controlRowHeightDp +
-            extraBufferDp
-        ).coerceAtLeast(0)
-}
 
 internal fun shouldIgnoreVideoPlayerDragStart(
     offsetY: Float,
@@ -134,6 +174,17 @@ internal fun shouldIgnoreVideoPlayerDragStart(
     val clampedBottomExclusionPx = bottomGestureExclusionPx.coerceIn(0f, containerHeightPx)
     return offsetY < clampedTopExclusionPx ||
         offsetY >= (containerHeightPx - clampedBottomExclusionPx)
+}
+
+internal fun shouldIgnoreVideoPlayerHorizontalEdgeDragStart(
+    offsetX: Float,
+    containerWidthPx: Float,
+    isFullscreen: Boolean,
+    edgeGestureExclusionPx: Float,
+): Boolean {
+    if (!isFullscreen || containerWidthPx <= 0f) return false
+    val exclusion = edgeGestureExclusionPx.coerceIn(0f, containerWidthPx / 2f)
+    return offsetX < exclusion || offsetX >= containerWidthPx - exclusion
 }
 
 internal data class VideoPlayerGestureVerticalExclusions(
@@ -242,6 +293,31 @@ internal fun shouldShowHiResLongPressCompatHint(
     return requestedSpeed - effectiveSpeed > 0.001f
 }
 
+internal fun shouldShowLongPressSpeedLockHint(
+    hintRequested: Boolean,
+    isLongPressing: Boolean,
+    isInPipMode: Boolean,
+): Boolean {
+    return hintRequested && !isLongPressing && !isInPipMode
+}
+
+internal fun shouldShowLongPressSpeedFeedback(
+    isLongPressing: Boolean,
+    isPlaybackSurfaceActive: Boolean,
+    hintDismissed: Boolean,
+    hintHidden: Boolean,
+): Boolean = isLongPressing && isPlaybackSurfaceActive && !hintDismissed && !hintHidden
+
+/**
+ * 长按倍速浮层上的关闭（×）按钮。
+ *
+ * 默认关闭：第二指点 × 会打断长按手势（多点触控/抬手），容易把加速弄没。
+ * 该开关不进设置页 UI，仅作隐藏偏好（adb / 备份 / 调试）。
+ */
+internal fun shouldShowLongPressSpeedHintCloseButton(
+    closeButtonEnabled: Boolean,
+): Boolean = closeButtonEnabled
+
 internal fun shouldEnableLongPressSpeedGesture(
     isScreenLocked: Boolean,
     scale: Float,
@@ -251,11 +327,12 @@ internal fun shouldEnableLongPressSpeedGesture(
 }
 
 internal fun shouldEnableViewportTransformGesture(
-    isScreenLocked: Boolean
+    isScreenLocked: Boolean,
+    isFullscreen: Boolean,
+    isPortraitFullscreen: Boolean,
+    isVerticalVideo: Boolean,
 ): Boolean {
-    // Disable pinch-to-zoom/pan during playback to avoid accidental viewport
-    // distortion while keeping aspect ratio changes inside the explicit menu.
-    return false
+    return !isScreenLocked && (isFullscreen || isPortraitFullscreen || isVerticalVideo)
 }
 
 fun resolveSystemStreamVolumeFromGesture(
@@ -388,17 +465,6 @@ internal fun shouldRestorePlaybackParametersAfterLongPressRelease(
     return gestureEnded && wasLongPressing && !longPressSpeedLocked
 }
 
-internal fun shouldToggleControlsForVideoTap(
-    longPressSpeedEndedAtMs: Long,
-    nowMs: Long,
-    suppressionWindowMs: Long = LONG_PRESS_SPEED_TAP_SUPPRESSION_WINDOW_MS
-): Boolean {
-    if (longPressSpeedEndedAtMs <= 0L || suppressionWindowMs <= 0L) return true
-    val elapsedSinceLongPressEndMs = nowMs - longPressSpeedEndedAtMs
-    if (elapsedSinceLongPressEndMs < 0L) return true
-    return elapsedSinceLongPressEndMs > suppressionWindowMs
-}
-
 internal fun resolveVerticalGestureMode(
     isFullscreen: Boolean,
     isSwipeUp: Boolean,
@@ -429,6 +495,30 @@ internal fun resolveVerticalGestureMode(
     }
 }
 
+/** Inline ambient capture stops while portrait fullscreen owns playback. */
+internal fun shouldCaptureInlineStatusBarAmbientFrame(
+    contentTopInsetPx: Float,
+    isFullscreen: Boolean,
+    isPortraitFullscreen: Boolean,
+    isInPipMode: Boolean,
+    hostLifecycleStarted: Boolean,
+    statusBarHazeEnabled: Boolean,
+): Boolean {
+    return contentTopInsetPx > 0f &&
+        !isFullscreen &&
+        !isPortraitFullscreen &&
+        !isInPipMode &&
+        hostLifecycleStarted &&
+        statusBarHazeEnabled
+}
+
+/** Inline player gestures yield touch to PortraitVideoPager during portrait fullscreen. */
+internal fun shouldEnableInlinePlayerGestures(
+    isPortraitFullscreen: Boolean,
+): Boolean {
+    return !isPortraitFullscreen
+}
+
 internal fun shouldShowDanmakuLayers(
     isInPipMode: Boolean,
     danmakuEnabled: Boolean,
@@ -442,40 +532,89 @@ internal fun shouldShowDanmakuLayers(
     return true
 }
 
-internal fun resolveDanmakuLayerTopOffsetPx(
+internal fun shouldPollVideoPlayerProgress(
+    controlsVisible: Boolean,
+    gestureVisible: Boolean,
+    isSliderMoving: Boolean,
+    hasPendingSeek: Boolean
+): Boolean {
+    return controlsVisible || gestureVisible || isSliderMoving || hasPendingSeek
+}
+
+/**
+ * Persisted profile keys remain unchanged. Tablet detail players share fullscreen styling
+ * in both embedded and fullscreen layouts; compact-phone inline styling stays independent.
+ */
+internal fun resolveVideoPlayerDanmakuSettingsScope(
     isFullscreen: Boolean,
-    statusBarHeightPx: Int
-): Int {
-    return 0
+    isPortraitFullscreen: Boolean,
+    useTabletLayout: Boolean = false,
+): DanmakuSettingsScope {
+    return resolveDanmakuSettingsScope(
+        isLandscape = isFullscreen || isPortraitFullscreen || useTabletLayout
+    )
+}
+
+/**
+ * 官方全屏手势快进曲线：满屏宽度对应的跳转秒数，按时长分四段。
+ *
+ * 来源：官方客户端 PlayerSeekWidget3 的系数计算。短片一屏划完，长片按对数增长，
+ * 避免两小时的视频一屏只跳几秒。四段在 60s / 1380s / 2700s 处接续，是连续的。
+ *
+ *     时长 < 60s          → 满屏 = 全片
+ *     60s ~ 23min         → 100 - ((t-1380)/209)^2
+ *     23min ~ 45min       → 100 + ((t-1380)/295)^2
+ *     >= 45min            → 177 * atan((t-2700)/1000) + 120
+ *
+ * 实际系数：1min→60s，10min→86s，30min→102s，60min→250s，120min→359s。
+ */
+internal fun resolveOfficialSwipeSeekSecondsPerScreen(durationMs: Long): Float {
+    if (durationMs <= 0L) return 0f
+    val seconds = durationMs / 1000.0
+    return when {
+        seconds < 60.0 -> seconds.toFloat()
+        seconds < 1380.0 -> {
+            val offset = (seconds - 1380.0) / 209.0
+            (100.0 - offset * offset).toFloat()
+        }
+        seconds < 2700.0 -> {
+            val offset = (seconds - 1380.0) / 295.0
+            (100.0 + offset * offset).toFloat()
+        }
+        else -> (177.0 * kotlin.math.atan((seconds - 2700.0) / 1000.0) + 120.0).toFloat()
+    }
 }
 
 internal fun resolveHorizontalSeekDeltaMs(
-    isFullscreen: Boolean,
-    fullscreenSwipeSeekEnabled: Boolean,
     totalDragDistanceX: Float,
     containerWidthPx: Float,
-    fullscreenSwipeSeekSeconds: Int?,
-    inlineSwipeSeekSeconds: Int,
-    gestureSensitivity: Float
+    gestureSensitivity: Float,
+    durationMs: Long,
 ): Long? {
-    if (isFullscreen && fullscreenSwipeSeekEnabled) {
-        val seekSeconds = fullscreenSwipeSeekSeconds ?: return null
-        return resolveConfiguredSeekDeltaMs(
-            totalDragDistanceX = totalDragDistanceX,
-            containerWidthPx = containerWidthPx,
-            seekSeconds = seekSeconds.coerceAtLeast(1),
-            gestureSensitivity = gestureSensitivity
-        )
-    }
-    if (!isFullscreen) {
-        return resolveConfiguredSeekDeltaMs(
-            totalDragDistanceX = totalDragDistanceX,
-            containerWidthPx = containerWidthPx,
-            seekSeconds = inlineSwipeSeekSeconds.coerceIn(1, 120),
-            gestureSensitivity = gestureSensitivity
-        )
-    }
-    return (totalDragDistanceX * 200f * gestureSensitivity).toLong()
+    if (containerWidthPx <= 0f || !containerWidthPx.isFinite()) return null
+    if (durationMs <= 0L) return null
+    // 对齐官方：满屏宽度 = resolveOfficialSwipeSeekSecondsPerScreen(duration) 秒。
+    // 手势灵敏度作为最终乘数保留（官方没有这个设置，但不影响曲线形状）。
+    val secondsPerScreen = resolveOfficialSwipeSeekSecondsPerScreen(durationMs)
+    if (secondsPerScreen <= 0f) return null
+    val maxDeltaMs = (durationMs.toDouble()).coerceAtLeast(1.0)
+    val rawDeltaMs = (
+        totalDragDistanceX.toDouble() / containerWidthPx *
+            secondsPerScreen * 1000.0 * gestureSensitivity
+    ).toLong()
+    return rawDeltaMs.coerceIn(-maxDeltaMs.toLong(), maxDeltaMs.toLong())
+}
+
+internal const val VIDEO_PLAYER_HORIZONTAL_SEEK_DOMINANCE_RATIO = 1.2f
+
+internal fun shouldEngageHorizontalPlayerSeek(
+    totalDragDistanceX: Float,
+    totalDragDistanceY: Float,
+): Boolean {
+    val horizontalDistance = abs(totalDragDistanceX)
+    val verticalDistance = abs(totalDragDistanceY)
+    return horizontalDistance >= 1f &&
+        horizontalDistance >= verticalDistance * VIDEO_PLAYER_HORIZONTAL_SEEK_DOMINANCE_RATIO
 }
 
 private fun resolveConfiguredSeekDeltaMs(
@@ -507,6 +646,25 @@ internal fun resolveRelativeSeekTargetPosition(
     }
 }
 
+/**
+ * Seek 拖动的「松手取消」逃生口：手指拖入屏幕顶部左/右两个角落区域时取消本次 seek。
+ * 角落取顶部 1/8 高度 × 左右各 1/8 宽度，与进度条拖动的常用轨迹（屏幕中部）不重叠。
+ */
+internal const val VIDEO_PLAYER_SEEK_CANCEL_EDGE_FRACTION = 0.125f
+
+internal fun isInSeekCancelEscapeZone(
+    positionX: Float,
+    positionY: Float,
+    containerWidthPx: Float,
+    containerHeightPx: Float,
+): Boolean {
+    if (containerWidthPx <= 0f || containerHeightPx <= 0f) return false
+    val edgeX = containerWidthPx * VIDEO_PLAYER_SEEK_CANCEL_EDGE_FRACTION
+    val topY = containerHeightPx * VIDEO_PLAYER_SEEK_CANCEL_EDGE_FRACTION
+    val inCornerColumn = positionX <= edgeX || positionX >= containerWidthPx - edgeX
+    return positionY <= topY && inCornerColumn
+}
+
 internal fun shouldCommitGestureSeek(
     currentPositionMs: Long,
     targetPositionMs: Long,
@@ -515,10 +673,26 @@ internal fun shouldCommitGestureSeek(
     return abs(targetPositionMs - currentPositionMs) >= minDeltaMs
 }
 
+/**
+ * Stepped haptics while scrubbing by horizontal seek:
+ * fire once every [stepMs] of target position change (default 1s ticks).
+ */
+internal fun shouldTriggerSeekStepHaptic(
+    previousTargetMs: Long,
+    currentTargetMs: Long,
+    stepMs: Long = 1_000L
+): Boolean {
+    if (stepMs <= 0L) return false
+    if (previousTargetMs == currentTargetMs) return false
+    return previousTargetMs / stepMs != currentTargetMs / stepMs
+}
+
 internal fun resolveOrientationSwitchHintText(isFullscreen: Boolean): String {
     return if (isFullscreen) "已切换到横屏" else "已切换到竖屏"
 }
 
+/** 上滑/下滑触发全屏的拖动阈值；跟随提示与松手判定共用同一距离。 */
+internal val SwipeToFullscreenDragThresholdDp = 50.dp
 internal fun shouldTriggerFullscreenBySwipe(
     isFullscreen: Boolean,
     reverseGesture: Boolean,
@@ -535,10 +709,51 @@ internal fun shouldTriggerFullscreenBySwipe(
     }
 }
 
+/**
+ * 拖动跟随提示进度 0..1，方向判定与 [shouldTriggerFullscreenBySwipe] 一致：
+ * 非全屏看上滑（reverseGesture 时看下滑），全屏相反；反向拖动钳为 0，不显示提示。
+ */
+internal fun resolveSwipeToFullscreenHintFraction(
+    isFullscreen: Boolean,
+    reverseGesture: Boolean,
+    totalDragDistanceY: Float,
+    thresholdPx: Float,
+): Float {
+    if (thresholdPx <= 0f) return 0f
+    val effectiveDistance = if (!isFullscreen) {
+        if (reverseGesture) totalDragDistanceY else -totalDragDistanceY
+    } else {
+        if (reverseGesture) -totalDragDistanceY else totalDragDistanceY
+    }
+    return (effectiveDistance / thresholdPx).coerceIn(0f, 1f)
+}
+
+/**
+ * Vertical inline videos own a dedicated portrait-fullscreen pager. Routing their completed
+ * upward gesture through the orientation fullscreen toggle can leave the activity in portrait
+ * without ever activating that pager, so dispatch directly to the portrait callback.
+ */
+internal fun shouldEnterPortraitFullscreenFromSwipe(
+    isFullscreen: Boolean,
+    isVerticalVideo: Boolean,
+): Boolean = !isFullscreen && isVerticalVideo
+
+/** 竖向意图明确后在拖动中提交进入，同一次手势只触发一次。 */
+internal fun shouldTriggerPortraitFullscreenDuringDrag(
+    isFullscreen: Boolean,
+    isVerticalVideo: Boolean,
+    reverseGesture: Boolean,
+    totalDragDistanceX: Float,
+    totalDragDistanceY: Float,
+    thresholdPx: Float,
+): Boolean = shouldEnterPortraitFullscreenFromSwipe(isFullscreen, isVerticalVideo) &&
+    kotlin.math.abs(totalDragDistanceY) > kotlin.math.abs(totalDragDistanceX) * 3f &&
+    shouldTriggerFullscreenBySwipe(isFullscreen, reverseGesture, totalDragDistanceY, thresholdPx)
+
 internal fun shouldAllowPlaybackStateAutoFullscreen(
-    smallestScreenWidthDp: Int
+    hasValidWindow: Boolean,
 ): Boolean {
-    return smallestScreenWidthDp > 0
+    return hasValidWindow
 }
 
 internal fun shouldToggleAutoFullscreenForCurrentPlaybackSnapshot(
@@ -548,18 +763,20 @@ internal fun shouldToggleAutoFullscreenForCurrentPlaybackSnapshot(
     playbackState: Int,
     playWhenReady: Boolean,
     hasAutoEnteredFullscreen: Boolean,
-    isFullscreen: Boolean
+    isFullscreen: Boolean,
+    willContinueToNextItem: Boolean = false,
+    autoExitFullscreenMode: com.android.purebilibili.core.store.AutoExitFullscreenMode =
+        if (autoExitFullscreenEnabled) {
+            com.android.purebilibili.core.store.AutoExitFullscreenMode.ALL_PARTS
+        } else {
+            com.android.purebilibili.core.store.AutoExitFullscreenMode.OFF
+        },
 ): Boolean {
-    return shouldToggleAutoFullscreenForPlaybackEvent(
-        autoEnterFullscreenEnabled = autoEnterFullscreenEnabled,
-        autoExitFullscreenEnabled = autoExitFullscreenEnabled,
-        allowPlaybackStateAutoFullscreen = allowPlaybackStateAutoFullscreen,
-        playbackState = playbackState,
-        playWhenReady = playWhenReady,
-        hasAutoEnteredFullscreen = hasAutoEnteredFullscreen,
-        isFullscreen = isFullscreen,
-        previousPlayWhenReady = false
-    )
+    // 这里的快照会在全屏/内嵌播放器切换时重新采样。若播放器仍处于
+    // READY + playWhenReady，退出全屏后会把一次「重新组合」误认成一次
+    // 「开始播放」，从而马上再次进入全屏。自动全屏只能由 Player 的实际
+    // 状态事件处理，不能从当前快照补发。
+    return false
 }
 
 internal fun shouldToggleAutoFullscreenForPlaybackEvent(
@@ -570,7 +787,14 @@ internal fun shouldToggleAutoFullscreenForPlaybackEvent(
     playWhenReady: Boolean,
     hasAutoEnteredFullscreen: Boolean,
     isFullscreen: Boolean,
-    previousPlayWhenReady: Boolean = playWhenReady
+    previousPlayWhenReady: Boolean = playWhenReady,
+    willContinueToNextItem: Boolean = false,
+    autoExitFullscreenMode: com.android.purebilibili.core.store.AutoExitFullscreenMode =
+        if (autoExitFullscreenEnabled) {
+            com.android.purebilibili.core.store.AutoExitFullscreenMode.ALL_PARTS
+        } else {
+            com.android.purebilibili.core.store.AutoExitFullscreenMode.OFF
+        },
 ): Boolean {
     if (!allowPlaybackStateAutoFullscreen) return false
 
@@ -583,9 +807,49 @@ internal fun shouldToggleAutoFullscreenForPlaybackEvent(
             (!previousPlayWhenReady || playbackState == Player.STATE_READY)
     if (shouldEnterFullscreen) return true
 
-    return autoExitFullscreenEnabled &&
-        playbackState == Player.STATE_ENDED &&
-        isFullscreen
+    return shouldAutoExitFullscreenOnPlaybackEnded(
+        mode = autoExitFullscreenMode,
+        isFullscreen = isFullscreen,
+        playbackState = playbackState,
+        willContinueToNextItem = willContinueToNextItem,
+    )
+}
+
+/**
+ * 播放结束是否应退出全屏。
+ * - OFF：不退出
+ * - CURRENT_PART：当前分P/视频结束即退
+ * - ALL_PARTS：仍有下一段（分P/合集/队列）可连播时保持全屏
+ */
+internal fun shouldAutoExitFullscreenOnPlaybackEnded(
+    mode: com.android.purebilibili.core.store.AutoExitFullscreenMode,
+    isFullscreen: Boolean,
+    playbackState: Int,
+    willContinueToNextItem: Boolean,
+): Boolean {
+    if (!isFullscreen || playbackState != Player.STATE_ENDED) return false
+    return when (mode) {
+        com.android.purebilibili.core.store.AutoExitFullscreenMode.OFF -> false
+        com.android.purebilibili.core.store.AutoExitFullscreenMode.CURRENT_PART -> true
+        com.android.purebilibili.core.store.AutoExitFullscreenMode.ALL_PARTS -> !willContinueToNextItem
+    }
+}
+
+/**
+ * 当前条目结束后是否还会自动切到下一段（分P / 合集 / 播放列表）。
+ */
+internal fun resolveWillContinuePlaybackAfterCurrentItem(
+    pageCount: Int,
+    currentPageIndex: Int,
+    hasUgcSeasonNext: Boolean,
+    hasPlaylistNext: Boolean,
+    completionAdvancesToNext: Boolean,
+): Boolean {
+    if (!completionAdvancesToNext) return false
+    val hasNextPage = pageCount > 1 &&
+        currentPageIndex >= 0 &&
+        currentPageIndex < pageCount - 1
+    return hasNextPage || hasUgcSeasonNext || hasPlaylistNext
 }
 
 internal fun resolveGestureIndicatorLabel(mode: VideoGestureMode): String {
@@ -596,24 +860,87 @@ internal fun resolveGestureIndicatorLabel(mode: VideoGestureMode): String {
     }
 }
 
+/**
+ * @deprecated Prefer [com.android.purebilibili.feature.video.ui.gesture.GestureLevelOverlayStyle].
+ * Kept as a thin bridge for older call sites during the overlay redesign.
+ */
+enum class GestureLevelIconStyle {
+    SharedMaterial,
+    Md3,
+    Ios,
+    Miuix
+}
+
+internal fun resolveGestureLevelIconStyle(
+    presentation: AppTopTabPresentation,
+): GestureLevelIconStyle {
+    return when (
+        com.android.purebilibili.feature.video.ui.gesture.resolveGestureLevelOverlayStyle(
+            presentation = presentation,
+        )
+    ) {
+        com.android.purebilibili.feature.video.ui.gesture.GestureLevelOverlayStyle.Md3 ->
+            GestureLevelIconStyle.Md3
+        com.android.purebilibili.feature.video.ui.gesture.GestureLevelOverlayStyle.Ios ->
+            GestureLevelIconStyle.Ios
+        com.android.purebilibili.feature.video.ui.gesture.GestureLevelOverlayStyle.Miuix ->
+            GestureLevelIconStyle.Miuix
+    }
+}
+
+private fun GestureLevelIconStyle.toOverlayStyle():
+    com.android.purebilibili.feature.video.ui.gesture.GestureLevelOverlayStyle {
+    return when (this) {
+        GestureLevelIconStyle.SharedMaterial,
+        GestureLevelIconStyle.Md3 ->
+            com.android.purebilibili.feature.video.ui.gesture.GestureLevelOverlayStyle.Md3
+        GestureLevelIconStyle.Ios ->
+            com.android.purebilibili.feature.video.ui.gesture.GestureLevelOverlayStyle.Ios
+        GestureLevelIconStyle.Miuix ->
+            com.android.purebilibili.feature.video.ui.gesture.GestureLevelOverlayStyle.Miuix
+    }
+}
+
 internal fun resolveGestureDisplayIcon(
     mode: VideoGestureMode,
     percent: Float,
-    fallbackIcon: ImageVector?
+    fallbackIcon: ImageVector?,
+    iconStyle: GestureLevelIconStyle = GestureLevelIconStyle.Md3
 ): ImageVector {
-    val normalizedPercent = percent.coerceIn(0f, 1f)
-    return when (mode) {
-        VideoGestureMode.Brightness -> when {
-            normalizedPercent < 0.34f -> CupertinoIcons.Outlined.SunMax
-            else -> CupertinoIcons.Default.SunMax
-        }
-        VideoGestureMode.Volume -> when {
-            normalizedPercent < 0.01f -> CupertinoIcons.Default.SpeakerSlash
-            normalizedPercent < 0.5f -> CupertinoIcons.Default.Speaker
-            else -> CupertinoIcons.Default.SpeakerWave2
-        }
-        else -> fallbackIcon ?: CupertinoIcons.Filled.SunMax
-    }
+    val kind = com.android.purebilibili.feature.video.ui.gesture.resolveGestureLevelKind(mode)
+        ?: return fallbackIcon
+            ?: com.android.purebilibili.feature.video.ui.gesture.resolveGestureLevelIcon(
+                style = iconStyle.toOverlayStyle(),
+                kind = com.android.purebilibili.feature.video.ui.gesture.GestureLevelKind.Brightness,
+                percent = 1f
+            )
+    return com.android.purebilibili.feature.video.ui.gesture.resolveGestureLevelIcon(
+        style = iconStyle.toOverlayStyle(),
+        kind = kind,
+        percent = percent
+    )
+}
+
+internal fun resolveVolumeGestureIcon(
+    percent: Float,
+    iconStyle: GestureLevelIconStyle
+): ImageVector {
+    return com.android.purebilibili.feature.video.ui.gesture.resolveGestureLevelIcon(
+        style = iconStyle.toOverlayStyle(),
+        kind = com.android.purebilibili.feature.video.ui.gesture.GestureLevelKind.Volume,
+        percent = percent
+    )
+}
+
+internal fun resolveBrightnessGestureIcon(
+    percent: Float,
+    iconStyle: GestureLevelIconStyle
+): ImageVector {
+    return com.android.purebilibili.feature.video.ui.gesture.resolveGestureLevelIcon(
+        style = iconStyle.toOverlayStyle(),
+        kind = com.android.purebilibili.feature.video.ui.gesture.GestureLevelKind.Brightness,
+        percent = percent
+    )
 }
 
 internal data class GestureLevelOverlayVisualPolicy(
@@ -693,21 +1020,22 @@ internal fun resolveGestureLevelOverlayVisualPolicy(
     return when (mode) {
         VideoGestureMode.Brightness -> GestureLevelOverlayVisualPolicy(
             accentColor = Color(0xFFFFD54F),
-            containerAlpha = 0.20f + progress * 0.08f,
-            borderAlpha = 0.52f + progress * 0.22f,
+            // Dark scrim must stay opaque enough for white text on bright frames.
+            containerAlpha = 0.70f + progress * 0.06f,
+            borderAlpha = 0.48f + progress * 0.22f,
             glowAlpha = 0.30f + progress * 0.40f
         )
 
         VideoGestureMode.Volume -> GestureLevelOverlayVisualPolicy(
             accentColor = Color(0xFF80DEEA),
-            containerAlpha = 0.19f + progress * 0.08f,
-            borderAlpha = 0.50f + progress * 0.20f,
+            containerAlpha = 0.70f + progress * 0.06f,
+            borderAlpha = 0.46f + progress * 0.22f,
             glowAlpha = 0.28f + progress * 0.38f
         )
 
         else -> GestureLevelOverlayVisualPolicy(
             accentColor = Color.White,
-            containerAlpha = 0.22f,
+            containerAlpha = 0.72f,
             borderAlpha = 0.50f,
             glowAlpha = 0.32f
         )
@@ -737,16 +1065,76 @@ internal fun resolveGesturePercentDigitChangeMask(
     }
 }
 
+/**
+ * User switch + master card transition → may request TextureView for live morph.
+ * HDR still wins inside [shouldUseTextureSurfaceForFlip] so playback never SDR-washes.
+ */
+internal fun resolveNavigationLiveSurfaceTextureEnabled(
+    cardTransitionEnabled: Boolean,
+    liveSurfaceCardTransitionEnabled: Boolean,
+): Boolean {
+    return cardTransitionEnabled && liveSurfaceCardTransitionEnabled
+}
+
+/**
+ * Live player sharedElement is only useful when TextureView can own the frame.
+ * Under HDR we keep SurfaceView and fall back to cover (or freeze-frame) morph —
+ * never attach live sharedElement on a SurfaceView that Compose cannot transform.
+ */
+internal fun resolveAllowLivePlayerSharedElementForMorph(
+    cardTransitionEnabled: Boolean,
+    liveSurfaceCardTransitionEnabled: Boolean,
+    requiresHdrSurfaceOutput: Boolean = false,
+): Boolean {
+    return cardTransitionEnabled &&
+        liveSurfaceCardTransitionEnabled &&
+        !requiresHdrSurfaceOutput
+}
+
+/**
+ * Whether the PlayerView must use TextureView (instead of SurfaceView).
+ *
+ * SDR uses TextureView for flip transforms and shared-element morph capture.
+ * SurfaceView is required for HDR/Dolby Vision so color metadata reaches the display
+ * (TextureView GPU composition always tone-maps to SDR). When [requiresHdrSurfaceOutput]
+ * is true, navigation morph may fall back to cover-only transitions rather than
+ * forcing TextureView and silently killing HDR.
+ */
 internal fun shouldUseTextureSurfaceForFlip(
     isFlippedHorizontal: Boolean,
     isFlippedVertical: Boolean,
     liveBackPreview: Boolean = false,
-    navigationTransformEnabled: Boolean = false
+    navigationTransformEnabled: Boolean = false,
+    requiresHdrSurfaceOutput: Boolean = false,
+    preferCompatibleTextureSurface: Boolean = com.android.purebilibili.core.util.prefersTextureVideoSurface()
 ): Boolean {
-    return isFlippedHorizontal ||
+    // HDR 保持原始输出；镜像/翻转入口明确提示切换普通画质，不通过纹理合成降为 SDR。
+    if (requiresHdrSurfaceOutput) {
+        return false
+    }
+    return preferCompatibleTextureSurface ||
+        isFlippedHorizontal ||
         isFlippedVertical ||
         liveBackPreview ||
         navigationTransformEnabled
+}
+
+/**
+ * HDR10 (125) / Dolby Vision (126) / HDR Vivid (129), or formats with PQ/HLG transfer,
+ * must output via SurfaceView so the display can enter HDR mode.
+ *
+ * @param colorTransfer Media3 [androidx.media3.common.C] color transfer constant, or 0 if unknown.
+ */
+internal fun requiresHdrSurfaceOutput(
+    currentQualityId: Int,
+    colorTransfer: Int = 0
+): Boolean {
+    if (currentQualityId == 125 || currentQualityId == 126 || currentQualityId == 129) {
+        return true
+    }
+    // Keep numeric constants local so this policy stays free of Media3 imports.
+    // C.COLOR_TRANSFER_ST2084 = 6 (PQ/HDR10), C.COLOR_TRANSFER_HLG = 7.
+    return colorTransfer == 6 || colorTransfer == 7
 }
 
 internal fun shouldEnableLivePlayerSharedElement(
@@ -754,9 +1142,12 @@ internal fun shouldEnableLivePlayerSharedElement(
     allowLivePlayerSharedElement: Boolean,
     hasSharedTransitionScope: Boolean,
     hasAnimatedVisibilityScope: Boolean,
-    forceCoverDuringReturnAnimation: Boolean = false
+    forceCoverDuringReturnAnimation: Boolean = false,
+    requiresHdrSurfaceOutput: Boolean = false,
 ): Boolean {
     if (forceCoverDuringReturnAnimation) return false
+    // HDR: SurfaceView cannot participate in Compose sharedElement morph.
+    if (requiresHdrSurfaceOutput) return false
     return transitionEnabled &&
         allowLivePlayerSharedElement &&
         hasSharedTransitionScope &&
@@ -782,34 +1173,91 @@ internal fun shouldForceCoverDuringReturnAnimation(
     return forceCoverOnly
 }
 
-internal fun shouldShowCoverImage(
-    isFirstFrameRendered: Boolean,
+/**
+ * 即播路径的封面是透明 TextureView 下的底图，不能持续压在视频帧上；
+ * CoverFirst 与返回则继续由封面承担最上层交互/共享 morph。
+ */
+internal fun resolveVideoPlayerCoverLayerZIndex(
+    playbackIntent: VideoSharedTransitionPlaybackIntent,
     forceCoverDuringReturnAnimation: Boolean,
     shouldKeepCoverForManualStart: Boolean,
-    hasStartedSmoothReveal: Boolean
-): Boolean {
-    return shouldHoldEntryCoverUnderlay(
-        isFirstFrameRendered = isFirstFrameRendered,
-        forceCoverDuringReturnAnimation = forceCoverDuringReturnAnimation,
-        shouldKeepCoverForManualStart = shouldKeepCoverForManualStart,
-        hasStartedSmoothReveal = hasStartedSmoothReveal,
-    )
+): Float {
+    return if (
+        forceCoverDuringReturnAnimation ||
+        shouldKeepCoverForManualStart ||
+        playbackIntent == VideoSharedTransitionPlaybackIntent.CoverFirst
+    ) {
+        100f
+    } else {
+        -1f
+    }
 }
+
+/**
+ * TextureView 参与 Compose 合成，允许封面叠化；SurfaceView/HDR 保留硬切退场。
+ * 输出面能力只决定退场方式，不应延长封面生命周期。
+ */
+internal fun canSurfaceParticipateInAlphaCrossfade(
+    usesTextureSurface: Boolean,
+): Boolean = usesTextureSurface
 
 /**
  * 即播进场 / CoverFirst / 返回：封面作为不透明垫底，直到首帧揭示或手动起播。
  * 垫底期间禁止淡入淡出与 Coil crossfade，避免 Hero morph 透出黑底。
+ *
+ * [isSurfaceRevealSettling] = 揭开已开始但播放器 surface 尚未淡入完成。此窗口内封面必须
+ * 继续保持不透明：视频是在封面**之上**淡入的，若封面同步淡出，两层半透明叠加会透出
+ * 下方黑底，产生「先变暗再亮起」的亮度凹陷。正确时序是封面全程垫住，等视频完全不透明
+ * 后再无声移除（此时移除不可见）。
+ *
+ * SurfaceView/HDR 同样必须在揭开落定后移除封面，仅退场时不做 alpha 叠化。
  */
 internal fun shouldHoldEntryCoverUnderlay(
     isFirstFrameRendered: Boolean,
     forceCoverDuringReturnAnimation: Boolean,
     shouldKeepCoverForManualStart: Boolean,
     hasStartedSmoothReveal: Boolean,
+    isSurfaceRevealSettling: Boolean = false,
 ): Boolean {
-    return forceCoverDuringReturnAnimation ||
-        shouldKeepCoverForManualStart ||
-        !isFirstFrameRendered ||
-        !hasStartedSmoothReveal
+    if (forceCoverDuringReturnAnimation || shouldKeepCoverForManualStart) return true
+    if (!isFirstFrameRendered) return true
+    return isSurfaceRevealSettling || !hasStartedSmoothReveal
+}
+
+/**
+ * 只根据实际绘制透明度交接，不能用固定延时推断动画已结束。
+ * 表面暂不可用或揭开被取消时，即使残留 alpha 为 1 也必须保留封面。
+ */
+internal fun shouldFinishVideoPlayerSurfaceReveal(
+    hasStartedSmoothReveal: Boolean,
+    isPlayerSurfaceReady: Boolean,
+    surfaceAlpha: Float,
+): Boolean = hasStartedSmoothReveal && isPlayerSurfaceReady &&
+    surfaceAlpha == 1f
+
+/** 揭开叠化起点（progress=0）封面的降饱和程度；1.0 为完全不动。 */
+private const val VIDEO_PLAYER_COVER_REVEAL_MIN_SATURATION = 0.90f
+
+/**
+ * 封面在揭开叠化窗口内的饱和度。
+ *
+ * 只降饱和、不动亮度：两层相似画面叠化时色彩会轻微叠加强化，把垫底封面
+ * 略微去色可以让混合窗口读作「同一画面」，视频接管后色彩自然「活过来」；
+ * 若动亮度会重新引入叠加期的亮度凹陷。
+ *
+ * [progress] 0 = 揭开刚提交，1 = 已落定（返回 null 即不加 colorFilter）。
+ */
+internal fun resolveVideoPlayerCoverRevealSaturation(progress: Float): Float {
+    return VIDEO_PLAYER_COVER_REVEAL_MIN_SATURATION +
+        (1f - VIDEO_PLAYER_COVER_REVEAL_MIN_SATURATION) * progress.coerceIn(0f, 1f)
+}
+
+internal fun resolveVideoPlayerCoverRevealColorFilter(progress: Float): ColorFilter? {
+    if (progress >= 0.999f) return null
+    val matrix = ColorMatrix().apply {
+        setToSaturation(resolveVideoPlayerCoverRevealSaturation(progress))
+    }
+    return ColorFilter.colorMatrix(matrix)
 }
 
 internal data class VideoPlayerCoverBootstrapState(
@@ -817,51 +1265,73 @@ internal data class VideoPlayerCoverBootstrapState(
     val hasStartedSmoothReveal: Boolean
 )
 
+/**
+ * 进场封面 bootstrap。
+ *
+ * - 可复用已渲染首帧时：跳过等待 FIRST_FRAME 事件，但 **不** 直接把 smooth reveal 置 true。
+ *   否则「详情已出画 → 回首页 → 再进详情」会瞬间揭开画面，封面→画面过渡丢失。
+ * - 全屏保帧只接受当前输出面真实出画的状态，不能仅凭切换意图跳过揭开。
+ * - 其他路径先垫封面，再由 [shouldCommitSmoothCoverReveal] 在绘制边界后揭开。
+ */
 internal fun resolveVideoPlayerCoverBootstrapState(
     forceCoverDuringReturnAnimation: Boolean,
     shouldKeepCoverForManualStart: Boolean,
-    hasPersistedRenderedFirstFrame: Boolean
+    hasPersistedRenderedFirstFrame: Boolean,
+    preserveCurrentFrameOnFullscreenChange: Boolean = false,
+    hasCurrentOutputFrame: Boolean = false,
 ): VideoPlayerCoverBootstrapState {
     val shouldReuseRenderedFrame = !forceCoverDuringReturnAnimation &&
         !shouldKeepCoverForManualStart &&
         hasPersistedRenderedFirstFrame
+    val shouldKeepCurrentFrameVisible = !forceCoverDuringReturnAnimation &&
+        !shouldKeepCoverForManualStart &&
+        preserveCurrentFrameOnFullscreenChange && hasCurrentOutputFrame
     return VideoPlayerCoverBootstrapState(
-        isFirstFrameRendered = shouldReuseRenderedFrame,
-        hasStartedSmoothReveal = shouldReuseRenderedFrame
+        isFirstFrameRendered = shouldReuseRenderedFrame || shouldKeepCurrentFrameVisible,
+        hasStartedSmoothReveal = shouldKeepCurrentFrameVisible,
     )
 }
 
-internal fun shouldStartSmoothCoverReveal(
-    isFirstFrameRendered: Boolean,
+/**
+ * 是否应把 [hasStartedSmoothReveal] 清回 false。
+ * 仅在「强制封面 / 手动起播垫底」时回退；首帧标志短暂抖动不得清掉已排程的揭开。
+ */
+internal fun shouldResetSmoothCoverReveal(
     forceCoverDuringReturnAnimation: Boolean,
-    shouldKeepCoverForManualStart: Boolean
+    shouldKeepCoverForManualStart: Boolean,
 ): Boolean {
-    return isFirstFrameRendered &&
-        !forceCoverDuringReturnAnimation &&
-        !shouldKeepCoverForManualStart
+    return forceCoverDuringReturnAnimation || shouldKeepCoverForManualStart
 }
 
+/**
+ * 首帧到达绘制边界后是否提交揭开。
+ */
+internal fun shouldCommitSmoothCoverReveal(
+    isFirstFrameRendered: Boolean,
+    forceCoverDuringReturnAnimation: Boolean,
+    shouldKeepCoverForManualStart: Boolean,
+): Boolean = isFirstFrameRendered &&
+    !forceCoverDuringReturnAnimation && !shouldKeepCoverForManualStart
+
+/**
+ * 是否处于「CoverFirst 手动起播」垫封面。
+ *
+ * - **自动播放开启时永远 false**：进场封面只靠首帧 / smooth reveal，不得用 manual-start 逻辑
+ *   把 PlayerView 藏掉；否则合集换片 halt 或重进详情时 `playWhenReady` 短暂为 false 会永久卡住封面。
+ * - 关闭自动播放且用户尚未点播：整段 CoverFirst。
+ * - 用户已点播：仅在尚未真正起播（!playWhenReady 且进度仍在片头）时继续垫封面。
+ */
 internal fun shouldKeepCoverForManualStart(
     playWhenReady: Boolean,
     currentPositionMs: Long,
     autoPlayEnabled: Boolean = true,
     hasManualStartPlaybackIntent: Boolean = false
 ): Boolean {
-    if (!autoPlayEnabled && !hasManualStartPlaybackIntent) return true
+    // 自动连播：禁止 manual-start 垫封面与 INVISIBLE surface，否则首帧事件永不来。
+    if (autoPlayEnabled) return false
+    if (!hasManualStartPlaybackIntent) return true
     if (playWhenReady) return false
     return currentPositionMs <= 0L
-}
-
-internal fun shouldShowManualStartPlayButton(
-    shouldKeepCoverForManualStart: Boolean
-): Boolean {
-    return shouldKeepCoverForManualStart
-}
-
-internal fun shouldEnableManualStartCoverOverlay(
-    shouldKeepCoverForManualStart: Boolean
-): Boolean {
-    return shouldKeepCoverForManualStart
 }
 
 internal enum class VideoPlayerCoverContentScaleMode {
@@ -887,27 +1357,26 @@ internal fun resolveVideoPlayerEntryPresentationSpec(
         targetMode == com.android.purebilibili.core.ui.transition.VideoSharedTransitionTargetMode.LandscapeFullscreen ||
             targetMode == com.android.purebilibili.core.ui.transition.VideoSharedTransitionTargetMode.PortraitFullscreen
     val fillCoverViewport = !forceCoverDuringReturnAnimation &&
-        (targetFillsViewport || (shouldKeepCoverForManualStart && isVerticalVideo))
+        (targetFillsViewport || shouldKeepCoverForManualStart || isVerticalVideo)
     return VideoPlayerEntryPresentationSpec(
-        coverUsesSharedBounds = forceCoverDuringReturnAnimation || shouldKeepCoverForManualStart,
+        coverUsesSharedBounds = if (isVerticalVideo) {
+            forceCoverDuringReturnAnimation
+        } else {
+            forceCoverDuringReturnAnimation || shouldKeepCoverForManualStart
+        },
         fillCoverViewport = fillCoverViewport,
         showManualStartPlayButton = shouldKeepCoverForManualStart,
         enableManualStartCoverOverlay = shouldKeepCoverForManualStart,
-        coverContentScaleMode = if (fillCoverViewport && isVerticalVideo) {
+        // 竖屏加载封面按比例裁剪填满当前播放区域，避免横向缩略图居中造成横屏闪现。
+        // 横屏全屏继续完整显示封面；返回封面沿用来源卡片的裁剪规则。
+        coverContentScaleMode = if (
+            !isVerticalVideo && !forceCoverDuringReturnAnimation && targetFillsViewport
+        ) {
             VideoPlayerCoverContentScaleMode.Fit
         } else {
             VideoPlayerCoverContentScaleMode.Crop
         }
     )
-}
-
-internal fun shouldFillPlayerViewportForManualStartCover(
-    shouldKeepCoverForManualStart: Boolean,
-    forceCoverDuringReturnAnimation: Boolean,
-    isVerticalVideo: Boolean = false
-): Boolean {
-    if (forceCoverDuringReturnAnimation) return false
-    return isVerticalVideo
 }
 
 internal enum class ManualStartPlayButtonAnchor {
@@ -928,18 +1397,12 @@ internal data class ManualStartPlayButtonLayoutSpec(
 internal fun resolveManualStartPlayButtonLayoutSpec(): ManualStartPlayButtonLayoutSpec {
     return ManualStartPlayButtonLayoutSpec(
         anchor = ManualStartPlayButtonAnchor.BottomEnd,
-        endPaddingDp = 24,
+        endPaddingDp = 12,
         iconWidthDp = 72,
         iconHeightDp = 60,
         showCoverScrim = false,
         showTopDecorations = false
     )
-}
-
-internal fun shouldDisableCoverFadeAnimation(
-    forceCoverDuringReturnAnimation: Boolean
-): Boolean {
-    return forceCoverDuringReturnAnimation
 }
 
 internal data class VideoPlayerCoverMotionSpec(
@@ -949,32 +1412,39 @@ internal data class VideoPlayerCoverMotionSpec(
 )
 
 internal data class VideoPlayerRevealMotionSpec(
-    val coverRevealHoldDelayMillis: Int,
     val surfaceRevealDurationMillis: Int,
-    val surfaceRevealInitialScale: Float
 )
 
 internal data class VideoPlayerSurfaceRevealSpec(
+    // The card owns spatial motion. Playback reveal only changes opacity.
     val alpha: Float,
-    val scale: Float
 )
 
+/**
+ * 封面在揭开落定前保持不透明，落定后才退场。
+ * TextureView 沿用与 [surfaceRevealDurationMillis] 同源的淡出时长；
+ * [surfaceCanCrossfade] 为 false 时直接移除，不能为避免淡出而永久保留封面。
+ */
 internal fun resolveVideoPlayerCoverMotionSpec(
     forceCoverDuringReturnAnimation: Boolean,
     holdEntryCoverUnderlay: Boolean = false,
+    surfaceRevealDurationMillis: Int = VIDEO_PLAYER_SURFACE_REVEAL_DURATION_MILLIS,
+    surfaceCanCrossfade: Boolean = true,
 ): VideoPlayerCoverMotionSpec {
     return VideoPlayerCoverMotionSpec(
-        shouldAnimateFade = !forceCoverDuringReturnAnimation && !holdEntryCoverUnderlay,
+        shouldAnimateFade = surfaceCanCrossfade &&
+            !forceCoverDuringReturnAnimation && !holdEntryCoverUnderlay,
         enterFadeDurationMillis = VIDEO_PLAYER_COVER_FADE_ENTER_DURATION_MILLIS,
-        exitFadeDurationMillis = VIDEO_PLAYER_COVER_FADE_EXIT_DURATION_MILLIS
+        // 与 surface 淡入同时长，避免中间出现「黑底 + 半透明封面」叠加。
+        exitFadeDurationMillis = surfaceRevealDurationMillis.coerceAtLeast(0),
     )
 }
 
-internal fun resolveVideoPlayerRevealMotionSpec(): VideoPlayerRevealMotionSpec {
+internal fun resolveVideoPlayerRevealMotionSpec(
+    reducedMotion: Boolean = false,
+): VideoPlayerRevealMotionSpec {
     return VideoPlayerRevealMotionSpec(
-        coverRevealHoldDelayMillis = VIDEO_PLAYER_COVER_REVEAL_HOLD_DELAY_MILLIS,
-        surfaceRevealDurationMillis = VIDEO_PLAYER_SURFACE_REVEAL_DURATION_MILLIS,
-        surfaceRevealInitialScale = VIDEO_PLAYER_SURFACE_REVEAL_INITIAL_SCALE
+        surfaceRevealDurationMillis = if (reducedMotion) 80 else VIDEO_PLAYER_SURFACE_REVEAL_DURATION_MILLIS,
     )
 }
 
@@ -982,27 +1452,12 @@ internal fun resolveVideoPlayerSurfaceRevealSpec(
     forceCoverDuringReturnAnimation: Boolean,
     shouldKeepCoverForManualStart: Boolean,
     hasStartedSmoothReveal: Boolean,
-    surfaceRevealInitialScale: Float = VIDEO_PLAYER_SURFACE_REVEAL_INITIAL_SCALE
 ): VideoPlayerSurfaceRevealSpec {
-    if (forceCoverDuringReturnAnimation) {
-        return VideoPlayerSurfaceRevealSpec(alpha = 0f, scale = 1f)
-    }
-    if (shouldKeepCoverForManualStart) {
-        return VideoPlayerSurfaceRevealSpec(alpha = 0f, scale = 1f)
-    }
-    if (!hasStartedSmoothReveal) {
-        return VideoPlayerSurfaceRevealSpec(
-            alpha = 0f,
-            scale = surfaceRevealInitialScale
-        )
-    }
-    return VideoPlayerSurfaceRevealSpec(alpha = 1f, scale = 1f)
-}
-
-internal fun shouldHidePlayerSurfaceDuringForcedReturn(
-    forceCoverDuringReturnAnimation: Boolean
-): Boolean {
-    return forceCoverDuringReturnAnimation
+    return VideoPlayerSurfaceRevealSpec(
+        alpha = if (hasStartedSmoothReveal &&
+            !forceCoverDuringReturnAnimation && !shouldKeepCoverForManualStart
+        ) 1f else 0f,
+    )
 }
 
 internal fun shouldKeepInlinePlayerContentOnReset(
@@ -1012,14 +1467,20 @@ internal fun shouldKeepInlinePlayerContentOnReset(
     return !isPortraitFullscreen && !forceCoverDuringReturnAnimation
 }
 
+/**
+ * 是否展示内联 PlayerView。
+ *
+ * 注意：**不要**因 CoverFirst 垫封面而 INVISIBLE。封面叠层 + surface alpha 已能挡住画面；
+ * 把 View 设为 INVISIBLE 会导致 Surface 不产出 [Player.EVENT_RENDERED_FIRST_FRAME]，
+ * 揭开状态机永远等不到首帧（合集换片 / 重进详情「整页一直封面、只有声音」）。
+ */
 internal fun shouldShowInlinePlayerView(
     isPortraitFullscreen: Boolean,
     forceCoverDuringReturnAnimation: Boolean,
     shouldKeepCoverForManualStart: Boolean = false
 ): Boolean {
-    return !isPortraitFullscreen &&
-        !forceCoverDuringReturnAnimation &&
-        !shouldKeepCoverForManualStart
+    // shouldKeepCoverForManualStart 仅影响封面叠层 / surface alpha，不再隐藏 PlayerView。
+    return !isPortraitFullscreen && !forceCoverDuringReturnAnimation
 }
 
 internal fun shouldEnableCoverImageCrossfade(
@@ -1047,22 +1508,6 @@ internal fun resolvePreferredVideoCoverUrl(
     return ""
 }
 
-internal fun shouldEnableForcedReturnCoverSharedBounds(
-    forceCoverDuringReturnAnimation: Boolean,
-    transitionEnabled: Boolean,
-    hasSharedTransitionScope: Boolean,
-    hasAnimatedVisibilityScope: Boolean,
-    sourceRoute: String?
-): Boolean {
-    return shouldEnableCoverOverlaySharedBounds(
-        useCoverOverlaySharedBounds = forceCoverDuringReturnAnimation,
-        transitionEnabled = transitionEnabled,
-        hasSharedTransitionScope = hasSharedTransitionScope,
-        hasAnimatedVisibilityScope = hasAnimatedVisibilityScope,
-        sourceRoute = sourceRoute
-    )
-}
-
 internal fun shouldEnableCoverOverlaySharedBounds(
     useCoverOverlaySharedBounds: Boolean,
     transitionEnabled: Boolean,
@@ -1074,7 +1519,12 @@ internal fun shouldEnableCoverOverlaySharedBounds(
     // 返回阶段或手动封面阶段由封面承接同一个 cover key，
     // 避免播放器画面和封面各自跑一段动画。
     val allowBySourceRoute = sourceRouteBase == null ||
-        com.android.purebilibili.navigation.isVideoCardReturnTargetRoute(sourceRouteBase)
+        (
+            com.android.purebilibili.navigation.isVideoCardReturnTargetRoute(sourceRouteBase) &&
+                !com.android.purebilibili.core.ui.transition.shouldSkipVideoCardSharedBoundsMorph(
+                    sourceRouteBase
+                )
+        )
     return useCoverOverlaySharedBounds &&
         transitionEnabled &&
         hasSharedTransitionScope &&
@@ -1091,29 +1541,6 @@ internal fun resolveForcedReturnCoverSharedElementSourceRoute(sourceRoute: Strin
     }
 }
 
-internal fun shouldUseReturnLandingMotionForForcedReturnCover(
-    forceCoverDuringReturnAnimation: Boolean
-): Boolean {
-    return forceCoverDuringReturnAnimation
-}
-
-internal fun shouldPromoteFirstFrameByPlaybackFallback(
-    isFirstFrameRendered: Boolean,
-    forceCoverDuringReturnAnimation: Boolean,
-    playbackState: Int,
-    playWhenReady: Boolean,
-    currentPositionMs: Long,
-    videoWidth: Int,
-    videoHeight: Int
-): Boolean {
-    if (isFirstFrameRendered || forceCoverDuringReturnAnimation) return false
-    val hasVideoTrack = videoWidth > 0 && videoHeight > 0
-    return hasVideoTrack &&
-        playWhenReady &&
-        playbackState == Player.STATE_READY &&
-        currentPositionMs > 300L
-}
-
 internal fun shouldAutoHidePlayerChromeOnPlaybackStart(
     showControls: Boolean,
     hasAutoHiddenForCurrentVideo: Boolean,
@@ -1128,6 +1555,44 @@ internal fun shouldAutoHidePlayerChromeOnPlaybackStart(
         isFirstFrameRendered &&
         !forceCoverDuringReturnAnimation &&
         !isSeekScrubbing
+}
+
+internal enum class MediaSwitchSurfaceRebindAction {
+    SKIP,
+    WAIT_FOR_OUTPUT,
+    REBIND
+}
+
+internal fun resolveMediaSwitchSurfaceRebindAction(
+    hasSuccessPlaybackIdentity: Boolean,
+    shouldBindInlinePlayerView: Boolean,
+    isInPipMode: Boolean,
+    hasPlayerView: Boolean,
+    mediaItemCount: Int
+): MediaSwitchSurfaceRebindAction {
+    if (!hasSuccessPlaybackIdentity || !shouldBindInlinePlayerView || isInPipMode) {
+        return MediaSwitchSurfaceRebindAction.SKIP
+    }
+    if (!hasPlayerView || mediaItemCount <= 0) {
+        return MediaSwitchSurfaceRebindAction.WAIT_FOR_OUTPUT
+    }
+    return MediaSwitchSurfaceRebindAction.REBIND
+}
+
+internal fun shouldRetryMediaSwitchSurfaceRebind(
+    hasRenderedFirstFrame: Boolean,
+    shouldBindInlinePlayerView: Boolean,
+    isInPipMode: Boolean,
+    hasPlayerView: Boolean,
+    playWhenReady: Boolean,
+    playbackState: Int
+): Boolean {
+    return !hasRenderedFirstFrame &&
+        shouldBindInlinePlayerView &&
+        !isInPipMode &&
+        hasPlayerView &&
+        playWhenReady &&
+        playbackState == Player.STATE_READY
 }
 
 internal fun shouldRebindPlayerSurfaceOnForeground(
@@ -1190,11 +1655,33 @@ internal fun shouldBindInlinePlayerViewToPlayer(
     isPortraitFullscreen: Boolean,
     hostLifecycleStarted: Boolean,
     isInPipMode: Boolean,
-    liveBackPreview: Boolean = false
+    liveBackPreview: Boolean = false,
+    retainBoundSurfaceForReturn: Boolean = false,
 ): Boolean {
     return !isPortraitFullscreen &&
-        (hostLifecycleStarted || isInPipMode || liveBackPreview)
+        (hostLifecycleStarted || isInPipMode || liveBackPreview || retainBoundSurfaceForReturn)
 }
+
+/** 仅延续前台退场 entry 已有的输出，不为隐藏页创建或抢占播放器绑定。 */
+internal fun shouldRetainInlineSurfaceForCardReturn(
+    cardMorphEnabled: Boolean,
+    entryRemoving: Boolean,
+    windowStarted: Boolean,
+    hasBoundPlayer: Boolean,
+): Boolean = cardMorphEnabled && entryRemoving && windowStarted && hasBoundPlayer
+
+/**
+ * 退出竖屏全屏后，是否需要为保留的内联 PlayerView 显式重绑 surface。
+ * 竖屏全屏期间播放输出交给 pager 的 view，内联 view 的 surface 已被接管；
+ * 回到内联时保留 PlayerView 实例（不再整 View 重建），仅重绑输出即可恢复画面。
+ */
+internal fun shouldRebindInlineSurfaceAfterPortraitFullscreenExit(
+    wasPortraitFullscreen: Boolean,
+    isPortraitFullscreen: Boolean,
+    shouldBindInlinePlayerView: Boolean,
+    hasPlayerView: Boolean,
+): Boolean = wasPortraitFullscreen && !isPortraitFullscreen &&
+    shouldBindInlinePlayerView && hasPlayerView
 
 internal fun shouldRecoverInlinePlayerAfterPredictiveBackCancel(
     recoveryGeneration: Int,
@@ -1217,9 +1704,24 @@ internal fun shouldLoadDanmakuForForegroundHost(
 
 internal fun rebindPlayerSurfaceIfNeeded(
     playerView: PlayerView,
-    player: Player
+    player: Player,
+    sdkInt: Int = Build.VERSION.SDK_INT,
 ) {
-    when (val videoSurface = playerView.videoSurfaceView) {
+    val videoSurface = playerView.videoSurfaceView
+    // Android 9/native SurfaceView only: avoid clearing a live decoder output merely to
+    // reassert it. Media3 can synchronously wait when replacing that output with null.
+    // Keep explicit output selection for retained views whose player reference is still
+    // correct but whose surface was taken by another view. TextureView creates an owned
+    // Surface on each assignment, so it and all other API levels retain the recovery path.
+    if (sdkInt == 28 && videoSurface is SurfaceView) {
+        if (playerView.player !== player) {
+            playerView.player = player
+        } else {
+            player.setVideoSurfaceView(videoSurface)
+        }
+        return
+    }
+    when (videoSurface) {
         is TextureView -> {
             player.clearVideoTextureView(videoSurface)
         }
@@ -1231,7 +1733,7 @@ internal fun rebindPlayerSurfaceIfNeeded(
         playerView.player = null
     }
     playerView.player = player
-    when (val videoSurface = playerView.videoSurfaceView) {
+    when (videoSurface) {
         is TextureView -> {
             player.setVideoTextureView(videoSurface)
         }

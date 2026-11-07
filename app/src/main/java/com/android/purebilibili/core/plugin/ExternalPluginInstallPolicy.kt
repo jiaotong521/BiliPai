@@ -1,5 +1,8 @@
 package com.android.purebilibili.core.plugin
 
+import com.android.purebilibili.plugin.sdk.PluginCapability
+import com.android.purebilibili.plugin.sdk.PluginCapabilityManifest
+
 data class ExternalPluginPackageDescriptor(
     val manifest: PluginCapabilityManifest,
     val packageSha256: String,
@@ -27,7 +30,8 @@ private val SENSITIVE_PLUGIN_CAPABILITIES = setOf(
     PluginCapability.LOCAL_FEEDBACK_READ,
     PluginCapability.NETWORK,
     PluginCapability.PLUGIN_STORAGE,
-    PluginCapability.EXTERNAL_MEDIA_PLAYBACK
+    PluginCapability.EXTERNAL_MEDIA_PLAYBACK,
+    PluginCapability.FEED_SOURCE
 )
 
 fun evaluateExternalPluginInstall(

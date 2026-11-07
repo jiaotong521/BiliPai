@@ -14,6 +14,8 @@ import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.math.roundToInt
+import com.android.purebilibili.data.repository.LiveVoteInfo
+import com.android.purebilibili.data.repository.LiveVoteOption
 
 private val liveRealtimeJson = Json {
     ignoreUnknownKeys = true
@@ -32,16 +34,18 @@ internal sealed interface LiveRealtimeAction {
     data class RemoveSuperChats(val ids: List<Long>) : LiveRealtimeAction
     data class RecallDanmaku(val id: String) : LiveRealtimeAction
     data class RefreshRedPocket(val message: String) : LiveRealtimeAction
+    data class UpdateVote(val vote: LiveVoteInfo, val announcement: LiveDanmakuItem) : LiveRealtimeAction
 }
 
 internal fun resolveLiveRealtimeAction(
     json: JsonObject,
-    myMid: Long = 0L
+    myMid: Long = 0L,
+    nowEpochSeconds: Long = System.currentTimeMillis() / 1_000L,
 ): LiveRealtimeAction {
     val cmd = json.string("cmd")
     return when {
         cmd.startsWith("DANMU_MSG") -> parseLiveDanmakuMessage(json, myMid)
-        cmd == "SUPER_CHAT_MESSAGE" || cmd == "SUPER_CHAT_MESSAGE_JPN" -> parseLiveSuperChat(json)
+        cmd == "SUPER_CHAT_MESSAGE" || cmd == "SUPER_CHAT_MESSAGE_JPN" -> parseLiveSuperChat(json, nowEpochSeconds)
         cmd == "SUPER_CHAT_MESSAGE_DELETE" -> parseSuperChatDelete(json)
         cmd == "WATCHED_CHANGE" -> {
             val data = json.obj("data")
@@ -50,8 +54,8 @@ internal fun resolveLiveRealtimeAction(
             if (text.isBlank()) LiveRealtimeAction.Ignore else LiveRealtimeAction.UpdateWatchedText(text)
         }
         cmd == "ONLINE_RANK_COUNT" -> {
-            val count = json.obj("data")?.long("count") ?: 0L
-            if (count <= 0L) LiveRealtimeAction.Ignore else LiveRealtimeAction.UpdateOnlineRankCount(count)
+            val count = (json.obj("data")?.get("count") as? JsonPrimitive)?.contentOrNull?.toLongOrNull()
+            if (count == null || count < 0L) LiveRealtimeAction.Ignore else LiveRealtimeAction.UpdateOnlineRankCount(count)
         }
         cmd == "ROOM_CHANGE" || cmd == "ROOM_REAL_TIME_MESSAGE_UPDATE" -> {
             val title = json.obj("data")?.string("title").orEmpty()
@@ -96,24 +100,32 @@ private fun parseLiveDanmakuMessage(json: JsonObject, myMid: Long): LiveRealtime
     val checkInfo = info.obj(9)
     val medalArray = info.array(3)
     val levelArray = info.array(4)
-    val uid = user.long(0)
+    val modernUser = meta.obj(15)?.obj("user")
+    val messageMedal = com.android.purebilibili.data.model.response.parseLiveMessageMedal(modernUser?.obj("medal"))
+    val uid = modernUser?.long("uid")?.takeIf { it > 0L } ?: user.long(0)
+    val directEmote = com.android.purebilibili.data.model.response.parseLiveMessageEmote(meta.obj(13))
 
     return LiveRealtimeAction.EmitChat(
         LiveDanmakuItem(
             text = text,
-            color = meta.int(3, 16777215),
-            mode = meta.int(1, 1),
+            rawMessage = json,
+            medal = messageMedal,
+            color = extraPayload?.int("color", meta.int(3, 16777215)) ?: meta.int(3, 16777215),
+            mode = extraPayload?.int("mode", meta.int(1, 1)) ?: meta.int(1, 1),
             uid = uid,
-            uname = user.string(1),
+            uname = modernUser?.obj("base")?.string("name").orEmpty().ifBlank { user.string(1) },
             isSelf = uid > 0L && uid == myMid,
             emoticonUrl = resolveDanmakuEmoticonUrl(text, meta, extraPayload),
-            medalLevel = medalArray?.int(0) ?: 0,
-            medalName = medalArray?.string(1).orEmpty(),
-            medalColor = medalArray?.int(4) ?: 0,
+            emoticon = directEmote,
+            inlineEmotes = com.android.purebilibili.data.model.response.parseLiveMessageEmotes(extraPayload?.obj("emots")),
+            medalLevel = messageMedal?.level ?: if (modernUser == null) medalArray?.int(0) ?: 0 else 0,
+            medalName = messageMedal?.name ?: if (modernUser == null) medalArray?.string(1).orEmpty() else "",
+            medalColor = messageMedal?.backgroundColor ?: if (modernUser == null) medalArray?.int(4) ?: 0 else 0,
             userLevel = levelArray?.int(0) ?: 0,
             isAdmin = user.int(2) == 1,
             guardLevel = info.int(7),
             replyToName = extraPayload?.string("reply_uname").orEmpty(),
+            replyToUid = extraPayload?.long("reply_mid") ?: 0L,
             dmType = extraPayload?.int("dm_type") ?: 0,
             idStr = extraPayload?.string("id_str").orEmpty(),
             reportTs = checkInfo?.long("ts") ?: 0L,
@@ -122,7 +134,7 @@ private fun parseLiveDanmakuMessage(json: JsonObject, myMid: Long): LiveRealtime
     )
 }
 
-private fun parseLiveSuperChat(json: JsonObject): LiveRealtimeAction {
+private fun parseLiveSuperChat(json: JsonObject, nowEpochSeconds: Long): LiveRealtimeAction {
     val data = json.obj("data") ?: return LiveRealtimeAction.Ignore
     val userInfo = data.obj("user_info")
     val uid = data.long("uid").takeIf { it > 0L } ?: userInfo?.long("uid") ?: 0L
@@ -132,6 +144,8 @@ private fun parseLiveSuperChat(json: JsonObject): LiveRealtimeAction {
     val message = data.string("message")
     if (message.isBlank()) return LiveRealtimeAction.Ignore
     val id = data.long("id").takeIf { it > 0L } ?: data.long("message_id")
+    val duration = data.int("time").takeIf { it > 0 } ?: data.int("duration")
+    val medal = com.android.purebilibili.data.model.response.parseLiveSuperChatMedal(data)
     val item = LiveDanmakuItem(
         text = message,
         uid = uid,
@@ -142,8 +156,27 @@ private fun parseLiveSuperChat(json: JsonObject): LiveRealtimeAction {
         superChatBackgroundColor = parseLiveRealtimeColor(
             data["background_bottom_color"] ?: data["background_color"]
         ),
+        superChatHeaderColor = parseLiveRealtimeColor(data["background_color"]),
+        superChatMessageColor = parseLiveRealtimeColor(data["message_font_color"]),
+        superChatNameColor = parseLiveRealtimeColor(userInfo?.get("name_color")),
+        superChatFace = userInfo?.string("face").orEmpty(),
+        superChatFaceFrame = userInfo?.string("face_frame").orEmpty(),
+        superChatHeaderImage = data.string("background_image"),
+        superChatRawInfo = data.toString(),
+        medal = medal,
+        medalName = medal?.name.orEmpty(),
+        medalLevel = medal?.level ?: 0,
+        medalColor = medal?.backgroundColor ?: 0,
         superChatToken = data.string("token"),
-        superChatReportTs = data.long("ts").takeIf { it > 0L } ?: data.long("start_time")
+        superChatReportTs = data.long("ts").takeIf { it > 0L } ?: data.long("start_time"),
+        superChatStartTime = data.long("start_time"),
+        superChatDuration = duration.coerceAtLeast(0),
+        superChatEndTime = resolveLiveSuperChatEndTime(
+            endTime = data.long("end_time"),
+            startTime = data.long("start_time"),
+            duration = duration,
+            nowEpochSeconds = nowEpochSeconds,
+        ),
     )
     return LiveRealtimeAction.EmitSuperChat(item, id)
 }
@@ -228,18 +261,38 @@ private fun parseDmInteraction(json: JsonObject): LiveRealtimeAction {
 
 private fun parseVoteInteraction(data: JsonObject): LiveRealtimeAction {
     val question = data.string("question").ifBlank { return LiveRealtimeAction.Ignore }
-    val options = data.array("options").orEmpty()
+    val voteOptions = data.array("options").orEmpty()
         .mapNotNull { option ->
             val obj = option.asObjectOrNull() ?: return@mapNotNull null
             val desc = obj.string("desc").ifBlank { return@mapNotNull null }
-            val percent = (obj.float("percent") * 100f).roundToInt()
-            "$desc $percent%"
+            LiveVoteOption(
+                id = obj.int("idx"),
+                description = desc,
+                percent = obj.float("percent").coerceIn(0f, 1f)
+            )
         }
         .take(2)
-    if (options.isEmpty()) return LiveRealtimeAction.Ignore
+    if (voteOptions.isEmpty()) return LiveRealtimeAction.Ignore
     val remainingSeconds = (data.long("left_duration") / 1000L).coerceAtLeast(0L)
     val suffix = if (remainingSeconds > 0L) "｜剩余 ${remainingSeconds}s" else ""
-    return systemMessage("投票", "投票：$question｜${options.joinToString(" / ")}$suffix")
+    val optionSummary = voteOptions.joinToString(" / ") {
+        "${it.description} ${(it.percent * 100f).roundToInt()}%"
+    }
+    val announcement = systemMessage("投票", "投票：$question｜$optionSummary$suffix")
+    val chat = (announcement as? LiveRealtimeAction.EmitChat)?.item ?: return LiveRealtimeAction.Ignore
+    return LiveRealtimeAction.UpdateVote(
+        vote = LiveVoteInfo(
+            status = data.int("status", 4),
+            question = question,
+            options = voteOptions,
+            durationMillis = data.long("duration"),
+            remainingMillis = data.long("left_duration"),
+            resultText = data.string("result_text"),
+            endTimeText = data.string("etime_str"),
+            interactionId = data.long("interaction_id")
+        ),
+        announcement = chat
+    )
 }
 
 private fun parseFollowInteraction(data: JsonObject): LiveRealtimeAction {
@@ -279,6 +332,7 @@ private fun systemMessage(uname: String, text: String, uid: Long = 0L): LiveReal
             text = text,
             uid = uid,
             uname = uname,
+            isSystem = true,
             color = 0xFFB54A,
             mode = 1
         )
@@ -327,11 +381,18 @@ private fun JsonArray.toLongList(): List<Long> {
 
 private fun parseLiveRealtimeColor(value: JsonElement?): Int {
     val primitive = value?.asPrimitiveOrNull() ?: return 0
+    val raw = primitive.contentOrNull ?: return 0
+    if (raw.startsWith("#")) {
+        val hex = raw.removePrefix("#")
+        val color = hex.toLongOrNull(16)?.toInt() ?: return 0
+        return when (hex.length) {
+            6 -> color or 0xFF000000.toInt()
+            8 -> color
+            else -> 0
+        }
+    }
     return primitive.intOrNull
-        ?: primitive.contentOrNull
-            ?.removePrefix("#")
-            ?.toLongOrNull(16)
-            ?.toInt()
+        ?: raw.toLongOrNull(16)?.toInt()
         ?: 0
 }
 

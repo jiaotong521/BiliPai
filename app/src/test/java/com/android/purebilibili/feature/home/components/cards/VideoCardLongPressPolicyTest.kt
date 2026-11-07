@@ -4,7 +4,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
-import java.io.File
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -25,6 +24,11 @@ class VideoCardLongPressPolicyTest {
     @Test
     fun shouldOpenLongPressMenu_notOpenWhenMenuUnavailable() {
         assertFalse(shouldOpenLongPressMenu(hasPreviewAction = false, hasMenuAction = false))
+    }
+
+    @Test
+    fun defaultVideoCardLongPressActionEnabled_isFalse() {
+        assertFalse(com.android.purebilibili.core.store.HomeSettings().videoCardLongPressActionEnabled)
     }
 
     @Test
@@ -73,25 +77,4 @@ class VideoCardLongPressPolicyTest {
         )
     }
 
-    @Test
-    fun videoCardDropdownMenuUsesPositionedLocalAnchorInsteadOfLargeRootOffset() {
-        val source = loadSource("app/src/main/java/com/android/purebilibili/feature/home/components/cards/VideoCard.kt")
-        val menuBlock = source
-            .substringAfter("DropdownMenu(")
-            .substringBefore(") {")
-
-        assertTrue(source.contains(".offset(x = menuOffset.x, y = menuOffset.y)"))
-        assertTrue(menuBlock.contains("offset = DpOffset.Zero"))
-        assertFalse(menuBlock.contains("offset = menuOffset"))
-    }
-
-    private fun loadSource(path: String): String {
-        val normalizedPath = path.removePrefix("app/")
-        val sourceFile = listOf(
-            File(path),
-            File(normalizedPath)
-        ).firstOrNull { it.exists() }
-        require(sourceFile != null) { "Cannot locate $path from ${File(".").absolutePath}" }
-        return sourceFile.readText()
-    }
 }

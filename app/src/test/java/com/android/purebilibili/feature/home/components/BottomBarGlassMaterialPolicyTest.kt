@@ -2,6 +2,7 @@ package com.android.purebilibili.feature.home.components
 
 import androidx.compose.ui.graphics.Color
 import com.android.purebilibili.core.store.BottomBarLiquidGlassPreset
+import com.android.purebilibili.core.store.LiquidGlassAdvancedSettings
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -13,6 +14,40 @@ import kotlin.test.assertTrue
  * BiliPai 现有策略。
  */
 class BottomBarGlassMaterialPolicyTest {
+
+    @Test
+    fun `tuned glass scroll animation can be omitted without changing material`() {
+        for (dark in listOf(false, true)) {
+            for (tuningProgress in listOf(0f, 0.5f, 1f)) {
+                val tuning = resolveLiquidGlassTuning(progress = tuningProgress)
+                val resting = resolveBottomBarGlassMaterialSpec(
+                    preset = BottomBarLiquidGlassPreset.BILIPAI_TUNED,
+                    isDarkTheme = dark,
+                    isScrolling = false,
+                    scrollProgress = 0f,
+                    glassEnabled = true,
+                    motionProgress = 0f,
+                    pressProgress = 0f,
+                    liquidGlassTuning = tuning,
+                )
+                for (scrollProgress in listOf(0.1f, 0.5f, 1f)) {
+                    assertEquals(
+                        resting,
+                        resolveBottomBarGlassMaterialSpec(
+                            preset = BottomBarLiquidGlassPreset.BILIPAI_TUNED,
+                            isDarkTheme = dark,
+                            isScrolling = true,
+                            scrollProgress = scrollProgress,
+                            glassEnabled = true,
+                            motionProgress = 0f,
+                            pressProgress = 0f,
+                            liquidGlassTuning = tuning,
+                        ),
+                    )
+                }
+            }
+        }
+    }
 
     @Test
     fun `enum value 1 round trips to ios26 refined`() {
@@ -82,7 +117,30 @@ class BottomBarGlassMaterialPolicyTest {
     }
 
     @Test
-    fun `ios26 material spec uses KSU visible shell chain`() {
+    fun `zero content distortion disables shell refraction for every preset`() {
+        val noDistortionTuning = resolveLiquidGlassTuning(
+            progress = 0f,
+            advancedSettings = LiquidGlassAdvancedSettings(contentDistortion = 0f),
+        )
+
+        BottomBarLiquidGlassPreset.entries.forEach { preset ->
+            val spec = resolveBottomBarGlassMaterialSpec(
+                preset = preset,
+                isDarkTheme = false,
+                isScrolling = false,
+                glassEnabled = true,
+                motionProgress = 0f,
+                pressProgress = 0f,
+                liquidGlassTuning = noDistortionTuning,
+            )
+
+            assertEquals(0f, spec.shellRefractionHeightDp)
+            assertEquals(0f, spec.shellRefractionAmountDp)
+        }
+    }
+
+    @Test
+    fun `ios26 material spec uses BiliPai visible shell chain`() {
         val light = resolveBottomBarGlassMaterialSpec(
             preset = BottomBarLiquidGlassPreset.IOS26_REFINED,
             isDarkTheme = false,
@@ -218,7 +276,7 @@ class BottomBarGlassMaterialPolicyTest {
             glassEnabled = true, fallbackAlpha = 1f
         )
 
-        assertEquals(0.38f, tuned.alpha, 0.005f)
+        assertEquals(0.40f, tuned.alpha, 0.005f)
         assertEquals(0.40f, ios26Light.alpha, 0.005f)
         assertEquals(0.40f, ios26Dark.alpha, 0.005f)
     }

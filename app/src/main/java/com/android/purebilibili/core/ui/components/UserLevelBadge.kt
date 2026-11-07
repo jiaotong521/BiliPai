@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -20,6 +21,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.android.purebilibili.R
+import com.android.purebilibili.core.ui.AppShapes
+import com.android.purebilibili.core.ui.ContainerLevel
 
 internal enum class UserLevelBadgeAsset {
     LEVEL_0,
@@ -94,15 +97,15 @@ private fun LegacyUserLevelBadge(
     level: Int,
     modifier: Modifier = Modifier
 ) {
-    val badgeColor = resolveUserLevelFallbackColor(level)
+    val colorScheme = MaterialTheme.colorScheme
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(3.dp))
+            .clip(AppShapes.container(ContainerLevel.Tag))
             .background(
                 brush = Brush.horizontalGradient(
                     colors = listOf(
-                        badgeColor.copy(alpha = 0.92f),
-                        badgeColor
+                        colorScheme.secondaryContainer,
+                        colorScheme.secondaryContainer
                     )
                 )
             )
@@ -110,21 +113,9 @@ private fun LegacyUserLevelBadge(
     ) {
         Text(
             text = "LV$level",
-            fontSize = 9.sp,
+            style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold,
-            color = Color.White,
-            lineHeight = 10.sp
+            color = colorScheme.onSecondaryContainer
         )
-    }
-}
-
-private fun resolveUserLevelFallbackColor(level: Int): Color {
-    return when {
-        level >= 6 -> Color(0xFFF04444)
-        level >= 5 -> Color(0xFFFF7A45)
-        level >= 4 -> Color(0xFFFF8B5A)
-        level >= 3 -> Color(0xFFFF9C6E)
-        level >= 2 -> Color(0xFFFFAE84)
-        else -> Color(0xFFA7ADB8)
     }
 }

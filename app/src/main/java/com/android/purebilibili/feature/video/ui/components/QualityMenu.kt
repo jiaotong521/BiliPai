@@ -1,293 +1,99 @@
-// File: feature/video/ui/components/QualityMenu.kt
 package com.android.purebilibili.feature.video.ui.components
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-//  Cupertino Icons - iOS SF Symbols 风格图标
-import io.github.alexzhirkevich.cupertino.icons.CupertinoIcons
-import io.github.alexzhirkevich.cupertino.icons.outlined.*
-import io.github.alexzhirkevich.cupertino.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.IntRect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.android.purebilibili.core.store.SettingsManager
 
-/**
- * Quality Selection Menu
- * 
- * Displays a menu for selecting video quality.
- * 
- * Requirement Reference: AC2.3 - Reusable quality menu
- */
 @Composable
 fun QualitySelectionMenu(
-    qualities: List<String>,
-    qualityIds: List<Int> = emptyList(),
-    switchableQualityIds: List<Int> = emptyList(),
-    currentQuality: String,
-    isLoggedIn: Boolean = false,
-    isVip: Boolean = false,
-    onQualitySelected: (Int) -> Unit,
-    onDismiss: () -> Unit,
-    useDialog: Boolean = false
+    qualities: List<String>, qualityIds: List<Int> = emptyList(),
+    switchableQualityIds: List<Int> = emptyList(), currentQuality: String,
+    isLoggedIn: Boolean = false, isVip: Boolean = false,
+    onQualitySelected: (Int) -> Unit, onDismiss: () -> Unit,
+    @Suppress("UNUSED_PARAMETER") useDialog: Boolean = false,
+    placement: PlayerListPopupPlacement = PlayerListPopupPlacement.CENTER,
+    anchorBounds: IntRect? = null,
 ) {
-    fun getQualityTag(qualityId: Int): String? {
-        return when (qualityId) {
-            127, 126, 125, 120 -> if (!isVip) "大会员" else null
-            116, 112 -> if (!isVip) "大会员" else null
-            80 -> if (!isLoggedIn) "登录" else null
-            else -> null
+    PlayerSelectionPopup(
+        title = "画质选择", showTitle = false,
+        onDismissRequest = onDismiss, placement = placement,
+        anchorBounds = anchorBounds,
+    ) {
+        qualities.forEachIndexed { index, quality ->
+            val qualityId = qualityIds.getOrNull(index) ?: 0
+            val selected = quality == currentQuality
+            val hint = qualityUnavailableReason(
+                qualityId = qualityId,
+                playableQualityIds = switchableQualityIds,
+                isLoggedIn = isLoggedIn,
+                isVip = isVip
+            )
+            PlayerSelectionItem(
+                modifier = Modifier.playerPopupSelectedOption(selected),
+                text = quality, summary = hint, selected = selected,
+                index = index, optionCount = qualities.size,
+                enabled = hint == null && !selected,
+                onClick = { onQualitySelected(index) },
+            )
         }
-    }
-    
-    //  [新增] 判断用户是否有权限使用该画质
-    fun isQualityAvailable(qualityId: Int): Boolean {
-        return when {
-            qualityId >= 112 -> isVip  // VIP 画质需要大会员
-            qualityId >= 80 -> isLoggedIn  // 1080P 需要登录
-            else -> true  // 720P 及以下无限制
-        }
-    }
-
-    fun hasSwitchableTrack(qualityId: Int): Boolean {
-        return qualityId in switchableQualityIds
-    }
-
-    val menuContent: @Composable () -> Unit = {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.5f))
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) { onDismiss() },
-            contentAlignment = Alignment.Center
-        ) {
-            Surface(
-                modifier = Modifier
-                    .widthIn(min = 200.dp, max = 280.dp)
-                    .heightIn(max = 400.dp)  //  [修复] 限制最大高度，允许滚动
-                    .clip(RoundedCornerShape(12.dp))
-                    // 显式消费点击，防止事件穿透到播放器手势层
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) {},
-                color = Color(0xFF2B2B2B),
-                shape = RoundedCornerShape(12.dp),
-                tonalElevation = 8.dp
-            ) {
-                Column(
-                    modifier = Modifier
-                        .padding(vertical = 8.dp)
-                        .verticalScroll(rememberScrollState())  //  [修复] 添加垂直滚动
-                ) {
-                    Text(
-                        text = "画质选择",
-                        color = Color.White,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
-                    )
-                    HorizontalDivider(color = Color.White.copy(0.1f))
-                    qualities.forEachIndexed { index, quality ->
-                        val isSelected = quality == currentQuality
-                        val qualityId = qualityIds.getOrNull(index) ?: 0
-                        val tag = getQualityTag(qualityId)
-                        val hasPermission = isQualityAvailable(qualityId)
-                        val isSwitchable = hasSwitchableTrack(qualityId)
-                        val isEnabled = hasPermission && isSwitchable
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable(enabled = isEnabled && !isSelected) { onQualitySelected(index) }
-                                .background(if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else Color.Transparent)
-                                .padding(horizontal = 16.dp, vertical = 14.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = quality,
-                                color = when {
-                                    isSelected -> MaterialTheme.colorScheme.primary
-                                    !isEnabled -> Color.White.copy(0.4f)
-                                    else -> Color.White.copy(0.9f)
-                                },
-                                fontSize = 14.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                            )
-                            
-                            if (tag != null) {
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Surface(
-                                    color = if (tag == "大会员") MaterialTheme.colorScheme.primary else Color(0xFF666666),
-                                    shape = RoundedCornerShape(4.dp)
-                                ) {
-                                    Text(
-                                        text = tag,
-                                        color = Color.White,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
-                            }
-                            
-                            Spacer(modifier = Modifier.weight(1f))
-                            
-                            if (isSelected) {
-                                Icon(CupertinoIcons.Default.Checkmark, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if (useDialog) {
-        Dialog(
-            onDismissRequest = onDismiss,
-            properties = DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            menuContent()
-        }
-    } else {
-        menuContent()
     }
 }
 
-/**
- * Speed Selection Menu
- * 
- * Displays a menu for selecting playback speed.
- */
-enum class SpeedSelectionMenuPlacement {
-    CENTER,
-    RIGHT_SIDE
+enum class SpeedSelectionMenuPlacement { CENTER, RIGHT_SIDE, ANCHOR_END }
+
+/** 未加载的配置不能被当前速度补成单项菜单；已加载的自定义列表保持原样。 */
+internal fun resolveSpeedSelectionMenuOptions(
+    speedOptions: List<Float>?,
+    currentSpeed: Float,
+): List<Float>? {
+    val loaded = speedOptions ?: return null
+    return if (currentSpeed in loaded) loaded else (loaded + currentSpeed).sorted()
 }
 
 @Composable
 fun SpeedSelectionMenu(
-    currentSpeed: Float,
-    onSpeedSelected: (Float) -> Unit,
-    onDismiss: () -> Unit,
-    placement: SpeedSelectionMenuPlacement
+    currentSpeed: Float, onSpeedSelected: (Float) -> Unit,
+    onDismiss: () -> Unit, placement: SpeedSelectionMenuPlacement,
+    anchorBounds: IntRect? = null,
 ) {
-    val speedOptions = PlaybackSpeed.OPTIONS.asReversed()
-    val contentAlignment = when (placement) {
-        SpeedSelectionMenuPlacement.CENTER -> Alignment.Center
-        SpeedSelectionMenuPlacement.RIGHT_SIDE -> Alignment.CenterEnd
-    }
-    val scrimColor = when (placement) {
-        SpeedSelectionMenuPlacement.CENTER -> Color.Black.copy(alpha = 0.5f)
-        SpeedSelectionMenuPlacement.RIGHT_SIDE -> Color.Transparent
-    }
-
-    val menuContent: @Composable () -> Unit = {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(scrimColor)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) { onDismiss() },
-            contentAlignment = contentAlignment
-        ) {
-            Surface(
-                modifier = Modifier
-                    .then(
-                        if (placement == SpeedSelectionMenuPlacement.RIGHT_SIDE) {
-                            Modifier.padding(end = 24.dp)
-                        } else {
-                            Modifier
-                        }
-                    )
-                    .widthIn(min = 180.dp, max = 240.dp)
-                    .heightIn(max = 400.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    // 显式消费点击，防止事件穿透到播放器手势层
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) {},
-                color = Color(0xFF2B2B2B),
-                shape = RoundedCornerShape(12.dp),
-                tonalElevation = 8.dp
-            ) {
-                Column(
-                    modifier = Modifier
-                        .padding(vertical = 8.dp)
-                        .verticalScroll(rememberScrollState())
-                ) {
-                    Text(
-                        text = "播放速度",
-                        color = Color.White,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
-                    )
-                    HorizontalDivider(color = Color.White.copy(0.1f))
-                    speedOptions.forEach { speed ->
-                        val isSelected = speed == currentSpeed
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onSpeedSelected(speed) }
-                                .background(if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else Color.Transparent)
-                                .padding(horizontal = 16.dp, vertical = 14.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = if (speed == 1.0f) "正常" else "${speed}x",
-                                color = if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(0.9f),
-                                fontSize = 14.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                            )
-                            Spacer(modifier = Modifier.weight(1f))
-                            if (isSelected) {
-                                Icon(CupertinoIcons.Default.Checkmark, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-                            }
-                        }
-                    }
-                }
-            }
+    val context = LocalContext.current
+    val speedOptionsFlow = remember(context) { SettingsManager.getPlaybackSpeedOptions(context) }
+    val speedOptions by speedOptionsFlow
+        .collectAsStateWithLifecycle<List<Float>?>(initialValue = null)
+    val options = remember(speedOptions, currentSpeed) {
+        resolveSpeedSelectionMenuOptions(speedOptions, currentSpeed)
+    } ?: return
+    PlayerSelectionPopup(
+        title = "播放速度", showTitle = false, onDismissRequest = onDismiss,
+        placement = when (placement) {
+            SpeedSelectionMenuPlacement.RIGHT_SIDE -> PlayerListPopupPlacement.END
+            SpeedSelectionMenuPlacement.CENTER -> PlayerListPopupPlacement.CENTER
+            SpeedSelectionMenuPlacement.ANCHOR_END -> PlayerListPopupPlacement.ANCHOR_END
+        },
+        anchorBounds = anchorBounds,
+    ) {
+        options.forEachIndexed { index, speed ->
+            val selected = speed == currentSpeed
+            PlayerSelectionItem(
+                modifier = Modifier.playerPopupSelectedOption(selected),
+                text = "${speed}X", selected = selected,
+                index = index, optionCount = options.size,
+                enabled = !selected,
+                onClick = { onSpeedSelected(speed) },
+            )
         }
     }
-
-    menuContent()
 }
 
 @Composable
 fun SpeedSelectionMenuDialog(
-    currentSpeed: Float,
-    onSpeedSelected: (Float) -> Unit,
+    currentSpeed: Float, onSpeedSelected: (Float) -> Unit,
     onDismiss: () -> Unit,
-    placement: SpeedSelectionMenuPlacement = SpeedSelectionMenuPlacement.CENTER
-) {
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        SpeedSelectionMenu(
-            currentSpeed = currentSpeed,
-            onSpeedSelected = onSpeedSelected,
-            onDismiss = onDismiss,
-            placement = placement
-        )
-    }
-}
+    placement: SpeedSelectionMenuPlacement = SpeedSelectionMenuPlacement.CENTER,
+    anchorBounds: IntRect? = null,
+) = SpeedSelectionMenu(currentSpeed, onSpeedSelected, onDismiss, placement, anchorBounds)
